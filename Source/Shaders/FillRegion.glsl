@@ -359,11 +359,11 @@ void main() {
             }
         }
 
-        // in_temperature[index] = min(6000, 300 * (1 / transform_scale) + abs(field.signed_distance) * 600);
-        // in_temperature[index] = max(0, 1500 + 1000 * transform_scale * sin(-field.signed_distance * 5));
-        // in_temperature[index] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
+        in_temperature[index] = min(6000, 300 * (1 / transform_scale) + abs(field.signed_distance) * 600);
+        in_temperature[index] = max(0, 1500 + 1000 * transform_scale * sin(-field.signed_distance * 5));
+        in_temperature[index] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
 
-        {
+        if (false) {
             float u = argInTurns(transformed_point.x, transformed_point.z);
             // float v = argInTurns(transformed_point.x, transformed_point.y);
             float v = 10 / abs(max(1, transformed_point.y));

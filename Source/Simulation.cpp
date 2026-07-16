@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <glm/gtc/type_ptr.hpp>
+#include <vector>
 
 #include "Shaders/Include/BlackBodyCompute.h"
 #include "Shaders/Include/RendererFragment.h"
@@ -290,123 +291,31 @@ void Simulation::Destroy()
     glDeleteVertexArrays(1, &vertexArray);
 }
 
-// Rotate the vector v by the quaternion q
-static glm::vec3 rotateVector(glm::vec4 q, glm::vec3 v)
-{
-    // return rotated;
-    return v + 2.0f * glm::cross(glm::cross(v, glm::vec3(q)) + q.w * v, glm::vec3(q));
-}
-
-static glm::vec3 transformPointForward(glm::vec3 point, CSGRigidTransform rigid_transform)
-{
-    glm::vec3 result = point * rigid_transform.uniform_scale;
-    result = rotateVector(rigid_transform.rotation, result);
-    result = result + rigid_transform.position;
-
-    return result;
-}
-
-static glm::vec3 transformPointReverse(glm::vec3 point, CSGRigidTransform rigid_transform)
-{
-    glm::vec3 result = (point - rigid_transform.position);
-
-    return rotateVector(rigid_transform.rotation, result) * (1 / rigid_transform.uniform_scale);
-}
-
-static CSGRigidTransform transformCompose(CSGRigidTransform lhs, CSGRigidTransform rhs)
-{
-    CSGRigidTransform result;
-
-    result.position = lhs.position + rhs.position;
-    result.uniform_scale = lhs.uniform_scale * rhs.uniform_scale;
-    result.rotation.w = lhs.rotation.w * rhs.rotation.w - glm::dot(glm::vec3(lhs.rotation), glm::vec3(rhs.rotation));
-    result.rotation = glm::vec4(lhs.rotation.w * glm::vec3(rhs.rotation) + rhs.rotation.w * glm::vec3(lhs.rotation) - glm::cross(glm::vec3(lhs.rotation), glm::vec3(rhs.rotation)), result.rotation.w);
-
-    return result;
-}
-
-struct AABB
-{
-    glm::vec3 min;
-    glm::vec3 max;
-};
-
-// Computes the conservative bounding box enclosing the aabb as if it were an oriented box
-static AABB transformAABB(AABB aabb, CSGRigidTransform transform)
-{
-    glm::vec3 points[8] = {
-        aabb.max + glm::vec3(1, 1, 1) * (aabb.min - aabb.max),
-        aabb.max + glm::vec3(0, 0, 0) * (aabb.min - aabb.max),
-        aabb.max + glm::vec3(1, 1, 0) * (aabb.min - aabb.max),
-        aabb.max + glm::vec3(0, 1, 1) * (aabb.min - aabb.max),
-        aabb.max + glm::vec3(1, 0, 0) * (aabb.min - aabb.max),
-        aabb.max + glm::vec3(0, 1, 0) * (aabb.min - aabb.max),
-        aabb.max + glm::vec3(0, 0, 1) * (aabb.min - aabb.max),
-        aabb.max + glm::vec3(1, 0, 1) * (aabb.min - aabb.max),
-    };
-
-    for (int i = 0; i < 8; i++)
-    {
-        points[i] = transformPointForward(points[i], transform);
-    }
-
-    AABB result = {glm::vec3(INFINITY), glm::vec3(-INFINITY)};
-
-    for (int i = 0; i < 8; i++)
-    {
-        result.min = glm::min(result.min, points[i]);
-        result.max = glm::max(result.max, points[i]);
-    }
-
-    return result;
-}
-
-static AABB unionAABB(AABB lhs, AABB rhs)
-{
-    AABB result;
-
-    result.min = min(lhs.min, rhs.min);
-    result.max = max(lhs.max, rhs.max);
-
-    return result;
-}
-
-static AABB intersectAABB(AABB lhs, AABB rhs)
-{
-    AABB result;
-
-    result.min = max(lhs.min, rhs.min);
-    result.max = min(lhs.max, rhs.max);
-
-    return result;
-}
-
 void Simulation::UpdateCSGProgram(
-    CSGRigidTransform *transforms,
-    std::size_t transforms_count,
-    CSGInstruction *instructions,
-    std::size_t instructions_count,
-    CSGInstructionBox *instructions_box,
-    std::size_t instructions_box_count,
-    CSGInstructionSphere *instructions_sphere,
-    std::size_t instructions_sphere_count,
-    CSGMaterialComponent *material,
-    std::size_t material_comp_count,
+    std::vector<CSGRigidTransform> &transforms,
+    std::vector<CSGInstruction> &instructions,
+    std::vector<CSGInstructionBox> &instructions_box,
+    std::vector<CSGInstructionSphere> &instructions_sphere,
+    std::vector<CSGMaterialComponent> &material,
     bool patch)
 {
+    if (instructions.size() == 0)
+        return;
+
+    assert(transforms.size() != 0);
+
     AABB bounding_box_stack[16];
     uint32_t stack_pointer = 0;
 
     const auto root_transform = this->csg_invocations[0].transform;
 
-    for (int i = 0; i < instructions_count; i++)
+    for (const auto instruction : instructions)
     {
-        const auto instruction = instructions[i];
-
         switch (instruction.csg_op)
         {
         case CSGInstructionOp::BOX:
         {
+            assert(instruction.stream_index < instructions_box.size());
             const auto box = instructions_box[instruction.stream_index];
             const auto transform = transforms[box.rigid_transform];
 
@@ -457,25 +366,18 @@ void Simulation::UpdateCSGProgram(
     this->csg_invocations[0].bound_min = glm::vec3(0);
     this->csg_invocations[0].bound_max = glm::vec3(this->width, this->height, this->depth);
 
-    if (patch)
+    glNamedBufferData(csg_instruction_buffer, instructions.size() * sizeof(CSGInstruction), &instructions[0], GL_DYNAMIC_DRAW);
+    if (instructions_box.size() > 0)
     {
-        glNamedBufferSubData(csg_instruction_buffer, 0, instructions_count * sizeof(CSGInstruction), instructions);
-        glNamedBufferSubData(csg_instructions_box_buffer, 0, instructions_box_count * sizeof(CSGInstructionBox), instructions_box);
-        glNamedBufferSubData(csg_instructions_sphere_buffer, 0, instructions_sphere_count * sizeof(CSGInstructionSphere), instructions_sphere);
-        glNamedBufferSubData(csg_transform_buffer, 0, transforms_count * sizeof(CSGRigidTransform), transforms);
-        glNamedBufferSubData(csg_composite_material_buffer, 0, material_comp_count * sizeof(CSGMaterialComponent), material);
-
-        return;
+        glNamedBufferData(csg_instructions_box_buffer, instructions_box.size() * sizeof(CSGInstructionBox), &instructions_box[0], GL_DYNAMIC_DRAW);
     }
 
-    const GLbitfield storageFlags = GL_DYNAMIC_STORAGE_BIT;
-
-    glNamedBufferStorage(csg_instruction_buffer, instructions_count * sizeof(CSGInstruction), instructions, storageFlags);
-    glNamedBufferStorage(csg_instructions_box_buffer, instructions_count * sizeof(CSGInstructionBox), instructions_box, storageFlags);
-    glNamedBufferStorage(csg_instructions_sphere_buffer, instructions_count * sizeof(CSGInstructionSphere), instructions_sphere, storageFlags);
-
-    glNamedBufferStorage(csg_transform_buffer, transforms_count * sizeof(CSGRigidTransform), transforms, storageFlags);
-    glNamedBufferStorage(csg_composite_material_buffer, material_comp_count * sizeof(CSGMaterialComponent), material, storageFlags);
+    if (instructions_sphere.size() > 0)
+    {
+        glNamedBufferData(csg_instructions_sphere_buffer, instructions_sphere.size() * sizeof(CSGInstructionSphere), &instructions_sphere[0], GL_DYNAMIC_DRAW);
+    }
+    glNamedBufferData(csg_transform_buffer, transforms.size() * sizeof(CSGRigidTransform), &transforms[0], GL_DYNAMIC_DRAW);
+    glNamedBufferData(csg_composite_material_buffer, material.size() * sizeof(CSGMaterialComponent), &material[0], GL_DYNAMIC_DRAW);
 }
 
 void Simulation::Update(bool enable_simulation)

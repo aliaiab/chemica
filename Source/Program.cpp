@@ -141,6 +141,7 @@ void Program::Initialize()
         {.csg_op = CSGInstructionOp::UNARY_OP_REVOLVE, .stream_index = 0},
         {.csg_op = CSGInstructionOp::UNARY_OP_EXTRUDE_PRE, .stream_index = 0},
         {.csg_op = CSGInstructionOp::SPHERE, .stream_index = 0},
+
         {.csg_op = CSGInstructionOp::UNARY_OP_EXTRUDE_POST, .stream_index = 0},
         {.csg_op = CSGInstructionOp::POP_POSITION, .stream_index = 0},
         {.csg_op = CSGInstructionOp::BOX, .stream_index = 0},
@@ -179,24 +180,17 @@ void Program::Initialize()
         {1, 0.1},
         {2, 0.1}};
 
-    csg_instructions_count = ARRAY_LENGTH(instructions);
-    csg_transforms_count = ARRAY_LENGTH(transforms);
-    csg_material_comp_count = ARRAY_LENGTH(material_components);
-    csg_transforms = new CSGRigidTransform[csg_transforms_count];
-    csg_instructions = new CSGInstruction[csg_instructions_count];
-    csg_instructions_box = new CSGInstructionBox[csg_instructions_count];
-    csg_instructions_sphere = new CSGInstructionSphere[csg_instructions_count];
-    csg_material = new CSGMaterialComponent[csg_material_comp_count];
+    csg_instructions.resize(ARRAY_LENGTH(instructions));
+    csg_transforms.resize(ARRAY_LENGTH(transforms));
+    csg_material.resize(ARRAY_LENGTH(material_components));
+    csg_instructions_box.resize(ARRAY_LENGTH(instructions));
+    csg_instructions_sphere.resize(ARRAY_LENGTH(instructions));
 
-    memset(csg_instructions_box, 0, csg_instructions_count * sizeof(CSGInstructionBox));
-    memset(csg_instructions_sphere, 0, csg_instructions_count * sizeof(CSGInstructionSphere));
-    memset(csg_material, 0, csg_material_comp_count * sizeof(CSGMaterialComponent));
-
-    memcpy(csg_transforms, transforms, sizeof(transforms));
-    memcpy(csg_instructions, instructions, sizeof(instructions));
-    memcpy(csg_instructions_box, boxes, sizeof(boxes));
-    memcpy(csg_instructions_sphere, spheres, sizeof(spheres));
-    memcpy(csg_material, material_components, sizeof(material_components));
+    memcpy(&csg_transforms[0], transforms, sizeof(transforms));
+    memcpy(&csg_instructions[0], instructions, sizeof(instructions));
+    memcpy(&csg_instructions_box[0], boxes, sizeof(boxes));
+    memcpy(&csg_instructions_sphere[0], spheres, sizeof(spheres));
+    memcpy(&csg_material[0], material_components, sizeof(material_components));
 
     simulation.csg_invocations = new CSGInvocation[1];
     simulation.csg_invocation_count = 1;
@@ -205,15 +199,10 @@ void Program::Initialize()
 
     simulation.UpdateCSGProgram(
         csg_transforms,
-        csg_transforms_count,
         csg_instructions,
-        csg_instructions_count,
         csg_instructions_box,
-        1,
         csg_instructions_sphere,
-        1,
         csg_material,
-        csg_material_comp_count,
         false);
 
     simulation.window = window;
@@ -260,13 +249,22 @@ void Program::OnImGuiRender()
         ImGui::End();
     }
 
+    ImGui::ShowDemoWindow();
+
     {
         ImGuizmo::BeginFrame();
 
         ImGuiIO &io = ImGui::GetIO();
         ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
 
-        CSGRigidTransform transform = simulation.csg_invocations[0].transform;
+        CSGRigidTransform *transform_ptr = &simulation.csg_invocations[0].transform;
+
+        if (this->selected_tree != nullptr)
+        {
+            transform_ptr = &this->selected_tree->transform;
+        }
+
+        CSGRigidTransform &transform = *transform_ptr;
 
         glm::mat4 matrix = glm::identity<glm::mat4>();
 
@@ -297,9 +295,101 @@ void Program::OnImGuiRender()
 
         glm::decompose(matrix, scale, quat, translation, skew, persp);
 
-        simulation.csg_invocations[0].transform.position = glm::floor(translation);
-        simulation.csg_invocations[0].transform.rotation = {quat.x, quat.y, quat.z, -quat.w};
-        simulation.csg_invocations[0].transform.uniform_scale = scale[0];
+        transform.position = glm::floor(translation);
+        transform.rotation = {quat.x, quat.y, quat.z, -quat.w};
+        transform.uniform_scale = scale[0];
+    }
+
+    if (ImGui::Begin("CSG Editor"))
+    {
+        if (this->selected_tree != nullptr)
+        {
+            ImGui::Text("Transform");
+            ImGui::Separator();
+
+            ImGui::DragFloat3("Translation", &this->selected_tree->transform.position.x);
+            ImGui::DragFloat("Scale", &this->selected_tree->transform.uniform_scale);
+
+            switch (this->selected_tree->sdf_type)
+            {
+            case CSGTreeType::box:
+                ImGui::Text("Box");
+                ImGui::Separator();
+                ImGui::DragFloat3("Bounds", &this->selected_tree->data.box.bounds.x);
+                break;
+            case CSGTreeType::sphere:
+                ImGui::Text("Sphere");
+                ImGui::Separator();
+                ImGui::DragFloat("Radius", &this->selected_tree->data.sphere.radius);
+                break;
+            }
+        }
+
+        if (ImGui::Button("Add Node"))
+        {
+            ImGui::OpenPopup("node_type_popup");
+        }
+
+        if (ImGui::BeginPopup("node_type_popup"))
+        {
+
+            if (ImGui::Selectable("Box"))
+            {
+                CSGTree &current_node = this->csg_tree_root_nodes.emplace_back();
+                current_node.sdf_type = CSGTreeType::box;
+            }
+
+            if (ImGui::Selectable("Sphere"))
+            {
+                CSGTree &current_node = this->csg_tree_root_nodes.emplace_back();
+                current_node.sdf_type = CSGTreeType::sphere;
+            }
+
+            ImGui::EndPopup();
+        }
+
+        for (CSGTree &node : this->csg_tree_root_nodes)
+        {
+            this->OnImGuiCSGTreeNode(&node, nullptr);
+        }
+
+        ImGui::End();
+    }
+
+    for (auto command : this->csg_reparent_commands)
+    {
+        command.destination->children.push_back(*command.source);
+        if (command.source_parent != nullptr)
+        {
+            command.source_parent->children.erase(static_cast<std::vector<CSGTree>::iterator>(command.source));
+        }
+        else
+        {
+            this->csg_tree_root_nodes.erase(static_cast<std::vector<CSGTree>::iterator>(command.source));
+        }
+    }
+
+    this->csg_reparent_commands.clear();
+
+    this->csg_instructions.clear();
+    this->csg_transforms.clear();
+    this->csg_instructions_box.clear();
+    this->csg_instructions_sphere.clear();
+
+    {
+        std::size_t i = 0;
+
+        for (auto node : this->csg_tree_root_nodes)
+        {
+            this->CompileCSGTreeToProgram(node, nullptr);
+
+            if (i != 0)
+            {
+                this->csg_instructions.push_back({.csg_op = CSGInstructionOp::BINARY_OP_UNION});
+            }
+
+            i += 1;
+        }
     }
 
     if (ImGui::Begin("Voxels"))
@@ -348,7 +438,7 @@ void Program::OnImGuiRender()
             ImGui::Unindent();
         }
 
-        for (int i = 0; i < csg_material_comp_count; i++)
+        for (int i = 0; i < csg_material.size(); i++)
         {
             const auto material_comp = &csg_material[i];
 
@@ -378,19 +468,138 @@ void Program::OnImGuiRender()
     }
 }
 
+void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
+{
+    CSGInstruction &instruction = this->csg_instructions.emplace_back();
+
+    const auto transform_index = this->csg_transforms.size();
+
+    CSGRigidTransform parent_transform;
+
+    if (parent != nullptr)
+    {
+        parent_transform = parent->transform;
+    }
+
+    const auto resolved_transform = transformCompose(parent_transform, node.transform);
+
+    this->csg_transforms.push_back(resolved_transform);
+
+    switch (node.sdf_type)
+    {
+    case CSGTreeType::box:
+    {
+        const auto stream_index = this->csg_instructions_box.size();
+        auto &box_data = this->csg_instructions_box.emplace_back();
+
+        box_data.bounds = node.data.box.bounds;
+        box_data.rigid_transform = transform_index;
+        box_data.material = 0;
+
+        instruction.csg_op = CSGInstructionOp::BOX;
+        instruction.stream_index = stream_index;
+    }
+    break;
+    case CSGTreeType::sphere:
+    {
+        const auto stream_index = this->csg_instructions_sphere.size();
+        CSGInstructionSphere &sphere_data = this->csg_instructions_sphere.emplace_back();
+
+        sphere_data.radius = node.data.sphere.radius;
+        sphere_data.rigid_transform = transform_index;
+        sphere_data.material = 0;
+
+        instruction.csg_op = CSGInstructionOp::SPHERE;
+        instruction.stream_index = stream_index;
+
+        break;
+    }
+    }
+
+    std::size_t i = 0;
+
+    for (CSGTree &child : node.children)
+    {
+        CompileCSGTreeToProgram(child, &node);
+
+        if (i != 0)
+        {
+            this->csg_instructions.push_back({.csg_op = CSGInstructionOp::BINARY_OP_UNION});
+        }
+
+        i += 1;
+    }
+
+    if (node.children.size() != 0)
+    {
+        this->csg_instructions.push_back({.csg_op = CSGInstructionOp::BINARY_OP_UNION});
+    }
+}
+
+void Program::OnImGuiCSGTreeNode(CSGTree *tree, CSGTree *parent)
+{
+    ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
+
+    if (tree == this->selected_tree)
+    {
+        base_flags |= ImGuiTreeNodeFlags_Selected;
+    }
+
+    ImGui::PushID(tree);
+
+    if (ImGui::TreeNodeEx("Node", base_flags))
+    {
+        if (ImGui::IsItemClicked())
+        {
+            this->selected_tree = tree;
+        }
+
+        if (ImGui::BeginDragDropSource())
+        {
+            CSGTreeReparentCommand command;
+
+            command.source = tree;
+            command.source_parent = parent;
+
+            ImGui::SetDragDropPayload("node", &command, sizeof(CSGTreeReparentCommand));
+            ImGui::EndDragDropSource();
+        }
+
+        if (ImGui::BeginDragDropTarget())
+        {
+            const auto payload = ImGui::AcceptDragDropPayload("node");
+
+            if (payload != nullptr)
+            {
+                auto payload_tree_command = *(CSGTreeReparentCommand *)payload->Data;
+
+                payload_tree_command.destination = tree;
+
+                this->csg_reparent_commands.push_back(payload_tree_command);
+            }
+
+            ImGui::EndDragDropTarget();
+        }
+
+        for (CSGTree &child : tree->children)
+        {
+            this->OnImGuiCSGTreeNode(&child, tree);
+        }
+
+        ImGui::TreePop();
+    }
+
+    ImGui::PopID();
+}
+
 void Program::Render()
 {
     simulation.UpdateCSGProgram(
         csg_transforms,
-        csg_transforms_count,
         csg_instructions,
-        csg_instructions_count,
         csg_instructions_box,
-        1,
         csg_instructions_sphere,
-        1,
         csg_material,
-        csg_material_comp_count,
         true);
 
     // camera controls

@@ -6,7 +6,7 @@
 
 #include "Program.h"
 
-static bool LoadConfigFile(ProgramConfig& config)
+static bool LoadConfigFile(ProgramConfig &config)
 {
     constexpr auto userConfigPathFormat = "%s/.config/chemica/chemica.txt";
 
@@ -30,7 +30,7 @@ static bool LoadConfigFile(ProgramConfig& config)
 
         return false;
     }
-    
+
     std::fseek(file, 0, SEEK_END);
 
     const auto bufferSize = std::ftell(file);
@@ -44,9 +44,9 @@ static bool LoadConfigFile(ProgramConfig& config)
 
     std::fclose(file);
 
-    char errorMessage[100] { };
+    char errorMessage[100]{};
 
-    json_settings jsonSettings { };
+    json_settings jsonSettings{};
 
     const auto json = json_parse_ex(&jsonSettings, buffer, bufferSize, errorMessage);
 
@@ -58,7 +58,7 @@ static bool LoadConfigFile(ProgramConfig& config)
 
             if (std::strncmp(value.name, "dev_mode", value.name_length) == 0)
             {
-                config.devMode = value.value->u.boolean;    
+                config.devMode = value.value->u.boolean;
             }
         }
 
@@ -76,18 +76,16 @@ static bool LoadConfigFile(ProgramConfig& config)
     return true;
 };
 
-static bool ParseArguments(ProgramConfig& config, const int argc, char** argv)
+static bool ParseArguments(ProgramConfig &config, const int argc, char **argv)
 {
     while (true)
     {
-        static option longOptions[]
-        {
-            { "dev", no_argument, 0, 'd' },
-            { 0, 0, 0, 0 }
-        };
+        static option longOptions[]{
+            {"dev", no_argument, 0, 'd'},
+            {0, 0, 0, 0}};
 
         int optionIndex = 0;
-        
+
         const auto option = getopt_long(argc, argv, "d", longOptions, &optionIndex);
 
         if (option == -1)
@@ -97,19 +95,19 @@ static bool ParseArguments(ProgramConfig& config, const int argc, char** argv)
 
         switch (option)
         {
-            case 'd':
-                config.devMode = true;
+        case 'd':
+            config.devMode = true;
 
-                break;
+            break;
         }
     }
 
     return true;
 }
 
-int main(const int argc, char** argv)
+int main(const int argc, char **argv)
 {
-    static Program program;
+    static Program program{};
 
     LoadConfigFile(program.config);
     ParseArguments(program.config, argc, argv);

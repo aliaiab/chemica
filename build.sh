@@ -8,7 +8,7 @@ glslangValidator -G -S comp --vn distanceFieldComputeBinary Source/Shaders/Dista
 glslangValidator -G -S comp --vn grainSimulationBinary Source/Shaders/GrainSimulation.glsl -o Source/Shaders/Include/GrainSimulation.h
 glslangValidator -G -S comp --vn fillRegionBinary Source/Shaders/FillRegion.glsl -o Source/Shaders/Include/FillRegion.h
 
-cmake -S . -B Build
+cmake -S . -B Build 
 
 cd Build
 
