@@ -38,6 +38,7 @@ enum struct VoxelPhase : std::uint32_t
 
 enum struct CSGInstructionOp : std::uint32_t
 {
+    IDENTITY = 0,
     BOX = CSG_BOX,
     SPHERE = CSG_SPHERE,
     PLANE = CSG_PLANE,
@@ -73,6 +74,7 @@ struct CSGInstructionBox
     glm::vec3 bounds;
     std::uint32_t rigid_transform;
     std::uint32_t material;
+    uint8_t pad[12];
 };
 
 struct CSGInstructionSphere
@@ -224,7 +226,7 @@ inline CSGRigidTransform transformCompose(CSGRigidTransform lhs, CSGRigidTransfo
 {
     CSGRigidTransform result;
 
-    result.position = lhs.position + rhs.position;
+    result.position = lhs.position + rotateVector(lhs.rotation, rhs.position * lhs.uniform_scale);
     result.uniform_scale = lhs.uniform_scale * rhs.uniform_scale;
     result.rotation.w = lhs.rotation.w * rhs.rotation.w - glm::dot(glm::vec3(lhs.rotation), glm::vec3(rhs.rotation));
     result.rotation = glm::vec4(lhs.rotation.w * glm::vec3(rhs.rotation) + rhs.rotation.w * glm::vec3(lhs.rotation) - glm::cross(glm::vec3(lhs.rotation), glm::vec3(rhs.rotation)), result.rotation.w);

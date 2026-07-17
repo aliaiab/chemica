@@ -73,6 +73,18 @@ float sdfDifference(float x, float y) {
     return max(x, -y);
 }
 
+// sigmoid
+float smin(float a, float b, float k)
+{
+    k *= log(2.0);
+    float x = b - a;
+    return a + x / (1.0 - exp2(x / k));
+}
+
+float sdfSmoothUnion(float x, float y) {
+    return smin(x, y, 5);
+}
+
 //primitives
 #include "../csg.h"
 
@@ -256,6 +268,15 @@ FieldResult executeDistanceProgram(vec3 in_position) {
                 break;
             }
             ;
+            case CSG_BINARY_OP_SMOOTH_UNION:
+            {
+                float d1 = distance_stack[--stack_pointer];
+                float d0 = distance_stack[--stack_pointer];
+
+                distance_stack[stack_pointer++] = sdfSmoothUnion(d0, d1);
+                break;
+            }
+            ;
             case CSG_UNARY_OP_EXTRUDE_PRE:
             {
                 position_stack_pointer += 1;
@@ -360,8 +381,8 @@ void main() {
         }
 
         in_temperature[index] = min(6000, 300 * (1 / transform_scale) + abs(field.signed_distance) * 600);
-        in_temperature[index] = max(0, 1500 + 1000 * transform_scale * sin(-field.signed_distance * 5));
-        in_temperature[index] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
+        //in_temperature[index] = max(0, 1500 + 1000 * transform_scale * sin(-field.signed_distance * 5));
+        //in_temperature[index] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
 
         if (false) {
             float u = argInTurns(transformed_point.x, transformed_point.z);

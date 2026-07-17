@@ -30,21 +30,17 @@ enum class CSGTreeType
 
     box,
     sphere,
-
-    op_union,
-    op_difference,
-    op_intersection,
 };
 
 union CSGTreeData
 {
     struct
     {
-        glm::vec3 bounds;
+        glm::vec3 bounds = glm::vec3(10);
     } box;
     struct
     {
-        float radius;
+        float radius = 10;
     } sphere;
 };
 
@@ -52,11 +48,28 @@ struct CSGTree;
 
 struct CSGTree
 {
-    CSGRigidTransform transform{};
+    CSGRigidTransform transform = CSGRigidTransform::identity();
     // zero = no shape
-    CSGTreeType sdf_type{};
+    CSGTreeType sdf_type;
     CSGTreeData data{};
+    char name[16];
+    // Operation applied to the aggregate children before unioning with the parent
+    CSGInstructionOp unary_op = CSGInstructionOp::IDENTITY;
+    // Operation applied between children
+    CSGInstructionOp child_op = CSGInstructionOp::BINARY_OP_UNION;
     std::vector<CSGTree> children;
+
+    inline void intiializeCopy(const CSGTree &copy_from)
+    {
+        *this = copy_from;
+        this->children = {};
+
+        for (const auto child : copy_from.children)
+        {
+            auto &new_child = this->children.emplace_back();
+            new_child.intiializeCopy(child);
+        }
+    }
 };
 
 struct CSGTreeReparentCommand
@@ -78,7 +91,11 @@ struct Program
 
     std::vector<CSGTree> csg_tree_root_nodes{};
     CSGTree *selected_tree = nullptr;
+    CSGTree *selected_tree_parent = nullptr;
     std::vector<CSGTreeReparentCommand> csg_reparent_commands{};
+    bool delete_selected_tree = false;
+    CSGTree copied_tree;
+    bool copy_selected_tree = false;
 
     // csg program
     std::vector<CSGInstruction> csg_instructions;

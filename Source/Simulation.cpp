@@ -315,7 +315,6 @@ void Simulation::UpdateCSGProgram(
         {
         case CSGInstructionOp::BOX:
         {
-            assert(instruction.stream_index < instructions_box.size());
             const auto box = instructions_box[instruction.stream_index];
             const auto transform = transforms[box.rigid_transform];
 

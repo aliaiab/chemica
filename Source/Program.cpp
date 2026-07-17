@@ -258,46 +258,91 @@ void Program::OnImGuiRender()
         ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
 
         CSGRigidTransform *transform_ptr = &simulation.csg_invocations[0].transform;
+        bool can_nonuniformly_scale = false;
 
         if (this->selected_tree != nullptr)
         {
             transform_ptr = &this->selected_tree->transform;
+
+            if (this->selected_tree->sdf_type == CSGTreeType::box)
+            {
+                can_nonuniformly_scale = true;
+            }
         }
 
-        CSGRigidTransform &transform = *transform_ptr;
-
-        glm::mat4 matrix = glm::identity<glm::mat4>();
-
-        ImGuizmo::Enable(!enableSimulation);
-
-        matrix = glm::scale(glm::vec3(transform.uniform_scale));
-        matrix = glm::mat4_cast(glm::normalize(glm::quat(-transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z))) * matrix;
-        matrix = glm::translate(transform.position) * matrix;
-
-        float snap[3] = {1, 1, 1};
-
-        if (ImGuizmo::Manipulate(
-                (float *)&camera.view,
-                (float *)&camera.projection,
-                ImGuizmo::OPERATION::TRANSLATE | ImGuizmo::OPERATION::ROTATE | ImGuizmo::OPERATION::SCALE_XU,
-                ImGuizmo::MODE::LOCAL,
-                (float *)&matrix),
-            nullptr,
-            snap)
+        if (this->selected_tree != nullptr)
         {
+
+            CSGRigidTransform &transform = *transform_ptr;
+
+            glm::mat4 matrix = glm::identity<glm::mat4>();
+
+            ImGuizmo::Enable(!enableSimulation);
+
+            matrix = glm::scale(glm::vec3(transform.uniform_scale));
+            matrix = glm::mat4_cast(glm::normalize(glm::quat(-transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z))) * matrix;
+
+            glm::vec3 temp_translation = transform.position;
+
+            if (this->selected_tree != nullptr)
+            {
+                temp_translation = transform.position + glm::vec3(this->simulation.width / 2.0f, this->simulation.height / 2.0f, this->simulation.depth / 2.0f);
+            }
+            matrix = glm::translate(temp_translation) * matrix;
+
+            float snap[3] = {1, 1, 1};
+
+            ImGuizmo::OPERATION operation = ImGuizmo::OPERATION::TRANSLATE | ImGuizmo::OPERATION::ROTATE | ImGuizmo::OPERATION::SCALE_XU;
+
+            glm::vec3 local_bounds[2] = {
+                {-100, -100, -100}, {100, 100, 100}};
+
+            if (can_nonuniformly_scale)
+            {
+                operation = operation | ImGuizmo::OPERATION::BOUNDS;
+                // local_bounds = &this->selected_tree->data.box.bounds.x;
+                local_bounds[0] = -this->selected_tree->data.box.bounds / 2.0f;
+                local_bounds[1] = this->selected_tree->data.box.bounds / 2.0f;
+            }
+
+            if (ImGuizmo::Manipulate(
+                    (float *)&camera.view,
+                    (float *)&camera.projection,
+                    operation,
+                    ImGuizmo::MODE::LOCAL,
+                    (float *)&matrix),
+                nullptr,
+                snap,
+                &local_bounds[0].x,
+                snap)
+            {
+            }
+
+            auto quat = glm::normalize(glm::quat_cast(matrix));
+            auto translation = glm::vec3{std::floor(matrix[3][0]), std::floor(matrix[3][1]), std::floor(matrix[3][2])};
+            auto scale = glm::vec3(matrix[1][1]);
+            auto skew = glm::vec3(0);
+            auto persp = glm::vec4(0);
+
+            glm::decompose(matrix, scale, quat, translation, skew, persp);
+
+            transform.position = glm::floor(translation);
+            if (this->selected_tree != nullptr)
+            {
+                transform.position = glm::floor(translation) - glm::vec3(this->simulation.width / 2.0f, this->simulation.height / 2.0f, this->simulation.depth / 2.0f);
+            }
+            transform.rotation = {quat.x, quat.y, quat.z, -quat.w};
+            transform.uniform_scale = scale[0];
+
+            if (can_nonuniformly_scale)
+            {
+            }
         }
 
-        auto quat = glm::normalize(glm::quat_cast(matrix));
-        auto translation = glm::vec3{std::floor(matrix[3][0]), std::floor(matrix[3][1]), std::floor(matrix[3][2])};
-        auto scale = glm::vec3(matrix[1][1]);
-        auto skew = glm::vec3(0);
-        auto persp = glm::vec4(0);
-
-        glm::decompose(matrix, scale, quat, translation, skew, persp);
-
-        transform.position = glm::floor(translation);
-        transform.rotation = {quat.x, quat.y, quat.z, -quat.w};
-        transform.uniform_scale = scale[0];
+        {
+            glm::mat4 out_matrix;
+            ImGuizmo::ViewManipulate((float *)&camera.view, (float *)&camera.projection, ImGuizmo::OPERATION::UNIVERSAL, ImGuizmo::WORLD, (float *)&out_matrix, 10, ImVec2(io.DisplaySize.x - 128, 128), ImVec2(128, 128), 0x10101010);
+        }
     }
 
     if (ImGui::Begin("CSG Editor"))
@@ -309,6 +354,36 @@ void Program::OnImGuiRender()
 
             ImGui::DragFloat3("Translation", &this->selected_tree->transform.position.x);
             ImGui::DragFloat("Scale", &this->selected_tree->transform.uniform_scale);
+            ImGui::DragFloat4("Rotation", &this->selected_tree->transform.rotation.x);
+
+            ImGui::Separator();
+
+            const char *child_op_names[] = {
+                "IDENTITY",
+                "BOX",
+                "SPHERE",
+                "PLANE",
+                "TRIANGLE",
+                "CYLYNDER",
+                "CONE",
+                "TORUS",
+
+                "BINARY_OP_UNION",
+                "BINARY_OP_INTERSECTION",
+                "BINARY_OP_DIFFERENCE",
+                "BINARY_OP_XOR",
+                "BINARY_OP_SMOOTH_UNION",
+                "BINARY_OP_SMOOTH_INTERSECTION",
+                "BINARY_OP_SMOOTH_DIFFERENCE",
+                "UNARY_OP_REVOLVE",
+                "UNARY_OP_ELONGATE",
+                "UNARY_OP_EXTRUDE_PRE",
+                "UNARY_OP_EXTRUDE_POST",
+                "POP_DISTANCE",
+                "POP_POSITION",
+            };
+
+            ImGui::Combo("Child Algebraic Operationb", (int *)&this->selected_tree->child_op, child_op_names, ARRAY_LENGTH(child_op_names));
 
             switch (this->selected_tree->sdf_type)
             {
@@ -330,19 +405,65 @@ void Program::OnImGuiRender()
             ImGui::OpenPopup("node_type_popup");
         }
 
+        if (this->selected_tree != nullptr && ImGui::IsKeyDown(GLFW_KEY_DELETE))
+        {
+            if (this->selected_tree_parent == nullptr)
+            {
+                this->csg_tree_root_nodes.erase(static_cast<std::vector<CSGTree>::iterator>(this->selected_tree));
+            }
+            else
+            {
+                this->selected_tree_parent->children.erase(static_cast<std::vector<CSGTree>::iterator>(this->selected_tree));
+            }
+
+            this->selected_tree = nullptr;
+            this->selected_tree_parent = nullptr;
+        }
+
+        if (this->selected_tree != nullptr && ImGui::IsKeyDown(GLFW_KEY_LEFT_CONTROL) && ImGui::IsKeyPressed(GLFW_KEY_C))
+        {
+            std::printf("Copied node %p\n", this->selected_tree);
+
+            this->copied_tree.intiializeCopy(*this->selected_tree);
+            this->copy_selected_tree = true;
+        }
+
+        if (this->copy_selected_tree && ImGui::IsKeyDown(GLFW_KEY_LEFT_CONTROL) && ImGui::IsKeyPressed(GLFW_KEY_V))
+        {
+            this->csg_tree_root_nodes.push_back(this->copied_tree);
+
+            this->selected_tree = &this->csg_tree_root_nodes.back();
+        }
+
         if (ImGui::BeginPopup("node_type_popup"))
         {
 
             if (ImGui::Selectable("Box"))
             {
                 CSGTree &current_node = this->csg_tree_root_nodes.emplace_back();
+                current_node = {};
                 current_node.sdf_type = CSGTreeType::box;
+                current_node.data.box.bounds = glm::vec3(10);
+                current_node.transform = CSGRigidTransform::identity();
+                memcpy(current_node.name, "Box", 3 + 1);
+
+                this->selected_tree = &current_node;
+                this->selected_tree_parent = nullptr;
             }
 
             if (ImGui::Selectable("Sphere"))
             {
                 CSGTree &current_node = this->csg_tree_root_nodes.emplace_back();
+                current_node = {};
                 current_node.sdf_type = CSGTreeType::sphere;
+                current_node.data = {
+                    .sphere = {.radius = 10},
+                };
+                current_node.transform = CSGRigidTransform::identity();
+                memcpy(current_node.name, "Sphere", 6 + 1);
+
+                this->selected_tree = &current_node;
+                this->selected_tree_parent = nullptr;
             }
 
             ImGui::EndPopup();
@@ -392,10 +513,17 @@ void Program::OnImGuiRender()
         }
     }
 
+    std::printf("Compiled CSG Program: \n");
+    for (const auto instruction : this->csg_instructions)
+    {
+        std::printf("Inst: op: %u, stream_idx: %u\n", (std::uint32_t)instruction.csg_op, instruction.stream_index);
+    }
+
     if (ImGui::Begin("Voxels"))
     {
         static int pos[3]{};
         static int size[3]{1, 1, 1};
+        ;
 
         static int radius = 1;
         static int diameter = 2;
@@ -474,7 +602,7 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
 
     const auto transform_index = this->csg_transforms.size();
 
-    CSGRigidTransform parent_transform;
+    CSGRigidTransform parent_transform = CSGRigidTransform::identity();
 
     if (parent != nullptr)
     {
@@ -490,7 +618,7 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
     case CSGTreeType::box:
     {
         const auto stream_index = this->csg_instructions_box.size();
-        auto &box_data = this->csg_instructions_box.emplace_back();
+        CSGInstructionBox &box_data = this->csg_instructions_box.emplace_back();
 
         box_data.bounds = node.data.box.bounds;
         box_data.rigid_transform = transform_index;
@@ -498,8 +626,9 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
 
         instruction.csg_op = CSGInstructionOp::BOX;
         instruction.stream_index = stream_index;
+
+        break;
     }
-    break;
     case CSGTreeType::sphere:
     {
         const auto stream_index = this->csg_instructions_sphere.size();
@@ -516,6 +645,11 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
     }
     }
 
+    if (node.unary_op != CSGInstructionOp::IDENTITY)
+    {
+        this->csg_instructions.push_back({.csg_op = node.unary_op});
+    }
+
     std::size_t i = 0;
 
     for (CSGTree &child : node.children)
@@ -524,7 +658,7 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
 
         if (i != 0)
         {
-            this->csg_instructions.push_back({.csg_op = CSGInstructionOp::BINARY_OP_UNION});
+            this->csg_instructions.push_back({.csg_op = node.child_op});
         }
 
         i += 1;
@@ -547,7 +681,7 @@ void Program::OnImGuiCSGTreeNode(CSGTree *tree, CSGTree *parent)
 
     ImGui::PushID(tree);
 
-    if (ImGui::TreeNodeEx("Node", base_flags))
+    if (ImGui::TreeNodeEx(tree->name, base_flags))
     {
         if (ImGui::IsItemClicked())
         {
