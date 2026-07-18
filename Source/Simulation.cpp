@@ -14,6 +14,7 @@
 #include "Shaders/Include/GrainSimulation.h"
 #include "Shaders/Include/FillRegion.h"
 #include "Simulation.h"
+#include "shader.h"
 
 static constexpr auto dirtyCuboidVertexSource = R"(
     #version 450
@@ -41,13 +42,6 @@ static constexpr auto dirtyCuboidFragmentSource = R"(
     }
 )";
 
-struct ShaderSource
-{
-    int type = 0;
-    const void *binary = nullptr;
-    std::size_t size = 0;
-};
-
 struct ShaderData
 {
     glm::mat4 uModel;
@@ -66,76 +60,6 @@ struct ShaderData
     float delta_time;
     glm::uvec2 window_size;
 };
-
-static std::uint32_t LoadShader(const ShaderSource &source)
-{
-    const auto shader = glCreateShader(source.type);
-
-    glShaderBinary(1, &shader, GL_SHADER_BINARY_FORMAT_SPIR_V, source.binary, source.size);
-    glSpecializeShader(shader, "main", 0, nullptr, nullptr);
-
-    int success = 0;
-
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-
-    if (success == 0)
-    {
-        std::fprintf(stderr, "Shader rejected binary\n");
-
-        return 0;
-    }
-
-    return shader;
-}
-
-static std::uint32_t LoadProgram(const ShaderSource *sources, std::size_t count)
-{
-    const auto program = glCreateProgram();
-
-    const auto shaders = new std::uint32_t[count];
-
-    for (int i = 0; i < count; i++)
-    {
-        shaders[i] = LoadShader(sources[i]);
-
-        glAttachShader(program, shaders[i]);
-    }
-
-    glLinkProgram(program);
-
-    int linkStatus = 0;
-
-    glGetProgramiv(program, GL_LINK_STATUS, &linkStatus);
-
-    if (linkStatus == 0)
-    {
-        int infoLogLength = 0;
-
-        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLogLength);
-
-        const auto infoLog = new char[infoLogLength];
-
-        glGetProgramInfoLog(program, infoLogLength, &infoLogLength, infoLog);
-
-        std::fprintf(stderr, "[OpenGL]: Shader Program failed to link: %s\n", infoLog);
-
-        delete[] infoLog;
-
-        exit(EXIT_FAILURE);
-
-        return 0;
-    }
-
-    for (int i = 0; i < count; i++)
-    {
-        glDetachShader(program, shaders[i]);
-        glDeleteShader(shaders[i]);
-    }
-
-    delete[] shaders;
-
-    return program;
-}
 
 void Simulation::Create()
 {
@@ -256,6 +180,7 @@ void Simulation::Create()
     glCreateBuffers(1, &csg_instruction_buffer);
     glCreateBuffers(1, &csg_instructions_box_buffer);
     glCreateBuffers(1, &csg_instructions_sphere_buffer);
+    glCreateBuffers(1, &csg_instructions_extrude_post_buffer);
     glCreateBuffers(1, &csg_transform_buffer);
 
     const GLbitfield storageFlags = GL_DYNAMIC_STORAGE_BIT;
@@ -271,7 +196,7 @@ void Simulation::Create()
 
     glCreateBuffers(1, &voxelMaterialBuffer);
 
-    glNamedBufferStorage(voxelMaterialBuffer, sizeof(VoxelMaterial) * voxelMaterialCount, voxelMaterials, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferData(voxelMaterialBuffer, sizeof(VoxelMaterial) * voxelMaterialCount, voxelMaterials, GL_DYNAMIC_DRAW);
 
     glCreateBuffers(1, &csg_composite_material_buffer);
 }
@@ -296,6 +221,7 @@ void Simulation::UpdateCSGProgram(
     std::vector<CSGInstruction> &instructions,
     std::vector<CSGInstructionBox> &instructions_box,
     std::vector<CSGInstructionSphere> &instructions_sphere,
+    std::vector<CSGInstructionExtrudePost> &instructions_extrude_post,
     std::vector<CSGMaterialComponent> &material,
     bool patch)
 {
@@ -375,12 +301,21 @@ void Simulation::UpdateCSGProgram(
     {
         glNamedBufferData(csg_instructions_sphere_buffer, instructions_sphere.size() * sizeof(CSGInstructionSphere), &instructions_sphere[0], GL_DYNAMIC_DRAW);
     }
+
+    if (instructions_extrude_post.size() > 0)
+    {
+
+        glNamedBufferData(csg_instructions_extrude_post_buffer, instructions_extrude_post.size() * sizeof(CSGInstructionExtrudePost), &instructions_extrude_post[0], GL_DYNAMIC_DRAW);
+    }
+
     glNamedBufferData(csg_transform_buffer, transforms.size() * sizeof(CSGRigidTransform), &transforms[0], GL_DYNAMIC_DRAW);
     glNamedBufferData(csg_composite_material_buffer, material.size() * sizeof(CSGMaterialComponent), &material[0], GL_DYNAMIC_DRAW);
 }
 
 void Simulation::Update(bool enable_simulation)
 {
+    glNamedBufferData(voxelMaterialBuffer, sizeof(VoxelMaterial) * voxelMaterialCount, voxelMaterials, GL_DYNAMIC_DRAW);
+
     simulationSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
     ShaderData uniforms;
@@ -416,6 +351,8 @@ void Simulation::Update(bool enable_simulation)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, csg_instruction_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, csg_instructions_box_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 13, csg_instructions_sphere_buffer);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 30, csg_instructions_extrude_post_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 14, csg_composite_material_buffer);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 20, simulationDeviationBuffers[0]);

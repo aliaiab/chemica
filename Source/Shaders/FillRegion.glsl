@@ -112,6 +112,10 @@ struct CSGInstructionTorus {
     uint material;
 };
 
+struct CSGInstructionExtrudePost {
+    float h;
+};
+
 struct MaterialComponent {
     uint material;
     float weight;
@@ -131,6 +135,10 @@ layout(std430, binding = 12) restrict buffer InstructionsBox {
 
 layout(std430, binding = 13) restrict buffer InstructionsSphere {
     CSGInstructionSphere instructions_sphere[];
+};
+
+layout(std430, binding = 30) restrict buffer InstructionsExtrudePost {
+    CSGInstructionExtrudePost instructions_extrude_post[];
 };
 
 layout(std430, binding = 14) restrict buffer CompositeMaterial {
@@ -183,7 +191,7 @@ FieldResult executeDistanceProgram(vec3 in_position) {
     uint material_stack[16];
     uint transform_stack[16];
 
-    vec3 position_stack[4];
+    vec3 position_stack[16];
 
     position_stack[0] = in_position;
 
@@ -280,16 +288,17 @@ FieldResult executeDistanceProgram(vec3 in_position) {
             case CSG_UNARY_OP_EXTRUDE_PRE:
             {
                 position_stack_pointer += 1;
-                position_stack[position_stack_pointer] = vec3(position.xz, 0);
+                position_stack[position_stack_pointer] = vec3(position.xy, 0);
             }
             ;
             case CSG_UNARY_OP_EXTRUDE_POST:
             {
-                float h = 5;
+                float h = instructions_extrude_post[inst.stream_index].h;
 
-                vec2 w = vec2(distance_stack[stack_pointer - 1], abs(position.z) - h);
+                vec2 w = vec2(distance_stack[--stack_pointer], abs(position.z) - h);
 
                 distance_stack[stack_pointer++] = min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
+                position_stack_pointer -= 1;
                 break;
             }
             ;
@@ -313,6 +322,21 @@ FieldResult executeDistanceProgram(vec3 in_position) {
                 break;
             }
             ;
+            case CSG_TRANSFORM:
+            {
+                RigidTransform transform = transforms[inst.stream_index];
+
+                position_stack_pointer += 1;
+                position_stack[position_stack_pointer] = transformPoint(position, transform);
+                break;
+            }
+            case CSG_TRANSFORM_POST:
+            {
+                RigidTransform transform = transforms[inst.stream_index];
+                distance_stack[stack_pointer] *= transform.uniform_scale;
+
+                break;
+            }
         }
     }
 

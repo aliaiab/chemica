@@ -233,8 +233,13 @@ void main()
     vec3 eye = vIn.eye;
     vec3 end_pos = vIn.position;
 
+    if (true) {
+        //eye = vec3(inverse(uProjection * uView * uModel) * vec4(gl_FragCoord.x, gl_FragCoord.y, 0, 1));
+    }
+
     vec3 ray_origin = eye;
     vec3 ray_end = end_pos;
+
     vec3 ray_direction = normalize(ray_end - ray_origin);
 
     vec2 box_intersection = intersectAABB(ray_origin, ray_direction, vec3(0), uSize);
@@ -252,6 +257,7 @@ void main()
 
     vec4 total_radiance = vec4(0);
     bool hit = false;
+    vec3 hit_position = vec3(0);
 
     for (int i = 0; i < 10; i++) {
         float ray_cast_t = raycast(
@@ -266,6 +272,8 @@ void main()
         if (ray_cast_t > 0) {
             vec3 normal = -dir * sign(ray_direction);
             vec3 pos = ray_origin + ray_direction * ray_cast_t;
+
+            hit_position = pos;
 
             vec4 voxel_radiance = computeVoxelLight(
                     ray_origin,
@@ -333,5 +341,10 @@ void main()
     if (hit && length(total_radiance.xyz) > 0) {
         aColor.xyz = total_radiance.xyz;
         aColor.a = 1;
+
+        vec4 clip_pos = uProjection * uView * uModel * vec4(hit_position, 1);
+        float ndc_z = clip_pos.z / clip_pos.w;
+
+        gl_FragDepth = (ndc_z + 1.0f) / 2.0f;
     }
 }

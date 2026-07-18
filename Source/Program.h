@@ -17,6 +17,8 @@ struct Camera
 
     glm::mat4 projection{1.0f};
     glm::mat4 view{1.0f};
+
+    bool is_orthographic = false;
 };
 
 struct ProgramConfig
@@ -53,6 +55,13 @@ struct CSGTree
     CSGTreeType sdf_type;
     CSGTreeData data{};
     char name[16];
+    union
+    {
+        struct
+        {
+            float h;
+        } extrude;
+    } unary_op_data;
     // Operation applied to the aggregate children before unioning with the parent
     CSGInstructionOp unary_op = CSGInstructionOp::IDENTITY;
     // Operation applied between children
@@ -89,6 +98,9 @@ struct Program
     Camera camera{};
     glm::mat4 simulationTransform{1.0f};
 
+    std::uint32_t environment_map_texture;
+    std::uint32_t environment_map_shader_program;
+
     std::vector<CSGTree> csg_tree_root_nodes{};
     CSGTree *selected_tree = nullptr;
     CSGTree *selected_tree_parent = nullptr;
@@ -101,6 +113,7 @@ struct Program
     std::vector<CSGInstruction> csg_instructions;
     std::vector<CSGInstructionBox> csg_instructions_box;
     std::vector<CSGInstructionSphere> csg_instructions_sphere;
+    std::vector<CSGInstructionExtrudePost> csg_instructions_extrude_post;
     std::vector<CSGRigidTransform> csg_transforms;
     std::vector<CSGMaterialComponent> csg_material;
 

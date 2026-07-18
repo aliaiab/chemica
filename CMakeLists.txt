@@ -29,3 +29,4 @@ target_link_libraries("chemica"
 )
 
 target_include_directories("chemica" PUBLIC "External/glm")
+target_include_directories("chemica" PUBLIC "External/stb_image")

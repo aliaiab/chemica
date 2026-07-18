@@ -60,6 +60,8 @@ enum struct CSGInstructionOp : std::uint32_t
     UNARY_OP_EXTRUDE_POST = CSG_UNARY_OP_EXTRUDE_POST,
     POP_DISTANCE = CSG_POP_DISTANCE,
     POP_POSITION = CSG_POP_POSITION,
+    TRANSFORM = CSG_TRANSFORM,
+    TRANSFORM_POST = CSG_TRANSFORM_POST,
 };
 
 struct CSGInstruction
@@ -82,6 +84,11 @@ struct CSGInstructionSphere
     float radius;
     std::uint32_t rigid_transform;
     std::uint32_t material;
+};
+
+struct CSGInstructionExtrudePost
+{
+    float h;
 };
 
 struct CSGRigidTransform
@@ -174,6 +181,7 @@ struct Simulation
     std::uint32_t csg_instruction_buffer = 0;
     std::uint32_t csg_instructions_box_buffer = 0;
     std::uint32_t csg_instructions_sphere_buffer = 0;
+    std::uint32_t csg_instructions_extrude_post_buffer = 0;
     std::uint32_t csg_transform_buffer = 0;
     std::uint32_t csg_composite_material_buffer = 0;
 
@@ -195,6 +203,7 @@ struct Simulation
         std::vector<CSGInstruction> &instructions,
         std::vector<CSGInstructionBox> &instructions_box,
         std::vector<CSGInstructionSphere> &instructions_sphere,
+        std::vector<CSGInstructionExtrudePost> &instructions_extrude_post,
         std::vector<CSGMaterialComponent> &material,
         bool patch);
 };

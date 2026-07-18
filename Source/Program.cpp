@@ -9,6 +9,11 @@
 #include <glm/ext/quaternion_transform.hpp>
 #include <glad/glad.h>
 #include <unistd.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+#include "shader.h"
+#include "Shaders/Include/EnvMapVertex.h"
+#include "Shaders/Include/EnvMapFragment.h"
 
 #include "ImGuizmo.h"
 #include "Program.h"
@@ -32,6 +37,23 @@ static void scrollCallback(GLFWwindow *window, double xscroll, double yscroll)
     const auto self = (Program *)glfwGetWindowUserPointer(window);
 
     self->mouse_scroll = -yscroll * 0.1;
+}
+
+void imGuiEnableDepthTestingCallback(const ImDrawList *parent_list, const ImDrawCmd *cmd)
+{
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(true);
+    glDepthFunc(GL_GEQUAL);
+
+    std::printf("Enable Depth Testing");
+}
+
+void imguiDisableDepthTestingCallback(const ImDrawList *parent_list, const ImDrawCmd *cmd)
+{
+    glDepthFunc(GL_LESS);
+    glDisable(GL_DEPTH_TEST);
+
+    std::printf("Disable Depth Testing");
 }
 
 void Program::Initialize()
@@ -115,6 +137,8 @@ void Program::Initialize()
 
     camera.target = glm::vec3{simulation.width, simulation.height, simulation.depth} * 0.5f;
 
+    camera.view = glm::lookAt(camera.eye, camera.target, glm::vec3{0.0f, 1.0f, 0.0f});
+
     if (config.devMode)
     {
         ImGui::CreateContext();
@@ -124,6 +148,7 @@ void Program::Initialize()
 
         ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
         ImGuizmo::Enable(true);
+        ImGuizmo::SetOrthographic(camera.is_orthographic);
     }
 
     simulationTransform = glm::scale(simulationTransform, {1, 1, 1});
@@ -143,7 +168,6 @@ void Program::Initialize()
         {.csg_op = CSGInstructionOp::SPHERE, .stream_index = 0},
 
         {.csg_op = CSGInstructionOp::UNARY_OP_EXTRUDE_POST, .stream_index = 0},
-        {.csg_op = CSGInstructionOp::POP_POSITION, .stream_index = 0},
         {.csg_op = CSGInstructionOp::BOX, .stream_index = 0},
         {.csg_op = CSGInstructionOp::BINARY_OP_INTERSECTION, .stream_index = 0},
 
@@ -175,6 +199,9 @@ void Program::Initialize()
         {.position = {0, 0, 0}, .uniform_scale = 2, .rotation = {0, 0, 0, 1}},
     };
 
+    CSGInstructionExtrudePost extrude[1] = {
+        {.h = 5}};
+
     CSGMaterialComponent material_components[3] = {
         {3, 0.8},
         {1, 0.1},
@@ -185,12 +212,14 @@ void Program::Initialize()
     csg_material.resize(ARRAY_LENGTH(material_components));
     csg_instructions_box.resize(ARRAY_LENGTH(instructions));
     csg_instructions_sphere.resize(ARRAY_LENGTH(instructions));
+    csg_instructions_extrude_post.resize(ARRAY_LENGTH(extrude));
 
     memcpy(&csg_transforms[0], transforms, sizeof(transforms));
     memcpy(&csg_instructions[0], instructions, sizeof(instructions));
     memcpy(&csg_instructions_box[0], boxes, sizeof(boxes));
     memcpy(&csg_instructions_sphere[0], spheres, sizeof(spheres));
     memcpy(&csg_material[0], material_components, sizeof(material_components));
+    memcpy(&csg_instructions_extrude_post[0], extrude, sizeof(extrude));
 
     simulation.csg_invocations = new CSGInvocation[1];
     simulation.csg_invocation_count = 1;
@@ -202,10 +231,31 @@ void Program::Initialize()
         csg_instructions,
         csg_instructions_box,
         csg_instructions_sphere,
+        this->csg_instructions_extrude_post,
         csg_material,
         false);
 
     simulation.window = window;
+
+    std::int32_t env_map_width;
+    std::int32_t env_map_height;
+    std::int32_t env_map_channels;
+    std::uint8_t *data = stbi_load("../Assets/futuristic_env.jpg", &env_map_width, &env_map_height, &env_map_channels, 0);
+
+    assert(data);
+    assert(env_map_width);
+
+    glCreateTextures(GL_TEXTURE_2D, 1, &this->environment_map_texture);
+    glTextureStorage2D(this->environment_map_texture, 1, GL_RGB8, env_map_width, env_map_height);
+    glTextureSubImage2D(this->environment_map_texture, 0, 0, 0, env_map_width, env_map_height, GL_RGB, GL_UNSIGNED_BYTE, data);
+
+    ShaderSource rendererShaders[2]{
+        {GL_VERTEX_SHADER, envMapVertexBinary, sizeof(envMapVertexBinary)},
+        {GL_FRAGMENT_SHADER, envMapFragmentBinary, sizeof(envMapFragmentBinary)}};
+
+    this->environment_map_shader_program = LoadProgram(rendererShaders, 2);
+
+    assert(this->environment_map_shader_program);
 }
 
 void Program::Shutdown()
@@ -230,19 +280,14 @@ void Program::OnImGuiRender()
 
     if (ImGui::Begin("Settings"))
     {
-        ImGui::DragFloat3("Camera Position", glm::value_ptr(camera.eye));
-        ImGui::DragFloat3("Camera Target", glm::value_ptr(camera.target));
-
         float fov_degrees = glm::degrees(camera.fov);
 
         ImGui::DragFloat("Fov", &fov_degrees);
 
         camera.fov = glm::radians(fov_degrees);
-        ImGui::DragFloat("Zoom", &camera.zoom, 0.01f);
-        ImGui::DragFloat("Near Plane", &camera.near, 0.1f);
-        ImGui::DragFloat("Far Plane", &camera.far, 1.0f);
 
-        ImGui::ColorEdit4("Clear Color", &renderSettings.clearColor.x);
+        ImGui::Checkbox("Orthographic", &camera.is_orthographic);
+
         ImGui::Checkbox("Wireframe", &renderSettings.wireframe);
         ImGui::Checkbox("Gamma Correction", &renderSettings.gammaCorrect);
 
@@ -340,8 +385,15 @@ void Program::OnImGuiRender()
         }
 
         {
-            glm::mat4 out_matrix;
-            ImGuizmo::ViewManipulate((float *)&camera.view, (float *)&camera.projection, ImGuizmo::OPERATION::UNIVERSAL, ImGuizmo::WORLD, (float *)&out_matrix, 10, ImVec2(io.DisplaySize.x - 128, 128), ImVec2(128, 128), 0x10101010);
+            glm::mat4 identity = glm::identity<glm::mat4>();
+            identity = glm::translate(glm::vec3{(float)this->simulation.width / 2.0f, (float)this->simulation.height / 2.0f, (float)this->simulation.depth / 2.0f});
+            ImGui::GetWindowDrawList()->AddCallback(imGuiEnableDepthTestingCallback, nullptr);
+
+            // ImGuizmo::DrawGrid((float *)&camera.view, (float *)&camera.projection, (float *)&identity, 64.0f);
+
+            ImGui::GetWindowDrawList()->AddCallback(imguiDisableDepthTestingCallback, nullptr);
+
+            ImGuizmo::ViewManipulate((float *)&camera.view, 100, ImVec2(io.DisplaySize.x - 128, 128), ImVec2(128, 128), 0x10101010);
         }
     }
 
@@ -383,7 +435,18 @@ void Program::OnImGuiRender()
                 "POP_POSITION",
             };
 
-            ImGui::Combo("Child Algebraic Operationb", (int *)&this->selected_tree->child_op, child_op_names, ARRAY_LENGTH(child_op_names));
+            ImGui::Combo("Child Algebraic Operation", (int *)&this->selected_tree->child_op, child_op_names, ARRAY_LENGTH(child_op_names));
+
+            ImGui::Combo("Unary Operation", (int *)&this->selected_tree->unary_op, child_op_names, ARRAY_LENGTH(child_op_names));
+
+            switch (this->selected_tree->unary_op)
+            {
+            case CSGInstructionOp::UNARY_OP_EXTRUDE_PRE:
+            {
+                ImGui::DragFloat("Height", &this->selected_tree->unary_op_data.extrude.h);
+                break;
+            }
+            }
 
             switch (this->selected_tree->sdf_type)
             {
@@ -437,7 +500,6 @@ void Program::OnImGuiRender()
 
         if (ImGui::BeginPopup("node_type_popup"))
         {
-
             if (ImGui::Selectable("Box"))
             {
                 CSGTree &current_node = this->csg_tree_root_nodes.emplace_back();
@@ -496,6 +558,7 @@ void Program::OnImGuiRender()
     this->csg_transforms.clear();
     this->csg_instructions_box.clear();
     this->csg_instructions_sphere.clear();
+    this->csg_instructions_extrude_post.clear();
 
     {
         std::size_t i = 0;
@@ -523,7 +586,6 @@ void Program::OnImGuiRender()
     {
         static int pos[3]{};
         static int size[3]{1, 1, 1};
-        ;
 
         static int radius = 1;
         static int diameter = 2;
@@ -564,6 +626,10 @@ void Program::OnImGuiRender()
             }
 
             ImGui::Unindent();
+
+            ImGui::DragFloat("Melting Point", &materials[selected].melting_point);
+            ImGui::DragFloat("Boiling Point", &materials[selected].boiling_point);
+            ImGui::DragFloat("Reflectivity", &materials[selected].reflectivity);
         }
 
         for (int i = 0; i < csg_material.size(); i++)
@@ -577,19 +643,6 @@ void Program::OnImGuiRender()
             ImGui::PopID();
         }
 
-        static auto continous = false;
-
-        ImGui::Checkbox("Continous", &continous);
-
-        static auto replace = true;
-
-        ImGui::Checkbox("Replace", &replace);
-
-        if (ImGui::Button("Reset"))
-        {
-            // TODO: implement reset on the gpu
-        }
-
         ImGui::Checkbox("Enable Simulation", &enableSimulation);
 
         ImGui::End();
@@ -598,7 +651,10 @@ void Program::OnImGuiRender()
 
 void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
 {
-    CSGInstruction &instruction = this->csg_instructions.emplace_back();
+    if (node.unary_op != CSGInstructionOp::IDENTITY)
+    {
+        this->csg_instructions.push_back({.csg_op = node.unary_op});
+    }
 
     const auto transform_index = this->csg_transforms.size();
 
@@ -613,6 +669,19 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
 
     this->csg_transforms.push_back(resolved_transform);
 
+    std::uint32_t identity_transform_index = 0xffffffff;
+
+    if (node.unary_op == CSGInstructionOp::UNARY_OP_EXTRUDE_PRE)
+    {
+        identity_transform_index = this->csg_transforms.size();
+        this->csg_transforms.push_back(CSGRigidTransform::identity());
+
+        this->csg_instructions.push_back({.csg_op = CSGInstructionOp::TRANSFORM, .stream_index = (std::uint32_t)transform_index});
+        this->csg_instructions.push_back({.csg_op = node.unary_op});
+    }
+
+    CSGInstruction &instruction = this->csg_instructions.emplace_back();
+
     switch (node.sdf_type)
     {
     case CSGTreeType::box:
@@ -623,6 +692,11 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
         box_data.bounds = node.data.box.bounds;
         box_data.rigid_transform = transform_index;
         box_data.material = 0;
+
+        if (identity_transform_index != 0xffffffff)
+        {
+            box_data.rigid_transform = identity_transform_index;
+        }
 
         instruction.csg_op = CSGInstructionOp::BOX;
         instruction.stream_index = stream_index;
@@ -638,6 +712,11 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
         sphere_data.rigid_transform = transform_index;
         sphere_data.material = 0;
 
+        if (identity_transform_index != 0xffffffff)
+        {
+            sphere_data.rigid_transform = identity_transform_index;
+        }
+
         instruction.csg_op = CSGInstructionOp::SPHERE;
         instruction.stream_index = stream_index;
 
@@ -645,9 +724,17 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
     }
     }
 
-    if (node.unary_op != CSGInstructionOp::IDENTITY)
+    if (node.unary_op == CSGInstructionOp::UNARY_OP_EXTRUDE_PRE)
     {
-        this->csg_instructions.push_back({.csg_op = node.unary_op});
+        const auto stream_idx = this->csg_instructions_extrude_post.size();
+
+        auto &extrude_data = this->csg_instructions_extrude_post.emplace_back();
+
+        extrude_data.h = node.unary_op_data.extrude.h;
+
+        this->csg_instructions.push_back({.csg_op = CSGInstructionOp::TRANSFORM_POST, .stream_index = (std::uint32_t)transform_index});
+
+        this->csg_instructions.push_back({.csg_op = CSGInstructionOp::UNARY_OP_EXTRUDE_POST, .stream_index = (std::uint32_t)stream_idx});
     }
 
     std::size_t i = 0;
@@ -733,6 +820,7 @@ void Program::Render()
         csg_instructions,
         csg_instructions_box,
         csg_instructions_sphere,
+        csg_instructions_extrude_post,
         csg_material,
         true);
 
@@ -766,7 +854,7 @@ void Program::Render()
 
         this->mouse_scroll = 0;
 
-        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_2) && !ImGui::IsAnyItemActive())
+        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_2) && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsingViewManipulate())
         {
             const auto lateral_vector = glm::cross((camera.target - camera.eye), glm::vec3{0, 1, 0});
 
@@ -782,6 +870,12 @@ void Program::Render()
     }
 
     camera.projection = glm::perspective(camera.fov, (float)displayWidth / (float)displayHeight, camera.near, camera.far);
+
+    if (camera.is_orthographic)
+    {
+        camera.projection = glm::ortho(-(float)this->displayWidth / 2.0f, (float)this->displayWidth / 2.0f, (float)this->displayHeight / 2.0f, -(float)this->displayHeight / 2.0f, 0.1f, 100.0f);
+        // camera.projection = glm::ortho(0.0f, (float)this->displayWidth, (float)this->displayHeight, 0.0f, 0.0f, 1000.0f);
+    }
     camera.view = glm::lookAt(camera.eye, camera.target, glm::vec3{0.0f, 1.0f, 0.0f});
 
     simulation.model = simulationTransform;
@@ -803,6 +897,16 @@ void Program::Render()
     }
 
     simulation.Update(enableSimulation);
+
+    glUseProgram(this->environment_map_shader_program);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, this->simulation.uniformBuffer);
+    glBindTexture(GL_TEXTURE_2D, this->environment_map_texture);
+    glBindTextureUnit(2, this->environment_map_texture);
+
+    glBindVertexArray(simulation.vertexArray);
+    glDisable(GL_CULL_FACE);
+
+    glDrawArrays(GL_TRIANGLES, 0, 36);
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);

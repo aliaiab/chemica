@@ -84,6 +84,6 @@ void main()
     float radiation_rate = 0.0001 * 5.6e-8 * pow(currentTemperature, 4);
     float radiation_factor = 1 - (float(occluded_faces) / float(neighbours.length()));
 
-    //uOutput[index] += -radiation_rate * radiation_factor;
+    uOutput[index] += -radiation_rate * radiation_factor;
     uOutput[index] = max(0, uOutput[index]);
 }

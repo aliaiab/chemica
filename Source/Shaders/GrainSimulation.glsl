@@ -42,17 +42,9 @@ layout(std430, binding = 21) restrict buffer OutDeviationBuffer {
 };
 
 ivec3 getOffset(uint substep) {
-    //TODO: do this outside the shader on the cpu
-    uint i = substep % 8;
-
     if (false) {
-
         //traditional margolus neighbourhood
-        if (substep % 2 != 0) {
-            return ivec3(1, 1, 1);
-        }
-
-        return ivec3(0, 0, 0);
+        return ivec3(substep & 1);
     }
 
     if (true) {
@@ -68,31 +60,12 @@ ivec3 getOffset(uint substep) {
             case 4:
             return ivec3(0, 0, 1);
             case 5:
-            return ivec3(0, 1, 0);
+            return ivec3(1, 0, 1);
             case 6:
             return ivec3(0, 1, 1);
             case 7:
             return ivec3(1, 1, 0);
         }
-    }
-
-    switch (i) {
-        case 0:
-        return ivec3(0, 0, 0);
-        case 1:
-        return ivec3(1, 0, 0);
-        case 2:
-        return ivec3(0, 1, 0);
-        case 3:
-        return ivec3(0, 0, 1);
-        case 4:
-        return ivec3(1, 1, 0);
-        case 5:
-        return ivec3(0, 1, 1);
-        case 6:
-        return ivec3(1, 0, 1);
-        case 7:
-        return ivec3(1, 1, 1);
     }
 
     return ivec3(0, 0, 0);
@@ -124,11 +97,15 @@ Voxel getVoxel(ivec3 position) {
     return voxel;
 }
 
-uint getPhase(Voxel voxel) {
+uint computePhase(Voxel voxel) {
     VoxelMaterial material = uMaterials[voxel.type];
 
     if (voxel.temperature < material.melting_point) {
         return VOXEL_PHASE_SOLID;
+    }
+
+    if (voxel.temperature > material.boiling_point) {
+        return VOXEL_PHASE_GAS;
     }
 
     return VOXEL_PHASE_LIQUID;
@@ -152,10 +129,14 @@ vec4 hash43(vec4 p)
 }
 
 void main() {
+    uint index = gl_GlobalInvocationID.x + uSize.x * gl_GlobalInvocationID.y + uSize.x * uSize.y * gl_GlobalInvocationID.z;
     ivec3 offset = getOffset(substep_index);
+
     ivec3 position = ivec3(gl_GlobalInvocationID) + offset;
-    ivec3 p = (position / 2) * 2 - offset;
-    ivec3 xyz = position % 2;
+    //Finds the position of the block
+    ivec3 p = (position & 0xfffffffe) - offset;
+    //Finds the position within the block
+    ivec3 xyz = (position) & 1;
     //Index within the 2x2x2 local neighbourhood
     int local_index = xyz.x + xyz.y * 2 + xyz.z * 2 * 2;
 
@@ -183,24 +164,31 @@ void main() {
                     continue;
                 }
 
-                ivec3 local_pos_below = local_pos + ivec3(0, -1, 0);
-                ivec3 below_left = local_pos + ivec3(1 - x, -1, 0);
-                ivec3 below_right = local_pos + ivec3(0, -1, 1 - z);
-
                 uint i = x + y * 2 + z * 2 * 2;
-                uint i_below = x + (local_pos_below.y) * 2 + z * 2 * 2;
-                uint i_below_left = below_left.x + below_left.y * 2 + below_left.z * 2 * 2;
-                uint i_below_right = below_right.x + below_right.y * 2 + below_right.z * 2 * 2;
 
                 if (grid[i].type == 0) {
                     continue;
                 }
 
-                uint phase = getPhase(grid[i]);
+                uint phase = computePhase(grid[i]);
 
                 if (phase == VOXEL_PHASE_SOLID) {
                     continue;
                 }
+
+                ivec3 local_pos_below = local_pos + ivec3(0, -1, 0);
+                ivec3 below_left = local_pos + ivec3(1 - x, -1, 0);
+                ivec3 below_right = local_pos + ivec3(0, -1, 1 - z);
+
+                if (phase == VOXEL_PHASE_GAS) {
+                    local_pos_below = local_pos + ivec3(0, 1, 0);
+                    below_left = local_pos + ivec3(1 - x, 1, 0);
+                    below_right = local_pos + ivec3(0, 1, 1 - z);
+                }
+
+                uint i_below = x + (local_pos_below.y) * 2 + z * 2 * 2;
+                uint i_below_left = below_left.x + below_left.y * 2 + below_left.z * 2 * 2;
+                uint i_below_right = below_right.x + below_right.y * 2 + below_right.z * 2 * 2;
 
                 // grid[i].deviation = 0;
 
@@ -237,8 +225,6 @@ void main() {
             }
         }
     }
-
-    uint index = gl_GlobalInvocationID.x + uSize.x * gl_GlobalInvocationID.y + uSize.x * uSize.y * gl_GlobalInvocationID.z;
 
     out_voxel_lattice[index] = grid[local_index].type;
     out_temperature[index] = grid[local_index].temperature;
