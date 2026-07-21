@@ -185,8 +185,8 @@ void Simulation::Create()
 
     const GLbitfield storageFlags = GL_DYNAMIC_STORAGE_BIT;
 
-    glNamedBufferStorage(simulationMaterialBuffers[0], bufferLength * sizeof(std::uint32_t), nullptr, storageFlags);
-    glNamedBufferStorage(simulationMaterialBuffers[1], bufferLength * sizeof(std::uint32_t), nullptr, storageFlags);
+    glNamedBufferStorage(simulationMaterialBuffers[0], bufferLength * sizeof(std::uint16_t), nullptr, storageFlags);
+    glNamedBufferStorage(simulationMaterialBuffers[1], bufferLength * sizeof(std::uint16_t), nullptr, storageFlags);
 
     glNamedBufferStorage(simulationTemperatureBuffers[0], bufferLength * sizeof(float), nullptr, storageFlags);
     glNamedBufferStorage(simulationTemperatureBuffers[1], bufferLength * sizeof(float), nullptr, storageFlags);
@@ -198,7 +198,12 @@ void Simulation::Create()
 
     glNamedBufferData(voxelMaterialBuffer, sizeof(VoxelMaterial) * voxelMaterialCount, voxelMaterials, GL_DYNAMIC_DRAW);
 
+    glCreateBuffers(1, &voxelMaterialVisualBuffer);
+
+    glNamedBufferData(voxelMaterialBuffer, sizeof(VoxelMaterialVisual) * voxelMaterialCount, voxelMaterialsVisual, GL_DYNAMIC_DRAW);
+
     glCreateBuffers(1, &csg_composite_material_buffer);
+    glCreateBuffers(1, &this->point_light_buffer);
 }
 
 void Simulation::Destroy()
@@ -315,6 +320,7 @@ void Simulation::UpdateCSGProgram(
 void Simulation::Update(bool enable_simulation)
 {
     glNamedBufferData(voxelMaterialBuffer, sizeof(VoxelMaterial) * voxelMaterialCount, voxelMaterials, GL_DYNAMIC_DRAW);
+    glNamedBufferData(voxelMaterialVisualBuffer, sizeof(VoxelMaterialVisual) * voxelMaterialCount, voxelMaterialsVisual, GL_DYNAMIC_DRAW);
 
     simulationSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
@@ -338,12 +344,14 @@ void Simulation::Update(bool enable_simulation)
 
     glNamedBufferSubData(uniformBuffer, 0, sizeof(uniforms), &uniforms);
     glNamedBufferSubData(activeRegionBuffer, 0, sizeof(activeRegion), &activeRegion);
+    glNamedBufferData(this->point_light_buffer, this->point_lights.size() * sizeof(PointLight), &this->point_lights[0], GL_DYNAMIC_DRAW);
 
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, uniformBuffer);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, simulationTemperatureBuffers[0]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, simulationTemperatureBuffers[1]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, voxelMaterialBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 23, voxelMaterialVisualBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, activeRegionBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, simulationMaterialBuffers[0]);
 
@@ -357,6 +365,7 @@ void Simulation::Update(bool enable_simulation)
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 20, simulationDeviationBuffers[0]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, simulationDeviationBuffers[1]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 22, this->point_light_buffer);
 
     glUseProgram(fill_region_shader);
 

@@ -17,14 +17,19 @@ constexpr auto KelvinToCelsius(std::uint32_t kelvin)
 
 struct VoxelMaterial
 {
-    // TODO: seperate rendering from physics parameters
-    std::uint32_t color = 0;
     std::uint32_t density = 1;
     float heat_conductivity = 1;
     float heat_capacity = 1;
     float melting_point = 1000;
     float boiling_point = 2000;
+};
+
+struct VoxelMaterialVisual
+{
+    std::uint32_t albedo = 0;
+    std::uint32_t roughness_metalness = glm::packUnorm4x8({1, 1, 0, 0});
     float reflectivity = 0;
+    float refractive_index = 1.5;
 };
 
 enum struct VoxelPhase : std::uint32_t
@@ -127,6 +132,14 @@ struct CSGInvocation
     glm::ivec3 bound_max;
 };
 
+struct PointLight
+{
+    glm::vec3 position;
+    float radiance;
+    std::uint32_t colour;
+    std::uint32_t pad[3];
+};
+
 struct Simulation
 {
     GLFWwindow *window;
@@ -139,6 +152,7 @@ struct Simulation
     glm::ivec3 baseVelocity{0, -1, 0};
 
     VoxelMaterial *voxelMaterials = nullptr;
+    VoxelMaterialVisual *voxelMaterialsVisual = nullptr;
     std::size_t voxelMaterialCount = 0;
 
     std::uint32_t rendererProgram = 0;
@@ -168,11 +182,15 @@ struct Simulation
     std::uint32_t activeRegionBuffer = 0;
 
     std::uint32_t voxelMaterialBuffer = 0;
+    std::uint32_t voxelMaterialVisualBuffer = 0;
 
     std::uint32_t simulationShader = 0;
     std::uint32_t thermalShader = 0;
     std::uint32_t grain_simulation_shader = 0;
     std::uint32_t fill_region_shader = 0;
+
+    std::uint32_t point_light_buffer = 0;
+    std::vector<PointLight> point_lights;
 
     std::uint32_t timestep_index = 0;
 

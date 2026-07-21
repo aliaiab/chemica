@@ -69,7 +69,7 @@ inline std::uint32_t LoadProgram(const ShaderSource *sources, std::size_t count)
 
         delete[] infoLog;
 
-        std::exit(EXIT_FAILURE);
+        assert(false);
 
         return 0;
     }

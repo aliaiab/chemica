@@ -10,7 +10,7 @@ layout(local_size_x = KERNEL_SIZE, local_size_y = KERNEL_SIZE, local_size_z = KE
 
 layout(std430, binding = 4) restrict buffer InVoxelMaterials
 {
-    uint in_voxel_lattice[];
+    uint16_t in_voxel_lattice[];
 };
 
 layout(std430, binding = 0) restrict buffer TemperatureInput
@@ -149,12 +149,6 @@ layout(std430, binding = 20) restrict buffer InDeviationBuffer {
     int8_t in_deviation_buffer[];
 };
 
-layout(std430, binding = 21) restrict buffer OutDeviationBuffer {
-    int8_t out_deviation_buffer[];
-};
-
-layout(binding = 22) uniform sampler2D test_texture;
-
 //Rotate the vector v by the quaternion q
 vec3 rotateVector(vec4 q, vec3 v) {
     // return rotated;
@@ -211,6 +205,7 @@ FieldResult executeDistanceProgram(vec3 in_position) {
                 vec3 point = transformPoint(position, transform);
 
                 transform_stack[stack_pointer] = instructions_box[inst.stream_index].rigid_transform;
+                material_stack[stack_pointer] = instructions_box[inst.stream_index].material;
                 distance_stack[stack_pointer++] = sdBox(point, instructions_box[inst.stream_index].bounds) * transform.uniform_scale;
 
                 break;
@@ -222,7 +217,8 @@ FieldResult executeDistanceProgram(vec3 in_position) {
 
                 vec3 point = transformPoint(position, transform);
 
-                transform_stack[stack_pointer] = instructions_box[inst.stream_index].rigid_transform;
+                transform_stack[stack_pointer] = instructions_sphere[inst.stream_index].rigid_transform;
+                material_stack[stack_pointer] = instructions_sphere[inst.stream_index].material;
                 distance_stack[stack_pointer++] = sdSphere(point, instructions_sphere[inst.stream_index].radius) * transform.uniform_scale;
 
                 break;
@@ -232,14 +228,18 @@ FieldResult executeDistanceProgram(vec3 in_position) {
             {
                 float d1 = distance_stack[--stack_pointer];
                 uint transform_1 = transform_stack[stack_pointer];
+                uint material_1 = material_stack[stack_pointer];
                 float d0 = distance_stack[--stack_pointer];
                 uint transform_0 = transform_stack[stack_pointer];
+                uint material_0 = material_stack[stack_pointer];
 
                 if (d0 < d1) {
                     transform_stack[stack_pointer] = transform_0;
+                    material_stack[stack_pointer] = material_0;
                 }
                 else {
                     transform_stack[stack_pointer] = transform_1;
+                    material_stack[stack_pointer] = material_1;
                 }
 
                 distance_stack[stack_pointer++] = sdfUnion(d0, d1);
@@ -344,7 +344,7 @@ FieldResult executeDistanceProgram(vec3 in_position) {
 
     result.signed_distance = distance_stack[stack_pointer - 1];
     result.transform = transform_stack[stack_pointer - 1];
-    result.material = 0;
+    result.material = material_stack[stack_pointer - 1];
 
     return result;
 }
@@ -399,12 +399,14 @@ void main() {
             running_weight += composite_material[i].weight;
 
             if (random.r < running_weight) {
-                in_voxel_lattice[index] = composite_material[i].material;
+                in_voxel_lattice[index] = uint16_t(composite_material[i].material);
                 break;
             }
         }
+        in_voxel_lattice[index] = uint16_t(field.material);
 
         in_temperature[index] = min(6000, 300 * (1 / transform_scale) + abs(field.signed_distance) * 600);
+        in_temperature[index] = 0;
         //in_temperature[index] = max(0, 1500 + 1000 * transform_scale * sin(-field.signed_distance * 5));
         //in_temperature[index] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
 

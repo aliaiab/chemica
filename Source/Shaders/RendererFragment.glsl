@@ -1,8 +1,10 @@
 #version 460
+
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
 #include "Common.glsl"
+#include "PBR.glsl"
 
 layout(location = 0) in Out
 {
@@ -17,9 +19,13 @@ layout(std430, binding = 0) restrict readonly buffer Materials
     VoxelMaterial uMaterials[];
 };
 
+layout(std430, binding = 23) restrict readonly buffer VoxelMaterialsVisual {
+    VoxelMaterialVisual voxel_materials_visual[];
+};
+
 layout(std430, binding = 1) restrict readonly buffer VoxelMaterials
 {
-    uint uVoxelMaterials[];
+    uint16_t uVoxelMaterials[];
 };
 
 layout(std430, binding = 2) restrict readonly buffer VoxelTemperature
@@ -27,14 +33,25 @@ layout(std430, binding = 2) restrict readonly buffer VoxelTemperature
     float uVoxelTemperatures[];
 };
 
-layout(std430, binding = 3) restrict readonly buffer VoxelPhase
-{
-    uint uVoxelPhases[];
-};
-
 layout(std430, binding = 21) restrict buffer OutDeviationBuffer {
     int8_t out_deviation_buffer[];
 };
+
+layout(binding = 22) uniform sampler2D environment_map;
+
+layout(std430, binding = 22) restrict buffer PointLights {
+    PointLight point_lights[];
+};
+
+vec2 SampleSphericalMap(vec3 v)
+{
+    const vec2 invAtan = vec2(0.1591, 0.3183);
+    vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
+    uv *= invAtan;
+    uv += 0.5;
+    uv.y = 1 - uv.y;
+    return uv;
+}
 
 float srgbXYZ2RGBPostprocess(float c)
 {
@@ -116,10 +133,18 @@ struct RayCastResult {
     vec2 uv;
 };
 
-float raycast(in uint medium_material, in vec3 ro, in vec3 rd, out vec3 oVos, out vec3 oDir, out uint voxel_index) {
+float raycast(
+    in uint medium_material,
+    in vec3 ro,
+    in vec3 rd,
+    out vec3 oVos,
+    out vec3 oDir,
+    out uint voxel_index
+) {
     vec3 pos = floor(ro);
-    vec3 ri = 1.0 / rd;
+    vec3 ri = length(rd) / rd;
     vec3 rs = sign(rd);
+    vec3 delta_dis = abs(length(rd) / rd);
     vec3 dis = (pos - ro + 0.5 + rs * 0.5) * ri;
 
     float res = -1;
@@ -144,7 +169,8 @@ float raycast(in uint medium_material, in vec3 ro, in vec3 rd, out vec3 oVos, ou
         }
 
         mm = step(dis.xyz, dis.yzx) * step(dis.xyz, dis.zxy);
-        dis += mm * rs * ri;
+        mm = vec3(lessThanEqual(dis.xyz, min(dis.yzx, dis.zxy)));
+        dis += mm * delta_dis;
         pos += mm * rs;
     }
 
@@ -159,6 +185,51 @@ float raycast(in uint medium_material, in vec3 ro, in vec3 rd, out vec3 oVos, ou
     oVos = vos;
 
     return t * res;
+}
+
+vec3 computeLightRadiance(
+    PointLight light,
+    vec3 ray_origin,
+    vec3 ray_direction,
+    uint medium_material
+) {
+    vec3 pos = ray_origin;
+
+    vec3 out_radiance = unpackUnorm4x8(light.colour).rgb * light.radiance;
+
+    for (int i = 0; i < 10; i++) {
+        vec3 def_dir;
+        uint voxel_index;
+
+        float light_occlusion = raycast(
+                medium_material,
+                pos + 0.5,
+                ray_direction,
+                ray_origin,
+                def_dir,
+                voxel_index
+            );
+
+        if (light_occlusion > 0) {
+            vec4 albedo = unpackUnorm4x8(voxel_materials_visual[uVoxelMaterials[voxel_index]].albedo);
+            medium_material = voxel_index;
+
+            if (albedo.a < 1.0) {
+                out_radiance.rgb *= albedo.rgb * (1 - albedo.a);
+            }
+            else {
+                out_radiance.rgb *= 0;
+                break;
+            }
+
+            pos = ray_origin;
+        }
+        else {
+            break;
+        }
+    }
+
+    return out_radiance;
 }
 
 //Compute the incoming light reflecting off a voxel
@@ -181,37 +252,67 @@ vec4 computeVoxelLight(
     float voxel_deviation = float(out_deviation_buffer[voxel_index]) / 255;
 
     float position_variation = (voxel_deviation) * 0.1;
-    vec4 raw_color = unpackUnorm4x8(uMaterials[uVoxelMaterials[voxel_index]].color);
+    vec4 raw_color = unpackUnorm4x8(voxel_materials_visual[uVoxelMaterials[voxel_index]].albedo);
 
-    vec4 materialColor = vec4(0.5 * (raw_color.rgb + raw_color.rgb * position_variation), raw_color.a) + vec4(spectrum(uVoxelTemperatures[voxel_index]), 0);
+    vec4 albedo_vec4 = vec4(0.5 * (raw_color.rgb + raw_color.rgb * position_variation), raw_color.a) + vec4(spectrum(uVoxelTemperatures[voxel_index]), 0);
+    vec3 albedo = albedo_vec4.xyz;
 
-    vec3 light_pos = vec3(128, 128, 64);
-    vec3 light_color = 600 * vec3(0.5, 0.3, 0.3);
+    uint roughness_metalness_packed = voxel_materials_visual[uVoxelMaterials[voxel_index]].roughness_metalness;
+    vec4 roughness_metalness = unpackUnorm4x8(roughness_metalness_packed);
+    float roughness = roughness_metalness.r + position_variation * 1;
+    float metallic = roughness_metalness.g + position_variation * 1;
 
-    vec3 displacement_to_light = light_pos - pos;
-    vec3 dir_to_light = normalize(displacement_to_light);
-    float distance_to_light = length(displacement_to_light);
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, albedo, metallic);
 
-    float light = max(dot(normal, displacement_to_light), 0) * (1 / (distance_to_light * distance_to_light));
+    vec3 out_radiance = vec3(0);
 
-    vec3 def_vos;
-    vec3 def_dir;
-    uint def_idx;
+    for (int i = 0; i < point_lights.length(); i++) {
+        PointLight point_light = point_lights[i];
+        vec3 light_pos = point_light.position;
 
-    float light_occlusion = raycast(
-            medium_material,
-            pos + 0.5,
-            dir_to_light,
-            def_vos,
-            def_dir,
-            def_idx
-        );
+        vec3 displacement_to_light = light_pos - pos;
+        vec3 dir_to_light = normalize(displacement_to_light);
 
-    light *= light_occlusion < 0 ? 1 : 0.5;
+        vec3 light_radiance = computeLightRadiance(
+                point_light,
+                pos + 0.5,
+                dir_to_light,
+                medium_material
+            );
 
-    // materialColor.rgb *= light * light_color;
+        //Dodgy
+        vec3 V = normalize(-ray_direction);
 
-    return materialColor;
+        vec3 H = normalize(V + dir_to_light);
+        float distance_to_light_sqr = dot(displacement_to_light, displacement_to_light);
+        float attentuation = 1.0 / (distance_to_light_sqr);
+
+        vec3 radiance = light_radiance * attentuation;
+
+        // cook-torrance brdf
+        float NDF = DistributionGGX(normal, H, roughness);
+        float G = GeometrySmith(normal, V, dir_to_light, roughness);
+        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+        vec3 kS = F;
+        vec3 kD = vec3(1.0) - kS;
+        kD *= 1.0 - metallic;
+
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(dot(normal, ray_direction), 0.0) * max(dot(normal, dir_to_light), 0.0) + 0.0001;
+        vec3 specular = numerator / denominator;
+
+        // add to outgoing radiance Lo
+        float NdotL = max(dot(normal, displacement_to_light), 0.0);
+
+        out_radiance += (kD * albedo / PI + specular) * radiance * NdotL;
+    }
+
+    vec3 ambient = vec3(0.03) * albedo;
+    vec3 final_radiance = ambient + out_radiance;
+
+    return vec4(final_radiance, albedo_vec4.a);
 }
 
 vec2 intersectAABB(vec3 rayOrigin, vec3 rayDir, vec3 boxMin, vec3 boxMax) {
@@ -258,6 +359,7 @@ void main()
     vec4 total_radiance = vec4(0);
     bool hit = false;
     vec3 hit_position = vec3(0);
+    float refractive_index = 1;
 
     for (int i = 0; i < 10; i++) {
         float ray_cast_t = raycast(
@@ -293,7 +395,7 @@ void main()
 
             vec3 reflected_dir = reflect(ray_direction, normal);
 
-            float reflectivity = uMaterials[uVoxelMaterials[voxel_index]].reflectivity;
+            float reflectivity = voxel_materials_visual[uVoxelMaterials[voxel_index]].reflectivity;
 
             if (reflectivity > 0) {
                 float t = raycast(
@@ -307,6 +409,9 @@ void main()
 
                 //sky colour
                 vec4 reflected_material = unpackUnorm4x8(0xFF9B7C70);
+
+                vec2 env_map_uv = SampleSphericalMap(normalize(reflected_dir));
+                reflected_material = texture(environment_map, env_map_uv);
 
                 if (t > 0) {
                     reflected_material = computeVoxelLight(
@@ -331,15 +436,23 @@ void main()
             if (voxel_radiance.a >= 1) {
                 break;
             }
+            else {
+                //Refraction
+
+                ray_direction = refract(ray_direction, normal, refractive_index / voxel_materials_visual[medium_material].refractive_index);
+                refractive_index = voxel_materials_visual[medium_material].refractive_index;
+            }
         }
         else {
+            vec2 env_map_uv = SampleSphericalMap(normalize(ray_direction));
+            total_radiance *= texture(environment_map, env_map_uv);
             break;
         }
     }
-    ;
 
-    if (hit && length(total_radiance.xyz) > 0) {
-        aColor.xyz = total_radiance.xyz;
+    if (hit) {
+        aColor.xyz = total_radiance.xyz / (total_radiance.xyz + vec3(1));
+        aColor.xyz = pow(aColor.xyz, vec3(1.0 / 2.2));
         aColor.a = 1;
 
         vec4 clip_pos = uProjection * uView * uModel * vec4(hit_position, 1);

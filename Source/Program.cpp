@@ -67,6 +67,8 @@ void Program::Initialize()
 
     window = glfwCreateWindow(640, 480, "Chemica", nullptr, nullptr);
 
+    assert(window != nullptr);
+
     glfwSetWindowUserPointer(window, this);
 
     glfwMaximizeWindow(window);
@@ -102,35 +104,38 @@ void Program::Initialize()
         "Glass"};
 
     memset(materials, 0, sizeof(materials));
+    memset(voxel_materials_visual, 0, sizeof(voxel_materials_visual));
 
     for (int i = 0; i < ARRAY_LENGTH(materials); i++)
     {
         materials[i] = {};
         materials[i].melting_point = 100000;
+        voxel_materials_visual[i] = {};
     }
 
-    materials[0].color = 0;
+    voxel_materials_visual[0].albedo = 0;
     materials[0].heat_conductivity = 0;
 
-    materials[1].color = glm::packUnorm4x8({0.89f, 0.79f, 0.55f, 1.0f});
+    voxel_materials_visual[1].albedo = glm::packUnorm4x8({0.89f, 0.79f, 0.55f, 1.0f});
     materials[1].heat_conductivity = 0.5;
 
-    materials[2].color = glm::packUnorm4x8({0.29f, 0.29f, 0.29f, 1.0f});
+    voxel_materials_visual[2].albedo = glm::packUnorm4x8({0.29f, 0.29f, 0.29f, 1.0f});
     materials[2].heat_conductivity = 1;
     materials[2].melting_point = 1000;
 
-    materials[3].color = glm::packUnorm4x8({0.17f, 0.56f, 0.82f, 0.19f});
+    voxel_materials_visual[3].albedo = glm::packUnorm4x8({0.17f, 0.56f, 0.82f, 0.19f});
     materials[3].heat_conductivity = 0.9;
 
     // materials[4].color = glm::packUnorm4x8({ 0.72f, 0.45f, 0.2f, 1.0f });
-    materials[4].color = 0xff1d2971;
+    voxel_materials_visual[4].albedo = 0xff1d2971;
     materials[4].heat_conductivity = 3;
     materials[4].melting_point = 3000;
 
-    materials[5].color = glm::packUnorm4x8({0.9f, 0.5f, 0.5f, 0.5f});
+    voxel_materials_visual[5].albedo = glm::packUnorm4x8({0.9f, 0.5f, 0.5f, 0.5f});
     materials[5].heat_conductivity = 0.3;
 
     simulation.voxelMaterials = materials;
+    simulation.voxelMaterialsVisual = voxel_materials_visual;
     simulation.voxelMaterialCount = ARRAY_LENGTH(materials);
 
     simulation.Create();
@@ -256,6 +261,12 @@ void Program::Initialize()
     this->environment_map_shader_program = LoadProgram(rendererShaders, 2);
 
     assert(this->environment_map_shader_program);
+
+    this->simulation.point_lights.push_back(PointLight{
+        .position = glm::vec3(128, 128, 64),
+        .radiance = 100.0f,
+        .colour = glm::packUnorm4x8({0.5f, 0.3f, 0.3f, 1.0f}),
+    });
 }
 
 void Program::Shutdown()
@@ -448,6 +459,17 @@ void Program::OnImGuiRender()
             }
             }
 
+            ImGui::Separator();
+            const char *materialNames[]{
+                "Sand",
+                "Stone",
+                "Water",
+                "Copper",
+                "Glass"};
+            int material = this->selected_tree->material - 1;
+            ImGui::Combo("Material", &material, materialNames, ARRAY_LENGTH(materialNames));
+            this->selected_tree->material = (std::uint16_t)material + 1;
+
             switch (this->selected_tree->sdf_type)
             {
             case CSGTreeType::box:
@@ -507,6 +529,7 @@ void Program::OnImGuiRender()
                 current_node.sdf_type = CSGTreeType::box;
                 current_node.data.box.bounds = glm::vec3(10);
                 current_node.transform = CSGRigidTransform::identity();
+                current_node.material = 1;
                 memcpy(current_node.name, "Box", 3 + 1);
 
                 this->selected_tree = &current_node;
@@ -521,6 +544,7 @@ void Program::OnImGuiRender()
                 current_node.data = {
                     .sphere = {.radius = 10},
                 };
+                current_node.material = 1;
                 current_node.transform = CSGRigidTransform::identity();
                 memcpy(current_node.name, "Sphere", 6 + 1);
 
@@ -534,6 +558,36 @@ void Program::OnImGuiRender()
         for (CSGTree &node : this->csg_tree_root_nodes)
         {
             this->OnImGuiCSGTreeNode(&node, nullptr);
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::Button("Add Light"))
+        {
+            auto &light = this->simulation.point_lights.emplace_back();
+            light.radiance = 10.0f;
+            light.colour = 0xffffffff;
+            light.position = glm::vec3(0);
+        }
+
+        std::uint32_t i = 0;
+
+        for (auto &light : this->simulation.point_lights)
+        {
+            ImGui::Separator();
+            ImGui::PushID(i);
+
+            ImGui::DragFloat3("Position", &light.position.x);
+            ImGui::DragFloat("Radiance", &light.radiance);
+
+            glm::vec3 colour = glm::vec3(glm::unpackUnorm4x8(light.colour));
+
+            ImGui::ColorEdit3("Colour", &colour.x);
+
+            light.colour = glm::packUnorm4x8(glm::vec4(colour, 1));
+            ImGui::PopID();
+
+            i += 1;
         }
 
         ImGui::End();
@@ -609,7 +663,7 @@ void Program::OnImGuiRender()
 
             for (std::uint8_t i = 0; i < ARRAY_LENGTH(materialNames); i++)
             {
-                const auto color = materials[i + 1].color;
+                const auto color = voxel_materials_visual[i + 1].albedo;
 
                 ImGui::PushID("Color");
 
@@ -629,7 +683,30 @@ void Program::OnImGuiRender()
 
             ImGui::DragFloat("Melting Point", &materials[selected].melting_point);
             ImGui::DragFloat("Boiling Point", &materials[selected].boiling_point);
-            ImGui::DragFloat("Reflectivity", &materials[selected].reflectivity);
+            ImGui::DragFloat("Reflectivity", &voxel_materials_visual[selected].reflectivity);
+
+            std::uint32_t *roughness_metalness_packed = &voxel_materials_visual[selected].roughness_metalness;
+            glm::vec4 roughness_metalness = glm::unpackUnorm4x8(*roughness_metalness_packed);
+            glm::vec4 roughness = roughness_metalness;
+            roughness.g = roughness_metalness.x;
+            roughness.b = roughness_metalness.x;
+            glm::vec4 metalness = roughness_metalness;
+            metalness.r = metalness.g;
+            metalness.g = metalness.g;
+            metalness.b = metalness.g;
+
+            ImGui::ColorEdit3("Roughness", &roughness.x);
+            ImGui::ColorEdit3("Metalness", &metalness.x);
+            roughness_metalness.r = roughness.x;
+            roughness_metalness.g = metalness.x;
+
+            *roughness_metalness_packed = glm::packUnorm4x8(roughness_metalness);
+
+            glm::vec4 color = glm::unpackUnorm4x8(voxel_materials_visual[selected].albedo);
+            ImGui::DragFloat("Transmissability", &color.a);
+            voxel_materials_visual[selected].albedo = glm::packUnorm4x8(color);
+
+            ImGui::Separator();
         }
 
         for (int i = 0; i < csg_material.size(); i++)
@@ -691,7 +768,7 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
 
         box_data.bounds = node.data.box.bounds;
         box_data.rigid_transform = transform_index;
-        box_data.material = 0;
+        box_data.material = node.material;
 
         if (identity_transform_index != 0xffffffff)
         {
@@ -710,7 +787,7 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
 
         sphere_data.radius = node.data.sphere.radius;
         sphere_data.rigid_transform = transform_index;
-        sphere_data.material = 0;
+        sphere_data.material = node.material;
 
         if (identity_transform_index != 0xffffffff)
         {
@@ -911,6 +988,8 @@ void Program::Render()
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glDepthMask(GL_TRUE);
+
+    glBindTextureUnit(22, this->environment_map_texture);
 
     simulation.Render();
 

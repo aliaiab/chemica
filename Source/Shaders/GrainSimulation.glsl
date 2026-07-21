@@ -15,12 +15,12 @@ layout(std430, binding = 2) restrict readonly buffer Materials
 
 layout(std430, binding = 4) restrict readonly buffer InVoxelMaterials
 {
-    uint in_voxel_lattice[];
+    uint16_t in_voxel_lattice[];
 };
 
 layout(std430, binding = 5) restrict buffer OutVoxelMaterials
 {
-    uint out_voxel_lattice[];
+    uint16_t out_voxel_lattice[];
 };
 
 layout(std430, binding = 6) restrict readonly buffer TemperatureInput
@@ -80,9 +80,9 @@ bool canSwap(Voxel grid[8], ivec3 from_position, ivec3 to_delta) {
 Voxel getVoxel(ivec3 position) {
     Voxel voxel;
 
-    voxel.type = 0;
-    voxel.temperature = 0;
-    voxel.deviation = 0;
+    voxel.type = uint16_t(0);
+    voxel.temperature = uint16_t(0);
+    voxel.deviation = uint16_t(0);
 
     if (!isInBounds(position)) {
         return voxel;
@@ -227,6 +227,6 @@ void main() {
     }
 
     out_voxel_lattice[index] = grid[local_index].type;
-    out_temperature[index] = grid[local_index].temperature;
+    out_temperature[index] = float16_t(grid[local_index].temperature);
     out_deviation_buffer[index] = int8_t(grid[local_index].deviation);
 }

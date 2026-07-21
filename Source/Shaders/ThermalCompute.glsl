@@ -12,7 +12,7 @@ layout(std430, binding = 0) restrict readonly buffer Input
     float uInput[];
 };
 
-layout(std430, binding = 1) restrict writeonly buffer Output
+layout(std430, binding = 1) restrict buffer Output
 {
     float uOutput[];
 };
@@ -24,7 +24,7 @@ layout(std430, binding = 2) restrict readonly buffer Materials
 
 layout(std430, binding = 4) restrict readonly buffer VoxelMaterials
 {
-    uint voxel_materials[];
+    uint16_t voxel_materials[];
 };
 
 void main()
@@ -53,7 +53,7 @@ void main()
 
     float currentTemperature = uInput[index];
 
-    VoxelMaterial material = uMaterials[voxel_materials[index]];
+    VoxelMaterial material = uMaterials[uint(voxel_materials[index])];
 
     uint occluded_faces = 0;
 
@@ -63,16 +63,16 @@ void main()
 
         if (all(greaterThanEqual(position + neighbours[i], ivec3(0))) && all(lessThan(position + neighbours[i], uSize)))
         {
-            float difference = uInput[neighbourIndex] - currentTemperature;
+            float difference = float(uInput[neighbourIndex]) - currentTemperature;
 
-            float interface_conductivity = uMaterials[voxel_materials[neighbourIndex]].heat_conductivity * material.heat_conductivity;
+            float interface_conductivity = uMaterials[uint(voxel_materials[neighbourIndex])].heat_conductivity * material.heat_conductivity;
 
             uOutput[index] += difference * 0.025 * interface_conductivity;
 
             accumulatedTemperature += uInput[neighbourIndex];
             temperatureSolidCount += 1;
 
-            if (voxel_materials[neighbourIndex] != 0) {
+            if (uint(voxel_materials[neighbourIndex]) != 0) {
                 occluded_faces += 1;
             }
         }

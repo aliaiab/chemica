@@ -54,6 +54,7 @@ struct CSGTree
     // zero = no shape
     CSGTreeType sdf_type;
     CSGTreeData data{};
+    std::uint16_t material;
     char name[16];
     union
     {
@@ -93,6 +94,7 @@ struct Program
     ProgramConfig config{};
     Simulation simulation{};
     VoxelMaterial materials[6];
+    VoxelMaterialVisual voxel_materials_visual[6];
     bool enableSimulation = false;
     GLFWwindow *window = nullptr;
     Camera camera{};
