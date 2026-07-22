@@ -105,16 +105,25 @@ static bool ParseArguments(ProgramConfig &config, const int argc, char **argv)
     return true;
 }
 
-int main(const int argc, char **argv)
+extern "C"
 {
-    static Program program{};
+    int cppMain(const int argc, char **argv)
+    {
+        static Program program{};
 
-    LoadConfigFile(program.config);
-    ParseArguments(program.config, argc, argv);
+        LoadConfigFile(program.config);
+        ParseArguments(program.config, argc, argv);
 
-    program.Initialize();
-    program.Run();
-    program.Shutdown();
+        program.Initialize();
+        program.Run();
+        program.Shutdown();
 
-    return 0;
+        return 0;
+    }
 }
+
+#if 0
+int main(const int argc, char** argv) {
+    return cppMain(argc, argv);
+}
+#endif

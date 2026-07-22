@@ -61,6 +61,38 @@ struct ShaderData
     glm::uvec2 window_size;
 };
 
+struct VoxelAllocatorBins
+{
+    // Indexed by bit count - 1
+    // Contains indices into voxel_allocators
+    std::int32_t voxel_allocator_bin[15];
+    std::uint32_t allocators_bump;
+    std::uint32_t voxel_temperature_bump;
+    std::uint32_t voxel_pallete_bump;
+    std::uint32_t voxel_pallete_counters_bump;
+    std::uint32_t voxel_bit_buffer_bump;
+    // Index of the chunk grid used as input (t0), 0 or 1,
+    // output_chunk_grid = 1 - input_chunk_grid
+    std::uint32_t input_chunk_grid;
+    std::uint32_t pad[3];
+    // The position of the chunk containing 0, 0, 0 within the chunk grid
+    glm::uvec3 chunk_grid_size;
+    std::uint32_t allocation_lock;
+};
+
+struct VoxelChunkAllocator
+{
+    std::int32_t next_allocator;
+
+    std::uint32_t pallete_memory_start;
+    std::uint32_t pallete_counters_start;
+    std::uint32_t bit_buffer_memory_start;
+    std::uint32_t temperature_buffer_start;
+    std::uint32_t deviation_buffer_start;
+
+    std::uint32_t memory_allocated_bits;
+};
+
 void Simulation::Create()
 {
     bufferLength = width * height * depth;
@@ -183,7 +215,37 @@ void Simulation::Create()
     glCreateBuffers(1, &csg_instructions_extrude_post_buffer);
     glCreateBuffers(1, &csg_transform_buffer);
 
+    glCreateBuffers(1, &voxel_allocator_bins_buffer);
+    glCreateBuffers(1, &voxel_pallete_memory_buffer);
+    glCreateBuffers(1, &voxel_pallete_counters_buffer);
+    glCreateBuffers(1, &voxel_bit_buffer_memory_buffer);
+    glCreateBuffers(1, &voxel_temperature_memory_buffer);
+    glCreateBuffers(1, &voxel_allocator_buffer);
+    glCreateBuffers(1, &voxel_chunks_buffer);
+
     const GLbitfield storageFlags = GL_DYNAMIC_STORAGE_BIT;
+
+    VoxelAllocatorBins initial_bins{};
+
+    for (int i = 0; i < 15; i++)
+    {
+        initial_bins.voxel_allocator_bin[i] = -1;
+    }
+
+    initial_bins.chunk_grid_size = glm::uvec3(64);
+    initial_bins.allocation_lock = 0;
+
+    glNamedBufferStorage(voxel_allocator_bins_buffer, sizeof(VoxelAllocatorBins), &initial_bins, storageFlags);
+    glNamedBufferStorage(voxel_pallete_memory_buffer, 32 * 1024 * sizeof(uint16_t), nullptr, storageFlags);
+    glNamedBufferStorage(voxel_pallete_counters_buffer, 4 * 1024 * sizeof(uint32_t), nullptr, storageFlags);
+    glNamedBufferStorage(voxel_bit_buffer_memory_buffer, 32 * 1024 * sizeof(uint32_t), nullptr, storageFlags);
+    glNamedBufferStorage(voxel_temperature_memory_buffer, 16 * 1024 * sizeof(uint16_t), nullptr, storageFlags);
+    glNamedBufferStorage(voxel_allocator_buffer, 1024 * sizeof(VoxelChunkAllocator), nullptr, storageFlags);
+    glNamedBufferStorage(voxel_chunks_buffer, 2 * 64 * 64 * 64 * sizeof(uint64_t), nullptr, storageFlags);
+
+    std::uint32_t chunk_allocation_fill = 0xffffffff;
+
+    glClearNamedBufferData(voxel_chunks_buffer, GL_RG32UI, GL_RED, GL_UNSIGNED_INT, &chunk_allocation_fill);
 
     glNamedBufferStorage(simulationMaterialBuffers[0], bufferLength * sizeof(std::uint16_t), nullptr, storageFlags);
     glNamedBufferStorage(simulationMaterialBuffers[1], bufferLength * sizeof(std::uint16_t), nullptr, storageFlags);
@@ -322,8 +384,6 @@ void Simulation::Update(bool enable_simulation)
     glNamedBufferData(voxelMaterialBuffer, sizeof(VoxelMaterial) * voxelMaterialCount, voxelMaterials, GL_DYNAMIC_DRAW);
     glNamedBufferData(voxelMaterialVisualBuffer, sizeof(VoxelMaterialVisual) * voxelMaterialCount, voxelMaterialsVisual, GL_DYNAMIC_DRAW);
 
-    simulationSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-
     ShaderData uniforms;
 
     uniforms.uSize = {width, height, depth};
@@ -367,10 +427,20 @@ void Simulation::Update(bool enable_simulation)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, simulationDeviationBuffers[1]);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 22, this->point_light_buffer);
 
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 24, this->voxel_pallete_memory_buffer);
+    // glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 31, this->voxel_pallete_counters_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 25, this->voxel_bit_buffer_memory_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 26, this->voxel_temperature_memory_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 27, this->voxel_allocator_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 28, this->voxel_allocator_bins_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 29, this->voxel_chunks_buffer);
+
     glUseProgram(fill_region_shader);
 
-    if (!enable_simulation)
+    if (!enable_simulation && csg_dirty)
     {
+        csg_dirty = false;
+
         uint32_t material_clear = 0;
         float temperature_clear = 0;
         int8_t deviation_clear = 0;
@@ -435,15 +505,6 @@ void Simulation::Update(bool enable_simulation)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
 
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, 0);
-
-        GLenum waitReturn = GL_UNSIGNALED;
-
-        while (waitReturn != GL_ALREADY_SIGNALED && waitReturn != GL_CONDITION_SATISFIED)
-        {
-            waitReturn = glClientWaitSync(static_cast<GLsync>(simulationSync), GL_SYNC_FLUSH_COMMANDS_BIT, 1);
-        }
-
-        glDeleteSync(static_cast<GLsync>(simulationSync));
     }
 
     {
@@ -472,8 +533,6 @@ void Simulation::Update(bool enable_simulation)
 
 void Simulation::Render()
 {
-    simulationSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-
     ShaderData uniforms;
 
     uniforms.uSize = {width, height, depth};
@@ -518,15 +577,6 @@ void Simulation::Render()
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
-
-    GLenum waitReturn = GL_UNSIGNALED;
-
-    while (waitReturn != GL_ALREADY_SIGNALED && waitReturn != GL_CONDITION_SATISFIED)
-    {
-        waitReturn = glClientWaitSync(static_cast<GLsync>(simulationSync), GL_SYNC_FLUSH_COMMANDS_BIT, 1);
-    }
-
-    glDeleteSync(static_cast<GLsync>(simulationSync));
 
     auto dirtyCuboidTransform = glm::identity<glm::mat4>();
 

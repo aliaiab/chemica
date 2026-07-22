@@ -1,2 +1,6 @@
 Build/
 .vscode/
+zig-out/
+zig-pkg/
+.zig-cache/
+imgui.ini

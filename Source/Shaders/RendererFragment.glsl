@@ -39,8 +39,12 @@ layout(std430, binding = 21) restrict buffer OutDeviationBuffer {
 
 layout(binding = 22) uniform sampler2D environment_map;
 
-layout(std430, binding = 22) restrict buffer PointLights {
+layout(std430, binding = 22) restrict readonly buffer PointLights {
     PointLight point_lights[];
+};
+
+layout(std430, binding = 32) restrict readonly buffer SpotLights {
+    SpotLight spot_lights[];
 };
 
 vec2 SampleSphericalMap(vec3 v)
@@ -133,7 +137,117 @@ struct RayCastResult {
     vec2 uv;
 };
 
-float raycast(
+float raycastChunks(
+    in vec3 ro,
+    in vec3 rd,
+    out vec3 oVos,
+    out vec3 oDir,
+    out uint chunk_index
+) {
+    vec3 pos = floor(ro);
+    vec3 ri = length(rd) / rd;
+    vec3 rs = CHUNK_SIZE * sign(rd);
+    vec3 delta_dis = CHUNK_SIZE * abs(length(rd) / rd);
+    vec3 dis = (pos - ro + 0.5 + rs * 0.5) * ri;
+
+    float res = -1;
+    vec3 mm = vec3(0);
+
+    uvec3 size_in_chunks = uSize / CHUNK_SIZE;
+
+    for (int i = 0; i < size_in_chunks.x + size_in_chunks.y + size_in_chunks.z; i++) {
+        uvec3 position = uvec3(pos + 0.5);
+
+        if (!isInBounds(ivec3(position))) {
+            res = -1;
+            chunk_index = 0;
+            break;
+        }
+
+        uint index = (position.x / CHUNK_SIZE) + size_in_chunks.x * (position.y / CHUNK_SIZE) + size_in_chunks.x * size_in_chunks.y * (position.z / CHUNK_SIZE);
+        uint chunk_bit_count = voxel_chunks_allocation[index].bit_count;
+
+        if (chunk_bit_count != 0) {
+            res = 1.0;
+            chunk_index = index;
+            break;
+        }
+
+        mm = step(dis.xyz, dis.yzx) * step(dis.xyz, dis.zxy);
+        mm = vec3(lessThanEqual(dis.xyz, min(dis.yzx, dis.zxy)));
+        dis += mm * delta_dis;
+        pos += mm * rs;
+    }
+
+    vec3 nor = -mm * rs;
+    vec3 vos = pos;
+
+    //intersect the cube
+    vec3 mini = (pos - ro + 0.5 - 0.5 * vec3(rs)) * ri;
+    float t = max(mini.x, max(mini.y, mini.z));
+
+    oDir = mm;
+    oVos = vos;
+
+    return t * res;
+}
+
+float raycastVoxels(
+    in uint chunk_index,
+    in uint medium_material,
+    in vec3 ro,
+    in vec3 rd,
+    out vec3 oVos,
+    out vec3 oDir,
+    out uint voxel_index
+) {
+    vec3 pos = floor(ro);
+    vec3 ri = length(rd) / rd;
+    vec3 rs = sign(rd);
+    vec3 delta_dis = abs(length(rd) / rd);
+    vec3 dis = (pos - ro + 0.5 + rs * 0.5) * ri;
+
+    float res = -1;
+    vec3 mm = vec3(0);
+
+    for (int i = 0; i < uSize.x + uSize.y + uSize.z; i++) {
+        uvec3 position = uvec3(pos + 0.5);
+
+        if (!isInBounds(ivec3(position))) {
+            res = -1;
+            voxel_index = 0;
+            break;
+        }
+
+        uint index = position.x + uSize.x * position.y + uSize.x * uSize.y * position.z;
+        uint type = loadVoxelMaterial(ivec3(position));
+
+        if (type != medium_material) {
+            res = 1.0;
+            voxel_index = index;
+            break;
+        }
+
+        mm = step(dis.xyz, dis.yzx) * step(dis.xyz, dis.zxy);
+        mm = vec3(lessThanEqual(dis.xyz, min(dis.yzx, dis.zxy)));
+        dis += mm * delta_dis;
+        pos += mm * rs;
+    }
+
+    vec3 nor = -mm * rs;
+    vec3 vos = pos;
+
+    //intersect the cube
+    vec3 mini = (pos - ro + 0.5 - 0.5 * vec3(rs)) * ri;
+    float t = max(mini.x, max(mini.y, mini.z));
+
+    oDir = mm;
+    oVos = vos;
+
+    return t * res;
+}
+
+float raycastVoxelsOld(
     in uint medium_material,
     in vec3 ro,
     in vec3 rd,
@@ -162,6 +276,10 @@ float raycast(
         uint index = position.x + uSize.x * position.y + uSize.x * uSize.y * position.z;
         uint type = uVoxelMaterials[index];
 
+        if (false) {
+            type = loadVoxelMaterial(ivec3(position));
+        }
+
         if (type != medium_material) {
             res = 1.0;
             voxel_index = index;
@@ -185,6 +303,42 @@ float raycast(
     oVos = vos;
 
     return t * res;
+}
+
+float raycast(
+    in uint medium_material,
+    in vec3 ro,
+    in vec3 rd,
+    out vec3 oVos,
+    out vec3 oDir,
+    out uint voxel_index
+) {
+    if (true) {
+        return raycastVoxelsOld(medium_material, ro, rd, oVos, oDir, voxel_index);
+    }
+
+    vec3 ray_origin = ro;
+
+    for (int i = 0; i < 100; i++) {
+        vec3 chunk_dir;
+        uint chunk_index;
+
+        float chunk_t = raycastChunks(ray_origin, rd, ray_origin, chunk_dir, chunk_index);
+
+        if (chunk_t > 0) {
+            ray_origin += chunk_t * rd;
+            float voxel_t = raycastVoxels(chunk_index, medium_material, ray_origin, rd, oVos, oDir, voxel_index);
+
+            if (voxel_t > 0) {
+                return voxel_t;
+            }
+        }
+        else {
+            break;
+        }
+    }
+
+    return -1;
 }
 
 vec3 computeLightRadiance(
@@ -276,7 +430,7 @@ vec4 computeVoxelLight(
 
         vec3 light_radiance = computeLightRadiance(
                 point_light,
-                pos + 0.5,
+                pos,
                 dir_to_light,
                 medium_material
             );
@@ -438,14 +592,13 @@ void main()
             }
             else {
                 //Refraction
-
                 ray_direction = refract(ray_direction, normal, refractive_index / voxel_materials_visual[medium_material].refractive_index);
                 refractive_index = voxel_materials_visual[medium_material].refractive_index;
             }
         }
         else {
             vec2 env_map_uv = SampleSphericalMap(normalize(ray_direction));
-            total_radiance *= texture(environment_map, env_map_uv);
+            total_radiance += texture(environment_map, env_map_uv);
             break;
         }
     }

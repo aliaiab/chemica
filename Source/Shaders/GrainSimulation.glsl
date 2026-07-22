@@ -71,52 +71,32 @@ ivec3 getOffset(uint substep) {
     return ivec3(0, 0, 0);
 }
 
-bool canSwap(Voxel grid[8], ivec3 from_position, ivec3 to_delta) {
+bool canSwap(int grid[8], ivec3 from_position, ivec3 to_delta) {
     uint to_index = to_delta.x + to_delta.y * 2 + to_delta.z * 2 * 2;
 
-    return isInBlock(to_delta) && isInBounds(from_position + to_delta) && grid[to_index].type == 0;
+    return isInBlock(to_delta) && isInBounds(from_position + to_delta) && in_voxel_lattice[grid[to_index]] == 0;
 }
 
-Voxel getVoxel(ivec3 position) {
-    Voxel voxel;
+uint computePhase(uint voxel) {
+    VoxelMaterial material = uMaterials[in_voxel_lattice[voxel]];
 
-    voxel.type = uint16_t(0);
-    voxel.temperature = uint16_t(0);
-    voxel.deviation = uint16_t(0);
-
-    if (!isInBounds(position)) {
-        return voxel;
-    }
-
-    uint index = position.x + uSize.x * position.y + uSize.x * uSize.y * position.z;
-
-    voxel.type = in_voxel_lattice[index];
-    voxel.temperature = in_temperature[index];
-    voxel.deviation = in_deviation_buffer[index];
-
-    return voxel;
-}
-
-uint computePhase(Voxel voxel) {
-    VoxelMaterial material = uMaterials[voxel.type];
-
-    if (voxel.temperature < material.melting_point) {
+    if (in_temperature[voxel] < material.melting_point) {
         return VOXEL_PHASE_SOLID;
     }
 
-    if (voxel.temperature > material.boiling_point) {
+    if (in_temperature[voxel] > material.boiling_point) {
         return VOXEL_PHASE_GAS;
     }
 
     return VOXEL_PHASE_LIQUID;
 }
 
-void swap(inout Voxel grid[8], uint a, uint b)
+void swap(inout int grid[8], uint a, uint b)
 {
     uint a_index = a;
     uint b_index = b;
 
-    Voxel tmp = grid[a];
+    int tmp = grid[a];
     grid[a] = grid[b];
     grid[b] = tmp;
 }
@@ -127,6 +107,58 @@ vec4 hash43(vec4 p)
     p4 += dot(p4, p4.wzxy + 33.33);
     return fract((p4.xxyz + p4.yzzw) * p4.zywx);
 }
+
+void simulateSolidGrains(
+    inout int grid[8],
+    ivec3 pos,
+    ivec3 local_pos,
+    uint voxel_index,
+    uint phase,
+    vec4 random
+) {
+    ivec3 local_pos_below = local_pos + ivec3(0, -1, 0);
+    ivec3 below_left = local_pos + ivec3(1 - local_pos.x, -1, 0);
+    ivec3 below_right = local_pos + ivec3(0, -1, 1 - local_pos.z);
+
+    if (phase == VOXEL_PHASE_GAS) {
+        local_pos_below = local_pos + ivec3(0, 1, 0);
+        below_left = local_pos + ivec3(1 - local_pos.x, 1, 0);
+        below_right = local_pos + ivec3(0, 1, 1 - local_pos.z);
+    }
+
+    uint i_below = local_pos.x + (local_pos_below.y) * 2 + local_pos.z * 2 * 2;
+    uint i_below_left = below_left.x + below_left.y * 2 + below_left.z * 2 * 2;
+    uint i_below_right = below_right.x + below_right.y * 2 + below_right.z * 2 * 2;
+
+    if (canSwap(grid, pos, local_pos_below)) {
+        swap(grid, i_below, voxel_index);
+        return;
+    }
+
+    bool can_left_swap = canSwap(grid, pos, below_left);
+    bool can_right_swap = canSwap(grid, pos, below_right);
+
+    if (can_left_swap && can_right_swap) {
+        can_left_swap = random.y > 0.5;
+        can_right_swap = random.y < 0.5;
+    }
+
+    if (can_left_swap) {
+        swap(grid, i_below_left, voxel_index);
+        return;
+    }
+
+    if (can_right_swap) {
+        swap(grid, i_below_right, voxel_index);
+        return;
+    }
+}
+
+void simulateFluid(
+    inout int grid[8],
+    ivec3 pos,
+    uint phase
+) {}
 
 void main() {
     uint index = gl_GlobalInvocationID.x + uSize.x * gl_GlobalInvocationID.y + uSize.x * uSize.y * gl_GlobalInvocationID.z;
@@ -142,7 +174,7 @@ void main() {
 
     vec4 random = hash43(vec4(p, substep_index));
 
-    Voxel grid[8];
+    int grid[8];
 
     for (int z = 0; z < 2; z++) {
         for (int y = 0; y < 2; y++) {
@@ -150,7 +182,13 @@ void main() {
                 ivec3 local_pos = ivec3(x, y, z);
                 uint i = x + y * 2 + z * 2 * 2;
 
-                grid[i] = getVoxel(p + local_pos);
+                ivec3 global_pos = p + local_pos;
+
+                grid[i] = int(global_pos.x + global_pos.y * uSize.x + global_pos.z * uSize.x * uSize.y);
+
+                if (!isInBounds(global_pos)) {
+                    grid[i] = -1;
+                }
             }
         }
     }
@@ -166,13 +204,48 @@ void main() {
 
                 uint i = x + y * 2 + z * 2 * 2;
 
-                if (grid[i].type == 0) {
+                if (in_voxel_lattice[grid[i]] == 0) {
                     continue;
                 }
 
                 uint phase = computePhase(grid[i]);
 
                 if (phase == VOXEL_PHASE_SOLID) {
+                    continue;
+                }
+
+                if (phase == VOXEL_PHASE_LIQUID) {
+                    ivec3 local_pos_below = local_pos + ivec3(0, -1, 0);
+                    ivec3 left = local_pos + ivec3(1 - x, 0, 0);
+                    ivec3 right = local_pos + ivec3(0, 0, 1 - z);
+
+                    uint i_below = x + (local_pos_below.y) * 2 + z * 2 * 2;
+                    uint i_left = left.x + left.y * 2 + left.z * 2 * 2;
+                    uint i_right = right.x + right.y * 2 + right.z * 2 * 2;
+
+                    if (canSwap(grid, p, local_pos_below)) {
+                        swap(grid, i_below, i);
+                        continue;
+                    }
+
+                    bool can_left_swap = canSwap(grid, p, left);
+                    bool can_right_swap = canSwap(grid, p, right);
+
+                    if (can_left_swap && can_right_swap) {
+                        can_left_swap = random.y > 0.5;
+                        can_right_swap = !can_left_swap;
+                    }
+
+                    if (can_left_swap) {
+                        swap(grid, i_left, i);
+                        continue;
+                    }
+
+                    if (can_right_swap) {
+                        swap(grid, i_right, i);
+                        continue;
+                    }
+
                     continue;
                 }
 
@@ -189,16 +262,6 @@ void main() {
                 uint i_below = x + (local_pos_below.y) * 2 + z * 2 * 2;
                 uint i_below_left = below_left.x + below_left.y * 2 + below_left.z * 2 * 2;
                 uint i_below_right = below_right.x + below_right.y * 2 + below_right.z * 2 * 2;
-
-                // grid[i].deviation = 0;
-
-                float t_2 = (1.0 / (1000.0 * 1000.0)) * grid[i].temperature * grid[i].temperature;
-
-                uint k = 1 + uint(floor(1.0 / t_2));
-
-                if (substep_index % min(k, 20) != 0) {
-                    // continue;
-                }
 
                 if (canSwap(grid, p, local_pos_below)) {
                     swap(grid, i_below, i);
@@ -226,7 +289,7 @@ void main() {
         }
     }
 
-    out_voxel_lattice[index] = grid[local_index].type;
-    out_temperature[index] = float16_t(grid[local_index].temperature);
-    out_deviation_buffer[index] = int8_t(grid[local_index].deviation);
+    out_voxel_lattice[index] = in_voxel_lattice[grid[local_index]];
+    out_temperature[index] = in_temperature[grid[local_index]];
+    out_deviation_buffer[index] = in_deviation_buffer[grid[local_index]];
 }

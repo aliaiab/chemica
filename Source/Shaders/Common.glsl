@@ -67,7 +67,7 @@ layout(std430, binding = 27) restrict buffer VoxelAllocatorBuffer
     VoxelChunkAllocator voxel_allocators[];
 };
 
-layout(std430, binding = 28) restrict buffer VoxelAllocatorBins {
+layout(std430, binding = 28) restrict coherent buffer VoxelAllocatorBins {
     //Indexed by bit count - 1
     //Contains indices into voxel_allocators
     int voxel_allocator_bin[15];
@@ -79,12 +79,11 @@ layout(std430, binding = 28) restrict buffer VoxelAllocatorBins {
     //Index of the chunk grid used as input (t0), 0 or 1,
     //output_chunk_grid = 1 - input_chunk_grid
     uint input_chunk_grid;
-    //The position of the chunk containing 0, 0, 0 within the chunk grid
-    uvec3 zero_chunk_pos;
     uvec3 chunk_grid_size;
+    uint allocation_lock;
 };
 
-#define CHUNK_SIZE 32
+#define CHUNK_SIZE 16
 #define CHUNK_VOLUME (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE)
 
 #define ChunkAllocation uint
@@ -94,7 +93,7 @@ struct ChunkBufferAllocation {
     uint bit_count;
 };
 
-layout(std430, binding = 28) restrict buffer VoxelChunkBufferAllocation
+layout(std430, binding = 29) restrict coherent buffer VoxelChunkBufferAllocation
 {
     ChunkBufferAllocation voxel_chunks_allocation[];
 };
@@ -111,14 +110,6 @@ int bitScanForward(uint x) {
     if ((x & 0xaaaaaaaa) != 0) count += 1;
     return count;
 }
-
-struct Voxel
-{
-    uint16_t type;
-    float temperature;
-    //TODO: just use int8_t here
-    int deviation;
-};
 
 struct RigidTransform {
     //TODO: store inverse position, inverse rotation and inverse scale(maybe)
@@ -166,20 +157,31 @@ struct PointLight {
     uint colour;
 };
 
+struct SpotLight {
+    vec3 position;
+    float radiance;
+    vec3 orientation;
+    uint colour;
+    float inner_angle;
+    float outer_angle;
+};
+
 int newAllocator(uint bit_count) {
     uint allocator = atomicAdd(allocators_bump, 1);
     voxel_allocators[allocator].memory_allocated_bits = 0xffffffff;
     voxel_allocators[allocator].next_allocator = -1;
 
-    voxel_allocators[allocator].pallete_counters_start = atomicAdd(voxel_pallete_counters_bump, 1);
-    voxel_allocators[allocator].bit_buffer_memory_start = atomicAdd(voxel_bit_buffer_bump, bit_count * CHUNK_SIZE * CHUNK_SIZE);
-    voxel_allocators[allocator].pallete_memory_start = atomicAdd(voxel_pallete_bump, 1 << bit_count);
-    voxel_allocators[allocator].temperature_buffer_start = atomicAdd(voxel_temperature_bump, CHUNK_VOLUME);
+    voxel_allocators[allocator].pallete_counters_start = atomicAdd(voxel_pallete_counters_bump, 32);
+    voxel_allocators[allocator].bit_buffer_memory_start = atomicAdd(voxel_bit_buffer_bump, bit_count * (CHUNK_SIZE * CHUNK_SIZE / 2) * 32);
+    voxel_allocators[allocator].pallete_memory_start = atomicAdd(voxel_pallete_bump, (1 << bit_count) * 32);
+    voxel_allocators[allocator].temperature_buffer_start = atomicAdd(voxel_temperature_bump, CHUNK_VOLUME * 32);
 
     return int(allocator);
 }
 
 ChunkAllocation voxelChunkAlloc(uint bit_count) {
+    while (atomicCompSwap(allocation_lock, 0, 1) != 0) {}
+
     int allocator_index = voxel_allocator_bin[bit_count - 1];
 
     if (allocator_index == -1) {
@@ -197,9 +199,8 @@ ChunkAllocation voxelChunkAlloc(uint bit_count) {
             voxel_allocators[new_allocator].next_allocator = allocator_index;
 
             alloc = voxel_allocators[new_allocator];
+            break;
         }
-
-        voxel_allocators[allocator_index].next_allocator = alloc.next_allocator;
 
         allocator_index = alloc.next_allocator;
         alloc = voxel_allocators[allocator_index];
@@ -207,6 +208,10 @@ ChunkAllocation voxelChunkAlloc(uint bit_count) {
 
     int allocation_index = bitScanForward(alloc.memory_allocated_bits);
     voxel_allocators[allocation_index].memory_allocated_bits = alloc.memory_allocated_bits ^ (1 << allocation_index);
+
+    memoryBarrier();
+
+    atomicExchange(allocation_lock, 0);
 
     ChunkAllocation allocation = 0;
 
@@ -221,18 +226,26 @@ void voxelChunkFree(ChunkAllocation allocation) {
     uint allocation_index = bitfieldExtract(allocation, 0, 5);
 
     voxel_allocators[allocation_index].memory_allocated_bits = voxel_allocators[allocator_index].memory_allocated_bits | (1 << allocation_index);
+
+    if (voxel_allocators[allocation_index].memory_allocated_bits == 0xffffffff) {
+        //TODO: free the allocator
+    }
 }
 
 //Fetches the voxel material index at the given voxel position
 uint loadVoxelMaterial(ivec3 pos) {
-    uvec3 chunk_pos = (zero_chunk_pos + pos) / CHUNK_SIZE;
-    uvec3 chunk_offset = pos - chunk_pos;
+    uvec3 chunk_pos = pos / CHUNK_SIZE;
+    uvec3 chunk_offset = pos - chunk_pos * CHUNK_SIZE;
 
-    uint chunk_index = chunk_pos.x + chunk_pos.y * chunk_grid_size.y + chunk_pos.z * chunk_grid_size.y * chunk_grid_size.z;
+    uint chunk_index = chunk_pos.x + chunk_pos.y * chunk_grid_size.x + chunk_pos.z * chunk_grid_size.x * chunk_grid_size.y;
     uint index_into_chunk = chunk_offset.x + chunk_offset.y * CHUNK_SIZE + chunk_offset.z * CHUNK_SIZE * CHUNK_SIZE;
 
     ChunkAllocation chunk_allocation = voxel_chunks_allocation[chunk_index].allocation;
     uint chunk_bit_count = voxel_chunks_allocation[chunk_index].bit_count;
+
+    if (chunk_bit_count == 0) {
+        return 0;
+    }
 
     uint allocator_index = bitfieldExtract(chunk_allocation, 5, 32);
     uint allocation_index = bitfieldExtract(chunk_allocation, 0, 5);
@@ -241,27 +254,27 @@ uint loadVoxelMaterial(ivec3 pos) {
 
     uint bit_offset = index_into_chunk * chunk_bit_count;
 
-    uint chunk_begin = allocation_index * chunk_bit_count * CHUNK_SIZE * CHUNK_SIZE;
+    uint chunk_begin = allocation_index * chunk_bit_count * CHUNK_SIZE * CHUNK_SIZE / 2;
 
     uint bit_buffer_index = allocator.bit_buffer_memory_start + chunk_begin + bit_offset / 32;
 
     uint first_int = voxel_chunk_bit_buffer_memory[bit_buffer_index];
     uint second_int = voxel_chunk_bit_buffer_memory[bit_buffer_index + 1];
 
-    int64_t packed_integer = int64_t(first_int) | int64_t(second_int) << 32;
+    int64_t packed_integer = int64_t(first_int) | (int64_t(second_int) << 32);
 
-    int64_t unpacked = bitfieldExtract(first_int, int(bit_offset), int(chunk_bit_count));
+    int64_t unpacked = bitfieldExtract(first_int, int(bit_offset % 32), int(chunk_bit_count));
 
     uint material_index = uint(voxel_chunk_pallete_memory[allocator.pallete_memory_start + allocation_index * (1 << chunk_bit_count) + int(unpacked)]);
 
     return material_index;
 }
 
-void storeVoxel(ivec3 pos, uint16_t material_index) {
-    uvec3 chunk_pos = (zero_chunk_pos + pos) / CHUNK_SIZE;
-    uvec3 chunk_offset = pos - chunk_pos;
+void storeVoxel(ivec3 pos, uint material_index) {
+    uvec3 chunk_pos = pos / CHUNK_SIZE;
+    uvec3 chunk_offset = pos - chunk_pos * CHUNK_SIZE;
 
-    uint chunk_index = chunk_pos.x + chunk_pos.y * chunk_grid_size.y + chunk_pos.z * chunk_grid_size.y * chunk_grid_size.z;
+    uint chunk_index = chunk_pos.x + chunk_pos.y * chunk_grid_size.x + chunk_pos.z * chunk_grid_size.x * chunk_grid_size.y;
     uint index_into_chunk = chunk_offset.x + chunk_offset.y * CHUNK_SIZE + chunk_offset.z * CHUNK_SIZE * CHUNK_SIZE;
 
     ChunkAllocation chunk_allocation = voxel_chunks_allocation[chunk_index].allocation;
@@ -274,7 +287,7 @@ void storeVoxel(ivec3 pos, uint16_t material_index) {
 
     uint bit_offset = index_into_chunk * chunk_bit_count;
 
-    uint chunk_begin = allocation_index * chunk_bit_count * CHUNK_SIZE * CHUNK_SIZE;
+    uint chunk_begin = allocation_index * chunk_bit_count * CHUNK_SIZE * CHUNK_SIZE / 2;
     uint pallete_begin = allocator.pallete_memory_start + allocation_index * (1 << chunk_bit_count);
 
     int pallete_end = -1;
@@ -287,21 +300,21 @@ void storeVoxel(ivec3 pos, uint16_t material_index) {
         }
 
         if (i != 0 && pallete_material == 0) {
-            pallete_end = i;
             break;
         }
     }
 
     if (pallete_index == -1) {
-        pallete_end = atomicAdd(voxel_pallete_counters[allocator.pallete_counters_start], 1);
-        voxel_chunk_pallete_memory[pallete_begin + pallete_end] = material_index;
+        pallete_end = atomicAdd(voxel_pallete_counters[allocator.pallete_counters_start + allocation_index], 1);
+        voxel_chunk_pallete_memory[pallete_begin + pallete_end] = uint16_t(material_index);
         pallete_index = pallete_end;
     }
 
     uint bit_buffer_index = allocator.bit_buffer_memory_start + chunk_begin + bit_offset / 32;
 
-    int64_t packed_integer = bitfieldInsert(0, pallete_index, int(bit_offset), int(chunk_bit_count));
+    int64_t packed_integer = bitfieldInsert(0, pallete_index, int(bit_offset % 32), int(chunk_bit_count));
+    int64_t reset_integer = bitfieldInsert(0xffffffff, 0, int(bit_offset % 32), int(chunk_bit_count));
 
-    voxel_chunk_bit_buffer_memory[bit_buffer_index] |= uint(packed_integer);
-    voxel_chunk_bit_buffer_memory[bit_buffer_index + 1] |= uint(packed_integer >> 32);
+    atomicAnd(voxel_chunk_bit_buffer_memory[bit_buffer_index], uint(reset_integer));
+    atomicOr(voxel_chunk_bit_buffer_memory[bit_buffer_index], uint(packed_integer));
 }

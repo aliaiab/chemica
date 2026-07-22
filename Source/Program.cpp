@@ -20,6 +20,9 @@
 
 #define ARRAY_LENGTH(x) sizeof(x) / sizeof(*x)
 
+extern std::uint8_t *embedded_environment_map;
+extern std::uint32_t embedded_environment_map_length;
+
 static void GLDebugMessageCallback(
     const GLenum source,
     const GLenum type,
@@ -125,6 +128,7 @@ void Program::Initialize()
 
     voxel_materials_visual[3].albedo = glm::packUnorm4x8({0.17f, 0.56f, 0.82f, 0.19f});
     materials[3].heat_conductivity = 0.9;
+    materials[3].melting_point = 0;
 
     // materials[4].color = glm::packUnorm4x8({ 0.72f, 0.45f, 0.2f, 1.0f });
     voxel_materials_visual[4].albedo = 0xff1d2971;
@@ -245,7 +249,7 @@ void Program::Initialize()
     std::int32_t env_map_width;
     std::int32_t env_map_height;
     std::int32_t env_map_channels;
-    std::uint8_t *data = stbi_load("../Assets/futuristic_env.jpg", &env_map_width, &env_map_height, &env_map_channels, 0);
+    std::uint8_t *data = stbi_load_from_memory(embedded_environment_map, embedded_environment_map_length, &env_map_width, &env_map_height, &env_map_channels, 0);
 
     assert(data);
     assert(env_map_width);
@@ -264,7 +268,7 @@ void Program::Initialize()
 
     this->simulation.point_lights.push_back(PointLight{
         .position = glm::vec3(128, 128, 64),
-        .radiance = 100.0f,
+        .radiance = 1.0f,
         .colour = glm::packUnorm4x8({0.5f, 0.3f, 0.3f, 1.0f}),
     });
 }
@@ -359,6 +363,8 @@ void Program::OnImGuiRender()
                 // local_bounds = &this->selected_tree->data.box.bounds.x;
                 local_bounds[0] = -this->selected_tree->data.box.bounds / 2.0f;
                 local_bounds[1] = this->selected_tree->data.box.bounds / 2.0f;
+
+                operation = ImGuizmo::OPERATION::BOUNDS | ImGuizmo::OPERATION::TRANSLATE | ImGuizmo::OPERATION::ROTATE;
             }
 
             if (ImGuizmo::Manipulate(
@@ -366,12 +372,14 @@ void Program::OnImGuiRender()
                     (float *)&camera.projection,
                     operation,
                     ImGuizmo::MODE::LOCAL,
-                    (float *)&matrix),
-                nullptr,
-                snap,
-                &local_bounds[0].x,
-                snap)
+                    (float *)&matrix,
+                    nullptr, snap, can_nonuniformly_scale ? &local_bounds[0].x : nullptr, snap))
             {
+            }
+
+            if (can_nonuniformly_scale)
+            {
+                this->selected_tree->data.box.bounds = local_bounds[1] - local_bounds[0];
             }
 
             auto quat = glm::normalize(glm::quat_cast(matrix));
@@ -382,6 +390,8 @@ void Program::OnImGuiRender()
 
             glm::decompose(matrix, scale, quat, translation, skew, persp);
 
+            CSGRigidTransform old_transform = transform;
+
             transform.position = glm::floor(translation);
             if (this->selected_tree != nullptr)
             {
@@ -390,8 +400,9 @@ void Program::OnImGuiRender()
             transform.rotation = {quat.x, quat.y, quat.z, -quat.w};
             transform.uniform_scale = scale[0];
 
-            if (can_nonuniformly_scale)
+            if (memcmp(&old_transform, &transform, sizeof(CSGRigidTransform)) != 0)
             {
+                simulation.csg_dirty = true;
             }
         }
 
@@ -446,16 +457,19 @@ void Program::OnImGuiRender()
                 "POP_POSITION",
             };
 
-            ImGui::Combo("Child Algebraic Operation", (int *)&this->selected_tree->child_op, child_op_names, ARRAY_LENGTH(child_op_names));
+            simulation.csg_dirty |= ImGui::Combo("Child Algebraic Operation", (int *)&this->selected_tree->child_op, child_op_names, ARRAY_LENGTH(child_op_names));
 
-            ImGui::Combo("Unary Operation", (int *)&this->selected_tree->unary_op, child_op_names, ARRAY_LENGTH(child_op_names));
+            simulation.csg_dirty |= ImGui::Combo("Unary Operation", (int *)&this->selected_tree->unary_op, child_op_names, ARRAY_LENGTH(child_op_names));
 
             switch (this->selected_tree->unary_op)
             {
             case CSGInstructionOp::UNARY_OP_EXTRUDE_PRE:
             {
-                ImGui::DragFloat("Height", &this->selected_tree->unary_op_data.extrude.h);
+                simulation.csg_dirty |= ImGui::DragFloat("Height", &this->selected_tree->unary_op_data.extrude.h);
                 break;
+            }
+            default:
+            {
             }
             }
 
@@ -467,7 +481,7 @@ void Program::OnImGuiRender()
                 "Copper",
                 "Glass"};
             int material = this->selected_tree->material - 1;
-            ImGui::Combo("Material", &material, materialNames, ARRAY_LENGTH(materialNames));
+            simulation.csg_dirty |= ImGui::Combo("Material", &material, materialNames, ARRAY_LENGTH(materialNames));
             this->selected_tree->material = (std::uint16_t)material + 1;
 
             switch (this->selected_tree->sdf_type)
@@ -475,13 +489,16 @@ void Program::OnImGuiRender()
             case CSGTreeType::box:
                 ImGui::Text("Box");
                 ImGui::Separator();
-                ImGui::DragFloat3("Bounds", &this->selected_tree->data.box.bounds.x);
+                simulation.csg_dirty |= ImGui::DragFloat3("Bounds", &this->selected_tree->data.box.bounds.x);
                 break;
             case CSGTreeType::sphere:
                 ImGui::Text("Sphere");
                 ImGui::Separator();
-                ImGui::DragFloat("Radius", &this->selected_tree->data.sphere.radius);
+                simulation.csg_dirty |= ImGui::DragFloat("Radius", &this->selected_tree->data.sphere.radius);
                 break;
+            default:
+            {
+            }
             }
         }
 
@@ -490,22 +507,22 @@ void Program::OnImGuiRender()
             ImGui::OpenPopup("node_type_popup");
         }
 
-        if (this->selected_tree != nullptr && ImGui::IsKeyDown(GLFW_KEY_DELETE))
+        if (this->selected_tree != nullptr && ImGui::IsKeyDown(ImGuiKey_Delete))
         {
             if (this->selected_tree_parent == nullptr)
             {
-                this->csg_tree_root_nodes.erase(static_cast<std::vector<CSGTree>::iterator>(this->selected_tree));
+                // this->csg_tree_root_nodes.erase(static_cast<std::vector<CSGTree>::iterator>(this->selected_tree));
             }
             else
             {
-                this->selected_tree_parent->children.erase(static_cast<std::vector<CSGTree>::iterator>(this->selected_tree));
+                // this->selected_tree_parent->children.erase(static_cast<std::vector<CSGTree>::iterator>(this->selected_tree));
             }
 
             this->selected_tree = nullptr;
             this->selected_tree_parent = nullptr;
         }
 
-        if (this->selected_tree != nullptr && ImGui::IsKeyDown(GLFW_KEY_LEFT_CONTROL) && ImGui::IsKeyPressed(GLFW_KEY_C))
+        if (this->selected_tree != nullptr && ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_C))
         {
             std::printf("Copied node %p\n", this->selected_tree);
 
@@ -513,11 +530,13 @@ void Program::OnImGuiRender()
             this->copy_selected_tree = true;
         }
 
-        if (this->copy_selected_tree && ImGui::IsKeyDown(GLFW_KEY_LEFT_CONTROL) && ImGui::IsKeyPressed(GLFW_KEY_V))
+        if (this->copy_selected_tree && ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_V))
         {
             this->csg_tree_root_nodes.push_back(this->copied_tree);
 
             this->selected_tree = &this->csg_tree_root_nodes.back();
+
+            simulation.csg_dirty = true;
         }
 
         if (ImGui::BeginPopup("node_type_popup"))
@@ -531,6 +550,8 @@ void Program::OnImGuiRender()
                 current_node.transform = CSGRigidTransform::identity();
                 current_node.material = 1;
                 memcpy(current_node.name, "Box", 3 + 1);
+
+                simulation.csg_dirty = true;
 
                 this->selected_tree = &current_node;
                 this->selected_tree_parent = nullptr;
@@ -547,6 +568,8 @@ void Program::OnImGuiRender()
                 current_node.material = 1;
                 current_node.transform = CSGRigidTransform::identity();
                 memcpy(current_node.name, "Sphere", 6 + 1);
+
+                simulation.csg_dirty = true;
 
                 this->selected_tree = &current_node;
                 this->selected_tree_parent = nullptr;
@@ -598,11 +621,11 @@ void Program::OnImGuiRender()
         command.destination->children.push_back(*command.source);
         if (command.source_parent != nullptr)
         {
-            command.source_parent->children.erase(static_cast<std::vector<CSGTree>::iterator>(command.source));
+            // command.source_parent->children.erase(static_cast<std::vector<CSGTree>::iterator>(command.source));
         }
         else
         {
-            this->csg_tree_root_nodes.erase(static_cast<std::vector<CSGTree>::iterator>(command.source));
+            // this->csg_tree_root_nodes.erase(static_cast<std::vector<CSGTree>::iterator>(command.source));
         }
     }
 
@@ -720,7 +743,21 @@ void Program::OnImGuiRender()
             ImGui::PopID();
         }
 
-        ImGui::Checkbox("Enable Simulation", &enableSimulation);
+        if (ImGui::Button("Play Simulation"))
+        {
+            enableSimulation = !enableSimulation;
+        }
+
+        if (ImGui::Button("Reset Simulation"))
+        {
+            enableSimulation = false;
+            simulation.csg_dirty = true;
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Space))
+        {
+            enableSimulation = !enableSimulation;
+        }
 
         ImGui::End();
     }
@@ -798,6 +835,9 @@ void Program::CompileCSGTreeToProgram(CSGTree &node, CSGTree *parent)
         instruction.stream_index = stream_index;
 
         break;
+    }
+    default:
+    {
     }
     }
 

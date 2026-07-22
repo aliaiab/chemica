@@ -165,10 +165,14 @@ struct Simulation
     std::uint32_t heatTextureShader = 0;
     std::uint32_t distanceFieldShader = 0;
 
-    void *simulationSync = 0;
+    std::uint32_t voxel_allocator_bins_buffer = 0;
+    std::uint32_t voxel_pallete_memory_buffer = 0;
+    std::uint32_t voxel_bit_buffer_memory_buffer = 0;
+    std::uint32_t voxel_pallete_counters_buffer = 0;
+    std::uint32_t voxel_temperature_memory_buffer = 0;
+    std::uint32_t voxel_allocator_buffer = 0;
+    std::uint32_t voxel_chunks_buffer = 0;
 
-    // The voxel lattice itself (of material ids)
-    // Could easily be uin16_t
     std::uint32_t simulationMaterialBuffers[2]{};
     std::uint32_t simulationDeviationBuffers[2]{};
     std::uint32_t simulationTemperatureBuffers[2]{};
@@ -188,6 +192,8 @@ struct Simulation
     std::uint32_t thermalShader = 0;
     std::uint32_t grain_simulation_shader = 0;
     std::uint32_t fill_region_shader = 0;
+
+    bool csg_dirty = true;
 
     std::uint32_t point_light_buffer = 0;
     std::vector<PointLight> point_lights;

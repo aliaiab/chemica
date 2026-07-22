@@ -366,6 +366,8 @@ float argInTurns(float x, float y) {
     return (pi + atan2(x, y)) / (2 * pi);
 }
 
+shared int fill_finished_semaphore;
+
 void main() {
     ivec3 position_int = csg_bounding_min + ivec3(gl_GlobalInvocationID);
     uint index = position_int.x + uSize.x * position_int.y + uSize.x * uSize.y * position_int.z;
@@ -377,6 +379,19 @@ void main() {
         return;
     }
 
+    ivec3 chunk_pos = position_int / CHUNK_SIZE;
+    uint chunk_index = chunk_pos.x + chunk_pos.y * chunk_grid_size.x + chunk_pos.z * chunk_grid_size.x * chunk_grid_size.y;
+
+    if (position_int % CHUNK_SIZE == vec3(0)) {
+        if (voxel_chunks_allocation[chunk_index].bit_count == 0 && voxel_chunks_allocation[chunk_index].allocation == 0xffffffff) {
+            voxel_chunks_allocation[chunk_index].allocation = voxelChunkAlloc(1);
+            voxel_chunks_allocation[chunk_index].bit_count = 1;
+        }
+        fill_finished_semaphore = 0;
+    }
+
+    while (voxel_chunks_allocation[chunk_index].bit_count == 0 && voxel_chunks_allocation[chunk_index].allocation == 0xffffffff) {}
+
     vec3 position = vec3(position_int) + 0.5;
 
     vec3 transformed_point = transformPoint(position, root_transform);
@@ -385,12 +400,13 @@ void main() {
     FieldResult field = executeDistanceProgram(transformed_point);
     field.signed_distance *= transform_scale;
 
-    // transformed_point = transformPoint(transformed_point, transforms[field.transform]);
+    transformed_point = transformPoint(transformed_point, transforms[field.transform]);
 
     // transform_scale *= transforms[field.transform].uniform_scale;
 
     vec4 random = hash43(vec4(transformed_point, 0));
     random.r = clamp(random.r, 0, 1);
+    storeVoxel(position_int, 0);
 
     if (field.signed_distance < 0) {
         float running_weight = 0;
@@ -404,6 +420,10 @@ void main() {
             }
         }
         in_voxel_lattice[index] = uint16_t(field.material);
+
+        if (false) {
+            storeVoxel(position_int, field.material);
+        }
 
         in_temperature[index] = min(6000, 300 * (1 / transform_scale) + abs(field.signed_distance) * 600);
         in_temperature[index] = 0;
@@ -430,6 +450,27 @@ void main() {
             // in_voxel_lattice[index] = 1;
             // float position_variation = random.r;
             // in_deviation_buffer[index] = int8_t(position_variation * 255);
+        }
+        storeVoxel(position_int, 0);
+    }
+
+    if (false) {
+        if (position_int % CHUNK_SIZE == vec3(0)) {
+            bool is_all_air = true;
+            for (int z = 0; z < CHUNK_SIZE; z++) {
+                for (int y = 0; y < CHUNK_SIZE; y++) {
+                    for (int x = 0; x < CHUNK_SIZE; x++) {
+                        if (loadVoxelMaterial(chunk_pos * CHUNK_SIZE + ivec3(x, y, z)) != 0) {
+                            is_all_air = false;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (is_all_air) {
+                //voxel_chunks_allocation[chunk_index].bit_count = 0;
+            }
         }
     }
 }
