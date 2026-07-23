@@ -12,6 +12,18 @@
             .url = "git+https://github.com/tiawl/cimgui.zig.git#aed4bf2397e315f5e0ca710081ce265af54778ae",
             .hash = "cimgui_zig-1.0.0-2XubkqU3wgBSXFt2PvNRqA7NQxgkxHsuTM3fU0tS-Iz1",
         },
+        .zigglgen = .{
+            .url = "git+https://github.com/castholm/zigglgen.git#fdf06cc7ea9951203f91a27a5548f943cd6c1d59",
+            .hash = "zigglgen-0.5.1-ziggljvILwAsVanrBL96ZTzHPQ1vIQCV_Gnt3mqufzjz",
+        },
+        .zmath = .{
+            .url = "git+https://github.com/zig-gamedev/zmath.git#9e42b04a24c970a297b365f3d3022f92dbf3219d",
+            .hash = "zmath-0.11.0-dev-wjwivTwtAwDOjG2_KGP-HLtHrONfsFfHttalmxFAGVAK",
+        },
+        .zigimg = .{
+            .url = "git+https://github.com/zigimg/zigimg.git#d695acd97c02e57bb151e8f659d1280f5cd6ca70",
+            .hash = "zigimg-0.1.0-8_eo2oyaFwBZwJpmqPkCfVXWBrHcqbYwmrp1I6bTD3lI",
+        },
     },
     .paths = .{
         "build.zig",

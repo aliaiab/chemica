@@ -23,7 +23,7 @@ struct Camera
 
 struct ProgramConfig
 {
-    bool devMode = false;
+    bool devMode = true;
 };
 
 enum class CSGTreeType

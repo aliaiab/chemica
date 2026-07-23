@@ -8,10 +8,3 @@ glslangValidator -G -S comp --vn fillRegionBinary Source/Shaders/FillRegion.glsl
 glslangValidator -G -S frag --vn envMapFragmentBinary Source/Shaders/EnvMapFragment.glsl -o Source/Shaders/Include/EnvMapFragment.h
 glslangValidator -G -S vert --vn envMapVertexBinary Source/Shaders/EnvMapVertex.glsl -o Source/Shaders/Include/EnvMapVertex.h
 
-cmake -S . -B Build 
-
-cd Build
-
-make 
-
-./chemica --dev

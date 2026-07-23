@@ -121,9 +121,3 @@ extern "C"
         return 0;
     }
 }
-
-#if 0
-int main(const int argc, char** argv) {
-    return cppMain(argc, argv);
-}
-#endif
