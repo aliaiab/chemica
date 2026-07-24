@@ -104,6 +104,8 @@ pub fn main(init: std.process.Init) !void {
     try imgui.impl.opengl3.init(.{});
     defer imgui.impl.opengl3.shutdown();
 
+    imguiStyleSetup();
+
     var last_mouse_pos: [2]f32 = undefined;
 
     last_mouse_pos[0] = @floatCast(window.getCursorPos()[0]);
@@ -188,6 +190,8 @@ pub fn main(init: std.process.Init) !void {
     };
 
     simulation.enable_simulation = false;
+
+    imgui.getIO().ConfigFlags |= imgui.cimgui.ImGuiConfigFlags_DockingEnable;
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
@@ -296,7 +300,7 @@ pub fn main(init: std.process.Init) !void {
 
         imgui.newFrame();
 
-        imgui.showDemoWindow(.{});
+        _ = imgui.dockspaceOverViewport(.{});
 
         {
             imguizmo.beginFrame();
@@ -427,6 +431,7 @@ pub fn main(init: std.process.Init) !void {
 
                         selected_node_handle = node_handle;
                     }
+
                     if (imgui.selectable("Sphere")) {
                         const node_handle = try csg_tree.addNode(gpa, .root);
 
@@ -737,6 +742,11 @@ fn glfwScrollCallback(window: *glfw.Window, x: f64, y: f64) callconv(.c) void {
 
     scroll.?.* = @floatCast(-y * 0.1);
 }
+
+export const font_data = @embedFile("assets/JetBrainsMono_regular.ttf");
+export const font_data_size: u32 = font_data.len;
+
+extern fn imguiStyleSetup() void;
 
 const imgui = @import("imgui.zig");
 const Simulation = @import("Simulation.zig");

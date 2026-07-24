@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .platforms = &[_]cimgui.Platform{.GLFW},
         .renderers = &[_]cimgui.Renderer{.OpenGL3},
-        // .docking = true, // Default value: false
+        .docking = true, // Default value: false
     });
 
     const zigimg = b.dependency("zigimg", .{});
@@ -58,17 +58,17 @@ pub fn build(b: *std.Build) !void {
             "ImGuizmo.cpp",
             "guizmo.cpp",
             "stb_image.c",
+            "imgui_style.cpp",
         },
         .root = b.path("src/"),
     });
-    main_module.addIncludePath(b.path("External/stb_image"));
 
     main_module.strip = optimize != .Debug;
 
     const exe = b.addExecutable(.{
         .name = "chemica",
         .root_module = main_module,
-        .use_llvm = false,
+        .use_llvm = optimize != .Debug,
     });
 
     _ = compileShader(b, exe, .compute, "src/shaders/ThermalCompute.glsl");
@@ -119,6 +119,7 @@ fn compileShader(
             output_path,
         },
     );
+    compile_shader.step.addWatchInput(b.path(source)) catch @panic("oom");
 
     exe_step.step.dependOn(&compile_shader.step);
 

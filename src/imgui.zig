@@ -16,6 +16,14 @@ pub fn showDemoWindow(options: struct {}) void {
     cimgui.ImGui_ShowDemoWindow(null);
 }
 
+pub fn isKeyDown(key: c_int) bool {
+    return cimgui.ImGui_IsKeyDown(key);
+}
+
+pub fn isKeyPressed(key: c_int) bool {
+    return cimgui.ImGui_IsKeyPressed(key);
+}
+
 pub fn isAnyItemActive() bool {
     return cimgui.ImGui_IsAnyItemActive();
 }
@@ -358,6 +366,8 @@ fn dragScalarN(
     comptime components: usize,
     options: DragScalarOptions(T),
 ) bool {
+    if (true) return false;
+
     var value_change: bool = false;
 
     cimgui.ImGui_BeginGroup();
@@ -425,6 +435,22 @@ pub fn render() void {
 
 pub fn getDrawData() *DrawData {
     return @ptrCast(cimgui.ImGui_GetDrawData());
+}
+
+pub fn dockspaceOverViewport(
+    options: struct {},
+) u32 {
+    _ = options; // autofix
+    return cimgui.ImGui_DockSpaceOverViewportEx(
+        0,
+        cimgui.ImGui_GetMainViewport(),
+        cimgui.ImGuiDockNodeFlags_PassthruCentralNode,
+        null,
+    );
+}
+
+pub fn dockspace(dockspace_id: u32) u32 {
+    return cimgui.ImGui_DockSpace(dockspace_id);
 }
 
 pub const Id = packed struct(u32) {
@@ -562,6 +588,7 @@ const reimpls = struct {
         p_data: *T,
         options: DragScalarOptions(T),
     ) bool {
+        if (true) return false;
         const DRAG_MOUSE_THRESHOLD_FACTOR = 0.50;
         _ = DRAG_MOUSE_THRESHOLD_FACTOR; // autofix
         const v_speed = options.speed;
@@ -923,5 +950,5 @@ pub const impl = struct {
     };
 };
 
-const cimgui = @import("cimgui");
+pub const cimgui = @import("cimgui");
 const std = @import("std");
