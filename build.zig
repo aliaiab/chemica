@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) !void {
     });
 
     const cimgui_translate_c = b.addTranslateC(.{
-        .root_source_file = b.path("Source/cimgui.h"),
+        .root_source_file = b.path("src/cimgui.h"),
         .target = target,
         .optimize = optimize,
     });
@@ -35,7 +35,7 @@ pub fn build(b: *std.Build) !void {
     const main_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("Source/main.zig"),
+        .root_source_file = b.path("src/main.zig"),
     });
     main_module.addImport("gl", gl_bindings);
     main_module.addImport("zglfw", zglfw.module("root"));
@@ -55,25 +55,12 @@ pub fn build(b: *std.Build) !void {
 
     main_module.addCSourceFiles(.{
         .files = &.{
-            "Main.cpp",
             "ImGuizmo.cpp",
-            "Program.cpp",
-            "Simulation.cpp",
+            "guizmo.cpp",
+            "stb_image.c",
         },
-        .root = b.path("Source/"),
+        .root = b.path("src/"),
     });
-    main_module.addCSourceFiles(.{
-        .files = &.{
-            "glad/src/glad.c",
-            "json-parser/json.c",
-        },
-        .root = b.path("External/"),
-    });
-    main_module.addIncludePath(b.path("External/glad/include"));
-    main_module.addIncludePath(b.path("External/glfw"));
-    main_module.addIncludePath(b.path("External/glm"));
-    main_module.addIncludePath(b.path("External/imgui"));
-    main_module.addIncludePath(b.path("External/json-parser"));
     main_module.addIncludePath(b.path("External/stb_image"));
 
     main_module.strip = optimize != .Debug;
@@ -84,13 +71,13 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = false,
     });
 
-    _ = compileShader(b, exe, .compute, "Source/Shaders/ThermalCompute.glsl");
-    _ = compileShader(b, exe, .vertex, "Source/Shaders/RendererVertex.glsl");
-    _ = compileShader(b, exe, .fragment, "Source/Shaders/RendererFragment.glsl");
-    _ = compileShader(b, exe, .compute, "Source/Shaders/FillRegion.glsl");
-    _ = compileShader(b, exe, .compute, "Source/Shaders/GrainSimulation.glsl");
-    _ = compileShader(b, exe, .fragment, "Source/Shaders/EnvMapFragment.glsl");
-    _ = compileShader(b, exe, .vertex, "Source/Shaders/EnvMapVertex.glsl");
+    _ = compileShader(b, exe, .compute, "src/shaders/ThermalCompute.glsl");
+    _ = compileShader(b, exe, .vertex, "src/shaders/RendererVertex.glsl");
+    _ = compileShader(b, exe, .fragment, "src/shaders/RendererFragment.glsl");
+    _ = compileShader(b, exe, .compute, "src/shaders/FillRegion.glsl");
+    _ = compileShader(b, exe, .compute, "src/shaders/GrainSimulation.glsl");
+    _ = compileShader(b, exe, .fragment, "src/shaders/EnvMapFragment.glsl");
+    _ = compileShader(b, exe, .vertex, "src/shaders/EnvMapVertex.glsl");
 
     exe.is_linking_libcpp = true;
 
@@ -110,7 +97,7 @@ fn compileShader(
     const source_basename = std.fs.path.stem(source);
 
     const output_path = std.mem.concat(b.allocator, u8, &.{
-        "Source/Shaders/Include/",
+        "src/shaders/Include/",
         source_basename,
         ".spv",
     }) catch @panic("");

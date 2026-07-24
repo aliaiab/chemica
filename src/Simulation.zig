@@ -59,35 +59,35 @@ pub fn init(
     sim.renderer_program = try loadShaderProgram(arena, &.{
         .{
             .type = gl.VERTEX_SHADER,
-            .binary = @embedFile("Shaders/Include/RendererVertex.spv"),
+            .binary = @embedFile("shaders/Include/RendererVertex.spv"),
         },
         .{
             .type = gl.FRAGMENT_SHADER,
-            .binary = @embedFile("Shaders/Include/RendererFragment.spv"),
+            .binary = @embedFile("shaders/Include/RendererFragment.spv"),
         },
     });
     sim.simulation_shader = try loadShaderProgram(arena, &.{
         .{
             .type = gl.COMPUTE_SHADER,
-            .binary = @embedFile("Shaders/Include/GrainSimulation.spv"),
+            .binary = @embedFile("shaders/Include/GrainSimulation.spv"),
         },
     });
     sim.thermal_shader = try loadShaderProgram(arena, &.{
         .{
             .type = gl.COMPUTE_SHADER,
-            .binary = @embedFile("Shaders/Include/ThermalCompute.spv"),
+            .binary = @embedFile("shaders/Include/ThermalCompute.spv"),
         },
     });
     sim.grain_simulation_shader = try loadShaderProgram(arena, &.{
         .{
             .type = gl.COMPUTE_SHADER,
-            .binary = @embedFile("Shaders/Include/GrainSimulation.spv"),
+            .binary = @embedFile("shaders/Include/GrainSimulation.spv"),
         },
     });
     sim.fill_region_shader = try loadShaderProgram(arena, &.{
         .{
             .type = gl.COMPUTE_SHADER,
-            .binary = @embedFile("Shaders/Include/FillRegion.spv"),
+            .binary = @embedFile("shaders/Include/FillRegion.spv"),
         },
     });
 
@@ -263,7 +263,7 @@ pub fn update(sim: *Simulation) void {
         gl.DYNAMIC_DRAW,
     );
     gl.NamedBufferData(
-        sim.voxel_materials_buffer,
+        sim.voxel_materials_visual_buffer,
         @intCast(@sizeOf(VoxelMaterialVisual) * sim.voxel_materials_visual.items.len),
         sim.voxel_materials_visual.items.ptr,
         gl.DYNAMIC_DRAW,
@@ -310,10 +310,10 @@ pub fn update(sim: *Simulation) void {
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 30, sim.csg_instructions_extrude_post_buffer);
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 14, sim.csg_composite_material_buffer);
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 20, sim.simulation_deviation_buffers[0]);
-    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 21, sim.simulation_deviation_buffers[0]);
+    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 21, sim.simulation_deviation_buffers[1]);
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 22, sim.point_light_buffer);
 
-    if (sim.enable_simulation and sim.csg_dirty) {
+    if (!sim.enable_simulation and sim.csg_dirty) {
         gl.UseProgram(sim.fill_region_shader);
 
         sim.csg_dirty = false;
@@ -342,6 +342,12 @@ pub fn update(sim: *Simulation) void {
             gl.RED,
             gl.BYTE,
             &deviation_clear,
+        );
+
+        gl.DispatchCompute(
+            sim.width / 8,
+            sim.height / 8,
+            sim.depth / 8,
         );
     }
 
@@ -399,24 +405,52 @@ pub fn update(sim: *Simulation) void {
         gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, 0);
     }
 
-    std.mem.swap(
-        u32,
-        &sim.simulation_material_buffers[0],
-        &sim.simulation_material_buffers[1],
-    );
-    std.mem.swap(
-        u32,
-        &sim.simulation_temperature_buffers[0],
-        &sim.simulation_temperature_buffers[1],
-    );
-    std.mem.swap(
-        u32,
-        &sim.simulation_deviation_buffers[0],
-        &sim.simulation_deviation_buffers[1],
-    );
+    if (sim.enable_simulation) {
+        std.mem.swap(
+            u32,
+            &sim.simulation_material_buffers[0],
+            &sim.simulation_material_buffers[1],
+        );
+        std.mem.swap(
+            u32,
+            &sim.simulation_temperature_buffers[0],
+            &sim.simulation_temperature_buffers[1],
+        );
+        std.mem.swap(
+            u32,
+            &sim.simulation_deviation_buffers[0],
+            &sim.simulation_deviation_buffers[1],
+        );
+
+        sim.timestep_index += 1;
+    }
 }
 
 pub fn render(sim: *Simulation) void {
+    gl.BindBufferBase(
+        gl.SHADER_STORAGE_BUFFER,
+        0,
+        sim.voxel_materials_buffer,
+    );
+    gl.BindBufferBase(
+        gl.SHADER_STORAGE_BUFFER,
+        1,
+        sim.simulation_material_buffers[0],
+    );
+    gl.BindBufferBase(
+        gl.SHADER_STORAGE_BUFFER,
+        2,
+        sim.simulation_temperature_buffers[0],
+    );
+
+    gl.BindBufferBase(
+        gl.SHADER_STORAGE_BUFFER,
+        22,
+        sim.point_light_buffer,
+    );
+
+    gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
     gl.UseProgram(sim.renderer_program);
     gl.BindVertexArray(sim.vertex_array);
     gl.CullFace(gl.FRONT);
@@ -424,6 +458,54 @@ pub fn render(sim: *Simulation) void {
     gl.Enable(gl.CULL_FACE);
 
     gl.DrawArrays(gl.TRIANGLES, 0, 36);
+}
+
+pub fn updateCSGProgram(
+    sim: *Simulation,
+    program: CSGProgram,
+) !void {
+    if (program.instructions.items.len == 0) {
+        return;
+    }
+
+    sim.csg_invocations.items[0].bound_min = .{ 0, 0, 0 };
+    sim.csg_invocations.items[0].bound_max = .{
+        @intCast(sim.width),
+        @intCast(sim.height),
+        @intCast(sim.depth),
+    };
+
+    gl.NamedBufferData(
+        sim.csg_instruction_buffer,
+        @intCast(program.instructions.items.len * @sizeOf(CSGInstruction)),
+        program.instructions.items.ptr,
+        gl.DYNAMIC_DRAW,
+    );
+
+    if (program.instructions_box.items.len > 0) {
+        gl.NamedBufferData(
+            sim.csg_instructions_box_buffer,
+            @intCast(program.instructions_box.items.len * @sizeOf(CSGInstructionBox)),
+            program.instructions_box.items.ptr,
+            gl.DYNAMIC_DRAW,
+        );
+    }
+
+    if (program.instructions_sphere.items.len > 0) {
+        gl.NamedBufferData(
+            sim.csg_instructions_sphere_buffer,
+            @intCast(program.instructions_sphere.items.len * @sizeOf(CSGInstructionSphere)),
+            program.instructions_sphere.items.ptr,
+            gl.DYNAMIC_DRAW,
+        );
+    }
+
+    gl.NamedBufferData(
+        sim.csg_transform_buffer,
+        @intCast(program.transforms.items.len * @sizeOf(CSGRigidTransform)),
+        program.transforms.items.ptr,
+        gl.DYNAMIC_DRAW,
+    );
 }
 
 pub const ShaderUniforms = extern struct {
@@ -444,18 +526,27 @@ pub const ShaderUniforms = extern struct {
 };
 
 pub const VoxelMaterial = extern struct {
-    density: u32 = 1,
+    density: f32 = 10,
     heat_conductivity: f32 = 1,
     heat_capacity: f32 = 1,
-    melting_point: f32 = 1000,
+    melting_point: f32 = 10000,
     boiling_point: f32 = 2000,
 };
 
 pub const VoxelMaterialVisual = extern struct {
-    albedo: u32 = 0,
+    albedo: u32 = 0xffffff,
     roughness_metalness: u32 = 0xffffffff,
     reflectivity: f32 = 0,
     refractive_index: f32 = 1.5,
+};
+
+pub const CSGProgram = struct {
+    transforms: std.ArrayList(CSGRigidTransform) = .empty,
+    instructions: std.ArrayList(CSGInstruction) = .empty,
+    instructions_box: std.ArrayList(CSGInstructionBox) = .empty,
+    instructions_sphere: std.ArrayList(CSGInstructionSphere) = .empty,
+    instructions_extrude_post: std.ArrayList(CSGInstructionExtrudePost) = .empty,
+    material: std.ArrayList(CSGMaterialComponent) = .empty,
 };
 
 pub const CSGInstructionOp = enum(u32) {
@@ -493,14 +584,14 @@ pub const CSGInstruction = extern struct {
 pub const CSGInstructionBox = extern struct {
     bounds: [3]f32,
     rigid_transform: u32,
-    material: u32,
-    pad: [12]u8,
+    material: VoxelMaterialHandle,
+    pad: [12]u8 = undefined,
 };
 
 pub const CSGInstructionSphere = extern struct {
     radius: f32,
     rigid_transform: u32,
-    material: u32,
+    material: VoxelMaterialHandle,
 };
 
 pub const CSGInstructionExtrudePost = extern struct {
@@ -517,10 +608,24 @@ pub const CSGRigidTransform = extern struct {
         .uniform_scale = 1,
         .rotation = .{ 0, 0, 0, 1 },
     };
+
+    pub fn compose(lhs: CSGRigidTransform, rhs: CSGRigidTransform) CSGRigidTransform {
+        var result: CSGRigidTransform = undefined;
+        const rotated_pos = zmath.rotate(lhs.rotation, .{ rhs.position[0], rhs.position[1], rhs.position[2], 0 });
+        result.position = .{
+            lhs.position[0] + rotated_pos[0],
+            lhs.position[1] + rotated_pos[1],
+            lhs.position[2] + rotated_pos[2],
+        };
+        result.uniform_scale = lhs.uniform_scale * rhs.uniform_scale;
+        result.rotation = math.mulQuat(lhs.rotation, rhs.rotation);
+
+        return result;
+    }
 };
 
 pub const CSGMaterialComponent = extern struct {
-    material: u32,
+    material: VoxelMaterialHandle,
     density: f32,
 };
 
@@ -537,11 +642,16 @@ pub const CSGInvocation = extern struct {
     bound_max: [3]i32,
 };
 
+pub const VoxelMaterialHandle = enum(u32) {
+    air = 0,
+    _,
+};
+
 pub const PointLight = extern struct {
     position: [3]f32,
     radiance: f32,
     colour: u32,
-    pad: [3]u32,
+    pad: [3]u32 = undefined,
 };
 
 pub const ShaderSource = struct {
@@ -635,3 +745,5 @@ pub fn loadShader(source: ShaderSource) !u32 {
 const std = @import("std");
 const Simulation = @This();
 const gl = @import("gl");
+const math = @import("math.zig");
+const zmath = @import("zmath");

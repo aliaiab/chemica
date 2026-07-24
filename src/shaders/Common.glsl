@@ -11,7 +11,7 @@
 //TODO: Make material data SOA/data oriented
 struct VoxelMaterial
 {
-    uint density;
+    float density;
     float heat_conductivity;
     float heat_capacity;
     float melting_point;

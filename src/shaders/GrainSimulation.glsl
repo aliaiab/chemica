@@ -71,10 +71,15 @@ ivec3 getOffset(uint substep) {
     return ivec3(0, 0, 0);
 }
 
-bool canSwap(int grid[8], ivec3 from_position, ivec3 to_delta) {
+bool canSwap(int grid[8], ivec3 from_position, uint i, ivec3 to_delta) {
     uint to_index = to_delta.x + to_delta.y * 2 + to_delta.z * 2 * 2;
 
-    return isInBlock(to_delta) && isInBounds(from_position + to_delta) && in_voxel_lattice[grid[to_index]] == 0;
+    float from_density = uMaterials[in_voxel_lattice[i]].density;
+    float to_density = uMaterials[in_voxel_lattice[grid[to_index]]].density;
+
+    bool can_swap = to_density < from_density || in_voxel_lattice[grid[to_index]] == 0;
+
+    return isInBlock(to_delta) && isInBounds(from_position + to_delta) && can_swap;
 }
 
 uint computePhase(uint voxel) {
@@ -130,13 +135,13 @@ void simulateSolidGrains(
     uint i_below_left = below_left.x + below_left.y * 2 + below_left.z * 2 * 2;
     uint i_below_right = below_right.x + below_right.y * 2 + below_right.z * 2 * 2;
 
-    if (canSwap(grid, pos, local_pos_below)) {
+    if (canSwap(grid, pos, 0, local_pos_below)) {
         swap(grid, i_below, voxel_index);
         return;
     }
 
-    bool can_left_swap = canSwap(grid, pos, below_left);
-    bool can_right_swap = canSwap(grid, pos, below_right);
+    bool can_left_swap = canSwap(grid, pos, 0, below_left);
+    bool can_right_swap = canSwap(grid, pos, 0, below_right);
 
     if (can_left_swap && can_right_swap) {
         can_left_swap = random.y > 0.5;
@@ -211,25 +216,27 @@ void main() {
                 uint phase = computePhase(grid[i]);
 
                 if (phase == VOXEL_PHASE_SOLID) {
-                    continue;
+                    //continue;
                 }
 
                 if (phase == VOXEL_PHASE_LIQUID) {
                     ivec3 local_pos_below = local_pos + ivec3(0, -1, 0);
-                    ivec3 left = local_pos + ivec3(1 - x, 0, 0);
-                    ivec3 right = local_pos + ivec3(0, 0, 1 - z);
+                    ivec3 left = local_pos + ivec3(1 - x, 0, -x);
+                    ivec3 right = local_pos + ivec3(-z, 0, 1 - x);
+                    ivec3 below_left = local_pos + ivec3(1 - x, -1, -x);
+                    ivec3 below_right = local_pos + ivec3(-z, -1, 1 - z);
 
                     uint i_below = x + (local_pos_below.y) * 2 + z * 2 * 2;
                     uint i_left = left.x + left.y * 2 + left.z * 2 * 2;
                     uint i_right = right.x + right.y * 2 + right.z * 2 * 2;
 
-                    if (canSwap(grid, p, local_pos_below)) {
+                    if (canSwap(grid, p, i, local_pos_below)) {
                         swap(grid, i_below, i);
                         continue;
                     }
 
-                    bool can_left_swap = canSwap(grid, p, left);
-                    bool can_right_swap = canSwap(grid, p, right);
+                    bool can_left_swap = canSwap(grid, p, i, left);
+                    bool can_right_swap = canSwap(grid, p, i, right);
 
                     if (can_left_swap && can_right_swap) {
                         can_left_swap = random.y > 0.5;
@@ -250,8 +257,8 @@ void main() {
                 }
 
                 ivec3 local_pos_below = local_pos + ivec3(0, -1, 0);
-                ivec3 below_left = local_pos + ivec3(1 - x, -1, 0);
-                ivec3 below_right = local_pos + ivec3(0, -1, 1 - z);
+                ivec3 below_left = local_pos + ivec3(1 - x, -1, -x);
+                ivec3 below_right = local_pos + ivec3(-z, -1, 1 - z);
 
                 if (phase == VOXEL_PHASE_GAS) {
                     local_pos_below = local_pos + ivec3(0, 1, 0);
@@ -263,13 +270,13 @@ void main() {
                 uint i_below_left = below_left.x + below_left.y * 2 + below_left.z * 2 * 2;
                 uint i_below_right = below_right.x + below_right.y * 2 + below_right.z * 2 * 2;
 
-                if (canSwap(grid, p, local_pos_below)) {
+                if (canSwap(grid, p, i, local_pos_below)) {
                     swap(grid, i_below, i);
                     continue;
                 }
 
-                bool can_left_swap = canSwap(grid, p, below_left);
-                bool can_right_swap = canSwap(grid, p, below_right);
+                bool can_left_swap = canSwap(grid, p, i, below_left);
+                bool can_right_swap = canSwap(grid, p, i, below_right);
 
                 if (can_left_swap && can_right_swap) {
                     can_left_swap = random.y > 0.5;

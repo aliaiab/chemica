@@ -16,6 +16,10 @@ pub fn showDemoWindow(options: struct {}) void {
     cimgui.ImGui_ShowDemoWindow(null);
 }
 
+pub fn isAnyItemActive() bool {
+    return cimgui.ImGui_IsAnyItemActive();
+}
+
 pub fn dockSpace(
     id: Id,
     options: struct {},
@@ -64,12 +68,53 @@ pub fn menuItem(
         enabled: bool = true,
     },
 ) bool {
-    return cimgui.ImGui_MenuItem_Bool(
+    return cimgui.ImGui_MenuItemBool(
         label.ptr,
         if (options.shortcut != null) options.shortcut.?.ptr else null,
         options.selected,
         options.enabled,
     );
+}
+
+pub const TreeNodeFlags = packed struct(u32) {
+    selected: bool = false,
+    framed: bool = false,
+    allow_overlap: bool = false,
+    no_tree_push_on_open: bool = false,
+    no_auto_open_on_log: bool = false,
+    default_open: bool = false,
+    open_on_double_click: bool = false,
+    open_on_arrow: bool = false,
+    leaf: bool = false,
+    bullet: bool = false,
+    frame_padding: bool = false,
+    span_avail_width: bool = false,
+    span_full_width: bool = false,
+    span_label_width: bool = false,
+    span_all_columns: bool = false,
+    label_span_all_columns: bool = false,
+    nav_left_jumps_to_parent: bool = false,
+    draw_lines_none: bool = false,
+    draw_lines_full: bool = false,
+    draw_lines_to_nodes: bool = false,
+    _: u12 = 0,
+};
+
+pub fn treeNode(label: [:0]const u8, options: struct {
+    flags: TreeNodeFlags = .{},
+}) bool {
+    return cimgui.ImGui_TreeNodeEx(
+        label.ptr,
+        @bitCast(options.flags),
+    );
+}
+
+pub fn treePop() void {
+    cimgui.ImGui_TreePop();
+}
+
+pub fn isItemClicked() bool {
+    return cimgui.ImGui_IsItemClicked();
 }
 
 ///Push and id value, can be an integer, pointer or a string
@@ -78,13 +123,25 @@ pub fn pushId(value: anytype) void {
 
     switch (@typeInfo(T)) {
         .int => |int_info| {
-            const cint: c_int = switch (int_info.sImGui_nedness) {
-                .sImGui_ned => @intCast(value),
-                //TODO: handle unsImGui_ned ints differently
-                .unsImGui_ned => @intCast(value),
+            const cint: c_int = switch (int_info.signedness) {
+                .signed => @intCast(value),
+                .unsigned => @intCast(value),
             };
 
-            cimgui.ImGui_PushID_Int(cint);
+            cimgui.ImGui_PushIDInt(cint);
+        },
+        .@"enum" => {
+            const cint: c_int = @bitCast(@intFromEnum(value));
+
+            cimgui.ImGui_PushIDInt(cint);
+        },
+        .pointer => {
+            switch (T) {
+                []const u8 => {
+                    cimgui.ImGui_PushIDStr(value.ptr, value.ptr + value.len);
+                },
+                else => @compileError("type of value not supported for id creation!"),
+            }
         },
         else => @compileError("type of value not supported for id creation!"),
     }
@@ -118,7 +175,7 @@ pub fn sameLine(
         spacing: f32 = -1,
     },
 ) void {
-    return cimgui.ImGui_SameLine(options.offset_from_start_x, options.spacing);
+    return cimgui.ImGui_SameLineEx(options.offset_from_start_x, options.spacing);
 }
 
 pub fn text(
@@ -129,7 +186,7 @@ pub fn text(
 
     const formatted = std.fmt.bufPrint(&fmt_buffer, fmt, args) catch @panic("Format allocation failed!");
 
-    cimgui.ImGui_TextUnformattedEx(formatted.ptr, formatted.ptr + formatted.len);
+    textUnformatted(formatted);
 }
 
 pub fn textUnformatted(string: []const u8) void {
@@ -170,6 +227,25 @@ pub fn button(
         label.ptr,
         .{ .x = options.size[0], .y = options.size[1] },
     );
+}
+
+pub fn combo(
+    label: []const u8,
+    current_item: *usize,
+    items: []const [*]const u8,
+) bool {
+    var current_item_i32: i32 = @intCast(current_item.*);
+
+    const result = cimgui.ImGui_ComboChar(
+        label.ptr,
+        &current_item_i32,
+        items.ptr,
+        @intCast(items.len),
+    );
+
+    current_item.* = @intCast(current_item_i32);
+
+    return result;
 }
 
 pub fn image(
@@ -222,27 +298,117 @@ pub fn imageButton(
     );
 }
 
+pub fn dragValue(
+    label: []const u8,
+    comptime fmt: []const u8,
+    value: anytype,
+    options: DragScalarOptions(std.meta.Child(@TypeOf(value))),
+) bool {
+    _ = label; // autofix
+    _ = fmt; // autofix
+    _ = options; // autofix
+
+}
+
 pub fn dragFloat(
     label: []const u8,
     comptime fmt: []const u8,
     value: *f32,
-    options: struct {
-        speed: f32 = 0.1,
-        value_min: f32 = 0,
-        value_max: f32 = 0,
-        flags: SliderFlags = .{},
-    },
+    options: DragScalarOptions(f32),
 ) bool {
     return reimpls.dragScalar(
         f32,
         label,
         fmt,
         value,
-        options.speed,
-        options.value_min,
-        options.value_max,
-        @bitCast(options.flags),
+        options,
     );
+}
+
+fn DragScalarOptions(comptime T: type) type {
+    return struct {
+        speed: T = if (@typeInfo(T) == .float) 0.1 else 1,
+        value_min: T = 0,
+        value_max: T = 0,
+        flags: SliderFlags = .{},
+    };
+}
+
+pub fn dragFloat3(
+    label: []const u8,
+    comptime fmt: []const u8,
+    value: [*]f32,
+    options: DragScalarOptions(f32),
+) bool {
+    return dragScalarN(
+        label,
+        fmt,
+        f32,
+        value,
+        3,
+        options,
+    );
+}
+
+fn dragScalarN(
+    label: []const u8,
+    comptime fmt: []const u8,
+    comptime T: type,
+    value: [*]T,
+    comptime components: usize,
+    options: DragScalarOptions(T),
+) bool {
+    var value_change: bool = false;
+
+    cimgui.ImGui_BeginGroup();
+    pushId(label);
+    cimgui.ImGui_PushMultiItemsWidths(
+        @intCast(components),
+        cimgui.ImGui_CalcItemWidth(),
+    );
+
+    for (0..components) |i| {
+        pushId(i);
+
+        if (i > 0) {
+            sameLine(.{ .offset_from_start_x = 0, .spacing = 5 });
+        }
+
+        if (true) {
+            const color_markers: [4]u32 = .{
+                4279506160,
+                4279562260,
+                4293923860,
+                4287401100,
+            };
+
+            cimgui.ImGui_SetNextItemColorMarker(color_markers[i]);
+        }
+
+        value_change |= reimpls.dragScalar(
+            T,
+            "",
+            fmt,
+            &value[i],
+            options,
+        );
+
+        popId();
+        cimgui.ImGui_PopItemWidth();
+    }
+
+    popId();
+
+    const label_end = label.len;
+
+    if (label_end != label.len) {
+        sameLine(.{ .spacing = 5 });
+        text("{s}", .{label});
+    }
+
+    cimgui.ImGui_EndGroup();
+
+    return value_change;
 }
 
 pub fn newFrame() void {
@@ -394,27 +560,27 @@ const reimpls = struct {
         label: []const u8,
         comptime fmt: []const u8,
         p_data: *T,
-        v_speed: f32,
-        p_min: T,
-        p_max: T,
-        flags: u32,
+        options: DragScalarOptions(T),
     ) bool {
-        _ = v_speed; // autofix
         const DRAG_MOUSE_THRESHOLD_FACTOR = 0.50;
+        _ = DRAG_MOUSE_THRESHOLD_FACTOR; // autofix
+        const v_speed = options.speed;
+        _ = v_speed; // autofix
+        const p_min = options.value_min;
+        const p_max = options.value_max;
+        const flags: u32 = @bitCast(options.flags);
 
         const window: *ImGui_extras.ImGuiWindow = @ptrCast(@alignCast(cimgui.ImGui_GetCurrentWindow().?));
-        if (window.SkipItems)
-            return false;
 
         const g: *cimgui.ImGuiContext = @ptrCast(cimgui.ImGui_GetCurrentContext().?);
         const style: *cimgui.ImGuiStyle = @ptrCast(cimgui.ImGui_GetStyle());
-        const id = cimgui.ImGuiWindow_GetID_Str(@ptrCast(window), label.ptr, label.ptr + label.len);
+        const id = cimgui.ImGuiWindow_GetIDStrEx(@ptrCast(window), label.ptr, label.ptr + label.len);
 
         const w = cimgui.ImGui_CalcItemWidth();
 
         var label_size: cimgui.ImVec2 = undefined;
 
-        cimgui.ImGui_CalcTextSize(&label_size, label.ptr, label.ptr + label.len, true, 0);
+        label_size = cimgui.ImGui_CalcTextSizeEx(label.ptr, label.ptr + label.len, true, 0);
         const frame_bb: cimgui.ImRect = .{
             .Min = window.DC.CursorPos,
             .Max = cimgui.ImVec2{ .x = w + window.DC.CursorPos.x, .y = window.DC.CursorPos.y + label_size.y + style.FramePadding.y * 2.0 },
@@ -426,45 +592,51 @@ const reimpls = struct {
 
         const temp_input_allowed = (flags & cimgui.ImGuiSliderFlags_NoInput) == 0;
 
-        cimgui.ImGui_ItemSize_Rect(total_bb, style.FramePadding.y);
+        cimgui.ImGui_ItemSizeImRectEx(total_bb, style.FramePadding.y);
 
-        if (!cimgui.ImGui_ItemAdd(total_bb, id, &frame_bb, if (temp_input_allowed) cimgui.ImGuiItemFlags_Inputable else 0))
+        if (!cimgui.ImGui_ItemAddEx(total_bb, id, &frame_bb, if (temp_input_allowed) cimgui.ImGuiItemFlags_Inputable else 0))
             return false;
 
-        // Default format string when passing null
-        // if (format == null)
-        // format = DataTypeGetInfo(data_type)->PrintFmt;
+        const last_item_data: *cimgui.ImGuiItemFlags = @ptrCast(@alignCast(@as([*]u8, @ptrCast(g)) + 7808));
 
-        const hovered = cimgui.ImGui_ItemHoverable(frame_bb, id, g.LastItemData.InFlags);
+        const hovered = cimgui.ImGui_ItemHoverable(frame_bb, id, last_item_data.*);
         var temp_input_is_active = temp_input_allowed and cimgui.ImGui_TempInputIsActive(id);
 
+        const active_id = cimgui.ImGui_GetActiveID();
+
         if (!temp_input_is_active) {
+            const nav_activate_id: *c_uint = @ptrCast(@alignCast(@as([*]u8, @ptrCast(g)) + 8204));
+            const nav_activate_flags: *c_uint = @ptrCast(@alignCast(@as([*]u8, @ptrCast(g)) + 8216));
+
             // Tabbing or CTRL-clicking on Drag turns it into an InputText
-            const clicked = hovered and cimgui.ImGui_IsMouseClicked_ID(0, id, 0);
-            const double_clicked = (hovered and g.IO.MouseClickedCount[0] == 2 and cimgui.ImGui_TestKeyOwner(cimgui.ImGuiKey_MouseLeft, id));
-            const make_active = (clicked or double_clicked or g.NavActivateId == id);
+            const clicked = hovered and cimgui.ImGui_IsMouseClickedEx(0, false);
+            const double_clicked = (hovered and cimgui.ImGui_IsMouseDoubleClicked(0) and cimgui.ImGui_TestKeyOwner(cimgui.ImGuiKey_MouseLeft, id));
+            const make_active = (clicked or double_clicked or nav_activate_id.* == id);
             if (make_active and (clicked or double_clicked))
                 cimgui.ImGui_SetKeyOwner(cimgui.ImGuiKey_MouseLeft, id, 0);
             if (make_active and temp_input_allowed) {
-                if ((clicked and g.IO.KeyCtrl) or double_clicked or (g.NavActivateId == id and (g.NavActivateFlags & cimgui.ImGuiActivateFlags_PreferInput != 0))) {
+                if ((clicked and cimgui.ImGui_IsKeyDown(cimgui.ImGuiKey_LeftCtrl)) or double_clicked or (nav_activate_id.* == id and (nav_activate_flags.* & cimgui.ImGuiActivateFlags_PreferInput != 0))) {
                     temp_input_is_active = true;
                 }
             }
 
             // (Optional) simple click (without moving) turns Drag into an InputText
-            if (g.IO.ConfImGui_DragClickToInputText and temp_input_allowed and !temp_input_is_active) {
-                if (g.ActiveId == id and hovered and g.IO.MouseReleased[0] and !cimgui.ImGui_IsMouseDragPastThreshold(0, g.IO.MouseDragThreshold * DRAG_MOUSE_THRESHOLD_FACTOR)) {
-                    g.NavActivateId = id;
-                    g.NavActivateFlags = cimgui.ImGuiActivateFlags_PreferInput;
+            if (temp_input_allowed and !temp_input_is_active) {
+                if (active_id == id and hovered and cimgui.ImGui_IsMouseReleased(0) and !cimgui.ImGui_IsMouseDragPastThreshold(0)) {
+                    nav_activate_id.* = id;
+
+                    nav_activate_flags.* = cimgui.ImGuiActivateFlags_PreferInput;
                     temp_input_is_active = true;
                 }
             }
+
+            const active_id_using_nav_dir_mask: *c_uint = @ptrCast(@alignCast(@as([*]u8, @ptrCast(g)) + 7728));
 
             if (make_active and !temp_input_is_active) {
                 cimgui.ImGui_SetActiveID(id, @ptrCast(window));
                 cimgui.ImGui_SetFocusID(id, @ptrCast(window));
                 cimgui.ImGui_FocusWindow(@ptrCast(window), 0);
-                g.ActiveIdUsingNavDirMask = (1 << cimgui.ImGuiDir_Left) | (1 << cimgui.ImGuiDir_RImGui_ht);
+                active_id_using_nav_dir_mask.* = (1 << cimgui.ImGuiDir_Left) | (1 << cimgui.ImGuiDir_Right);
             }
         }
 
@@ -473,10 +645,10 @@ const reimpls = struct {
         }
 
         // Draw frame
-        const frame_col: u32 = cimgui.ImGui_GetColorU32_Col(if (g.ActiveId == id) cimgui.ImGuiCol_FrameBgActive else if (hovered) cimgui.ImGuiCol_FrameBgHovered else cimgui.ImGuiCol_FrameBg, 1);
+        const frame_col: u32 = cimgui.ImGui_GetColorU32Ex(if (active_id == id) cimgui.ImGuiCol_FrameBgActive else if (hovered) cimgui.ImGuiCol_FrameBgHovered else cimgui.ImGuiCol_FrameBg, 1);
 
-        cimgui.ImGui_RenderNavHImGui_hlImGui_ht(frame_bb, id, 0);
-        cimgui.ImGui_RenderFrame(frame_bb.Min, frame_bb.Max, frame_col, true, style.FrameRounding);
+        cimgui.ImGui_RenderNavHighlightEx(frame_bb, id, 0);
+        cimgui.ImGui_RenderFrameEx(frame_bb.Min, frame_bb.Max, frame_col, true, style.FrameRounding);
 
         // Drag behavior
         // const value_changed = cimgui.ImGui_DragBehavior(id, data_type, p_data, v_speed, p_min, p_max, format, flags);
@@ -491,7 +663,7 @@ const reimpls = struct {
         const value_buf_str = std.fmt.bufPrint(&value_buf, fmt, .{p_data.*}) catch @panic("");
         const value_buf_end = value_buf_str.ptr + value_buf_str.len;
 
-        cimgui.ImGui_RenderTextClipped(
+        cimgui.ImGui_RenderTextClippedEx(
             frame_bb.Min,
             frame_bb.Max,
             &value_buf,
@@ -502,7 +674,7 @@ const reimpls = struct {
         );
 
         if (label_size.x > 0.0) {
-            cimgui.ImGui_RenderText(
+            cimgui.ImGui_RenderTextEx(
                 .{ .x = frame_bb.Max.x + style.ItemInnerSpacing.x, .y = frame_bb.Min.y + style.FramePadding.y },
                 label.ptr,
                 label.ptr + label.len,
@@ -528,9 +700,9 @@ const reimpls = struct {
 
         _ = std.fmt.bufPrint(&fmt_buf, fmt, .{p_data.*}) catch @panic("");
 
-        cimgui.ImGui_ImStrTrimBlanks(&data_buf);
+        //TODO: trim blanks
 
-        const flags = cimgui.ImGuiInputTextFlags_AutoSelectAll | cimgui.ImGuiInputTextFlags_NoMarkEdited;
+        const flags = cimgui.ImGuiInputTextFlags_AutoSelectAll;
 
         var value_changed: bool = false;
 
@@ -572,13 +744,12 @@ const reimpls = struct {
 
 const ImGui_extras = struct {
     pub const ImGuiWindow = extern struct {
-        Ctx: [*c]cimgui.ImGuiContext,
+        Ctx: *cimgui.ImGuiContext,
         Name: [*c]u8,
         ID: cimgui.ImGuiID,
         Flags: cimgui.ImGuiWindowFlags,
         FlagsPreviousFrame: cimgui.ImGuiWindowFlags,
         ChildFlags: cimgui.ImGuiChildFlags,
-        WindowClass: cimgui.ImGuiWindowClass,
         Viewport: [*c]cimgui.ImGuiViewportP,
         ViewportId: cimgui.ImGuiID,
         ViewportPos: cimgui.ImVec2,
@@ -675,7 +846,7 @@ const ImGui_extras = struct {
         RootWindow: *cimgui.ImGuiWindow,
         RootWindowPopupTree: *cimgui.ImGuiWindow,
         RootWindowDockTree: *cimgui.ImGuiWindow,
-        RootWindowForTitleBarHImGui_hlImGui_ht: *cimgui.ImGuiWindow,
+        RootWindowForTitleBarHighlight: *cimgui.ImGuiWindow,
         RootWindowForNav: *cimgui.ImGuiWindow,
         NavLastChildNavWindow: *cimgui.ImGuiWindow,
         NavLastIds: [cimgui.ImGuiNavLayer_COUNT]cimgui.ImGuiID,
@@ -693,14 +864,62 @@ const ImGui_extras = struct {
             dock_tab_want_close: bool,
             _: u4,
         },
+    };
+};
 
-        DockOrder: i16,
-        DockStyle: cimgui.ImGuiWindowDockStyle,
-        DockNode: *cimgui.ImGuiDockNode,
-        DockNodeAsHost: *cimgui.ImGuiDockNode,
-        DockId: cimgui.ImGuiID,
-        DockTabItemStatusFlags: cimgui.ImGuiItemStatusFlags,
-        DockTabItemRect: cimgui.ImRect,
+pub const impl = struct {
+    pub const InitError = error{
+        InitFailed,
+    };
+
+    pub const glfw = struct {
+        pub fn initForOpenGL(window: *@import("zglfw").Window, options: struct {
+            install_callbacks: bool = true,
+        }) InitError!void {
+            if (cimgui.cImGui_ImplGlfw_InitForOpenGL(
+                @ptrCast(window),
+                options.install_callbacks,
+            ) == false) {
+                return InitError.InitFailed;
+            }
+        }
+
+        pub fn shutdown() void {
+            cimgui.cImGui_ImplGlfw_Shutdown();
+        }
+
+        pub fn newFrame() void {
+            cimgui.cImGui_ImplGlfw_NewFrame();
+        }
+    };
+
+    pub const opengl3 = struct {
+        pub fn init(
+            options: struct {
+                glsl_version: ?[:0]const u8 = null,
+            },
+        ) InitError!void {
+            const status = if (options.glsl_version) |glsl_version|
+                cimgui.cImGui_ImplOpenGL3_InitEx(glsl_version.ptr)
+            else
+                cimgui.cImGui_ImplOpenGL3_Init();
+
+            if (status == false) {
+                return InitError.InitFailed;
+            }
+        }
+
+        pub fn shutdown() void {
+            cimgui.cImGui_ImplOpenGL3_Shutdown();
+        }
+
+        pub fn newFrame() void {
+            cimgui.cImGui_ImplOpenGL3_NewFrame();
+        }
+
+        pub fn renderDrawData(draw_data: *DrawData) void {
+            cimgui.cImGui_ImplOpenGL3_RenderDrawData(@ptrCast(draw_data));
+        }
     };
 };
 

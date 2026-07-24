@@ -267,7 +267,7 @@ float raycastVoxelsOld(
     for (int i = 0; i < uSize.x + uSize.y + uSize.z; i++) {
         uvec3 position = uvec3(pos + 0.5);
 
-        if (!isInBounds(ivec3(position))) {
+        if (!isInBoundsInclusive(ivec3(position))) {
             res = -1;
             voxel_index = 0;
             break;
@@ -275,6 +275,14 @@ float raycastVoxelsOld(
 
         uint index = position.x + uSize.x * position.y + uSize.x * uSize.y * position.z;
         uint type = uVoxelMaterials[index];
+
+        /*
+                if (position.y > index % (uSize.x * uSize.z)) {
+                    res = -1;
+                    voxel_index = 0;
+                    break;
+                }
+                */
 
         if (false) {
             type = loadVoxelMaterial(ivec3(position));
@@ -469,6 +477,22 @@ vec4 computeVoxelLight(
     return vec4(final_radiance, albedo_vec4.a);
 }
 
+const float positive_infinity = 1.0 / 0.0;
+
+vec2 intersection(vec3 ray_origin, vec3 ray_dir, vec3 box_min, vec3 box_max) {
+    float tmin = 0.0, tmax = positive_infinity;
+
+    for (int d = 0; d < 3; ++d) {
+        float t1 = (box_min[d] - ray_origin[d]) / ray_dir[d];
+        float t2 = (box_max[d] - ray_origin[d]) / ray_dir[d];
+
+        tmin = min(max(t1, tmin), max(t2, tmin));
+        tmax = max(min(t1, tmax), min(t2, tmax));
+    }
+
+    return vec2(tmin, tmax);
+}
+
 vec2 intersectAABB(vec3 rayOrigin, vec3 rayDir, vec3 boxMin, vec3 boxMax) {
     vec3 tMin = (boxMin - rayOrigin) / rayDir;
     vec3 tMax = (boxMax - rayOrigin) / rayDir;
@@ -497,13 +521,12 @@ void main()
 
     vec3 ray_direction = normalize(ray_end - ray_origin);
 
-    vec2 box_intersection = intersectAABB(ray_origin, ray_direction, vec3(0), uSize);
+    vec2 box_intersection = intersection(ray_origin, ray_direction, vec3(0), uSize);
 
     uint medium_material = 0;
 
     if (!isInBoundsInclusive(ivec3(ray_origin))) {
         ray_origin += ray_direction * box_intersection.x;
-        ray_direction = normalize(ray_end - ray_origin);
     }
     else {
         uint start_index = uvec3(ray_origin).x + uSize.x * uvec3(ray_origin).y + uSize.x * uSize.y * uvec3(ray_origin).z;
