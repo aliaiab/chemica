@@ -1,0 +1,235 @@
+.{ .nodes = .{ .items = .{
+    .{
+        .transform = .{
+            .position = .{
+                0,
+                0,
+                0,
+            },
+            .uniform_scale = 1,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .empty,
+        .material = 0,
+        .children = .{ .items = .{ 4, 5 }, .capacity = 2 },
+        .name = "",
+        .unary_op = .identity,
+        .child_op = .binary_op_union,
+    },
+    .{
+        .transform = .{
+            .position = .{
+                -0.33333588,
+                12,
+                -9.333332,
+            },
+            .uniform_scale = 1,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            10,
+            10,
+        } } },
+        .material = 1,
+        .children = .{ .items = .{}, .capacity = 0 },
+        .name = "Box",
+        .unary_op = .identity,
+        .child_op = .binary_op_union,
+    },
+    .{
+        .transform = .{
+            .position = .{
+                -17.333336,
+                -15,
+                5.666668,
+            },
+            .uniform_scale = 1,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            19,
+            10,
+        } } },
+        .material = 1,
+        .children = .{ .items = .{}, .capacity = 0 },
+        .name = "Box",
+        .unary_op = .identity,
+        .child_op = .binary_op_union,
+    },
+    .{
+        .transform = .{
+            .position = .{
+                17.666664,
+                -15,
+                3.666668,
+            },
+            .uniform_scale = 1,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .{ .box = .{ .bounds = .{
+            11,
+            19,
+            10,
+        } } },
+        .material = 1,
+        .children = .{ .items = .{}, .capacity = 0 },
+        .name = "Box",
+        .unary_op = .identity,
+        .child_op = .binary_op_union,
+    },
+    .{
+        .transform = .{
+            .position = .{
+                67.333336,
+                70,
+                12.333332,
+            },
+            .uniform_scale = 1,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .empty,
+        .material = 0,
+        .children = .{ .items = .{
+            1,
+            2,
+            3,
+        }, .capacity = 3 },
+        .name = "Smooth Union",
+        .unary_op = .identity,
+        .child_op = .binary_op_smooth_union,
+    },
+    .{
+        .transform = .{
+            .position = .{
+                66.333336,
+                34,
+                56.333332,
+            },
+            .uniform_scale = 1.8157126,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .empty,
+        .material = 0,
+        .children = .{ .items = .{
+            6,
+            7,
+            8,
+            6,
+            7,
+            8,
+        }, .capacity = 6 },
+        .name = "Smooth Union",
+        .unary_op = .identity,
+        .child_op = .binary_op_smooth_union,
+    },
+    .{
+        .transform = .{
+            .position = .{
+                -0.33333588,
+                12,
+                -9.333332,
+            },
+            .uniform_scale = 1,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            10,
+            10,
+        } } },
+        .material = 1,
+        .children = .{ .items = .{}, .capacity = 0 },
+        .name = "Box",
+        .unary_op = .identity,
+        .child_op = .binary_op_union,
+    },
+    .{
+        .transform = .{
+            .position = .{
+                -17.333336,
+                -15,
+                5.666668,
+            },
+            .uniform_scale = 1,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            19,
+            10,
+        } } },
+        .material = 1,
+        .children = .{ .items = .{}, .capacity = 0 },
+        .name = "Box",
+        .unary_op = .identity,
+        .child_op = .binary_op_union,
+    },
+    .{
+        .transform = .{
+            .position = .{
+                17.666664,
+                -15,
+                3.666668,
+            },
+            .uniform_scale = 1,
+            .rotation = .{
+                0,
+                0,
+                0,
+                1,
+            },
+        },
+        .data = .{ .box = .{ .bounds = .{
+            11,
+            19,
+            10,
+        } } },
+        .material = 1,
+        .children = .{ .items = .{}, .capacity = 0 },
+        .name = "Box",
+        .unary_op = .identity,
+        .child_op = .binary_op_union,
+    },
+}, .capacity = 9 } }

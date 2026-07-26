@@ -277,12 +277,12 @@ float raycastVoxelsOld(
         uint type = uVoxelMaterials[index];
 
         /*
-                if (position.y > index % (uSize.x * uSize.z)) {
-                    res = -1;
-                    voxel_index = 0;
-                    break;
-                }
-                */
+                                                                                                                                        if (position.y > index % (uSize.x * uSize.z)) {
+                                                                                                                                            res = -1;
+                                                                                                                                            voxel_index = 0;
+                                                                                                                                            break;
+                                                                                                                                        }
+                                                                                                                                        */
 
         if (false) {
             type = loadVoxelMaterial(ivec3(position));
@@ -527,6 +527,9 @@ void main()
 
     if (!isInBoundsInclusive(ivec3(ray_origin))) {
         ray_origin += ray_direction * box_intersection.x;
+        if (any(bvec3(uvec3(ray_origin).x >= uSize.x - 1, uvec3(ray_origin).y >= uSize.y - 1, uvec3(ray_origin).z >= uSize.z - 1))) {
+            ray_origin += ray_direction * 3;
+        }
     }
     else {
         uint start_index = uvec3(ray_origin).x + uSize.x * uvec3(ray_origin).y + uSize.x * uSize.y * uvec3(ray_origin).z;

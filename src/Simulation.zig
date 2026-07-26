@@ -613,9 +613,9 @@ pub const CSGRigidTransform = extern struct {
         var result: CSGRigidTransform = undefined;
         const rotated_pos = zmath.rotate(lhs.rotation, .{ rhs.position[0], rhs.position[1], rhs.position[2], 0 });
         result.position = .{
-            lhs.position[0] + rotated_pos[0],
-            lhs.position[1] + rotated_pos[1],
-            lhs.position[2] + rotated_pos[2],
+            lhs.position[0] + rotated_pos[0] * lhs.uniform_scale,
+            lhs.position[1] + rotated_pos[1] * lhs.uniform_scale,
+            lhs.position[2] + rotated_pos[2] * lhs.uniform_scale,
         };
         result.uniform_scale = lhs.uniform_scale * rhs.uniform_scale;
         result.rotation = math.mulQuat(lhs.rotation, rhs.rotation);

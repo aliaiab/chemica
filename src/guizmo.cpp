@@ -18,13 +18,13 @@ extern "C"
     {
         ImGuizmo::SetImGuiContext(ctx);
     }
-    
+
     bool ImGuizmo_IsOver()
     {
         return ImGuizmo::IsOver();
     }
 
-    bool ImGuizmo_IsUsing() 
+    bool ImGuizmo_IsUsing()
     {
         return ImGuizmo::IsUsing();
     }
@@ -33,7 +33,7 @@ extern "C"
     {
         ImGuizmo::Enable(enable);
     }
-    
+
     void ImGuizmo_DecomposeMatrixToComponents(const float *matrix, float *translation, float *rotation, float *scale)
     {
         ImGuizmo::DecomposeMatrixToComponents(matrix, translation, rotation, scale);
@@ -66,17 +66,17 @@ extern "C"
 
     bool ImGuizmo_Manipulate(const float *view, const float *projection, ImGuizmo::OPERATION operation, ImGuizmo::MODE mode, float *matrix, float *deltaMatrix, const float *snap, const float *localBounds, const float *boundsSnap)
     {
-        return ImGuizmo::Manipulate(view, projection, operation, mode, matrix, deltaMatrix, boundsSnap);
+        return ImGuizmo::Manipulate(view, projection, operation, mode, matrix, deltaMatrix, boundsSnap, localBounds, boundsSnap);
     }
-    
+
     void ImGuizmo_ViewManipulate(float *view, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor)
     {
-        ImGuizmo::ViewManipulate(view, length, position, size, backgroundColor);    
+        ImGuizmo::ViewManipulate(view, length, position, size, backgroundColor);
     }
 
     void ImGuizmo_ViewManipulateExt(float *view, const float *projection, ImGuizmo::OPERATION operation, ImGuizmo::MODE mode, float *matrix, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor)
     {
-        ImGuizmo::ViewManipulate(view, length, position, size, backgroundColor);    
+        ImGuizmo::ViewManipulate(view, length, position, size, backgroundColor);
     }
 
     void ImGuizmo_SetID(int id)
@@ -93,7 +93,7 @@ extern "C"
     {
         ImGuizmo::SetGizmoSizeClipSpace(value);
     }
-    
+
     void ImGuizmo_AllowAxisFlip(bool value)
     {
         ImGuizmo::AllowAxisFlip(value);

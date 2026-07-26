@@ -125,6 +125,60 @@ pub fn isItemClicked() bool {
     return cimgui.ImGui_IsItemClicked();
 }
 
+pub fn setDragDropPayload(
+    value: anytype,
+    options: struct {
+        //If this is null then the type_string is @typeName(@TypeOf(value))
+        type_string: ?[:0]const u8 = null,
+    },
+) bool {
+    const @"type": [:0]const u8 = if (options.type_string) |type_string| type_string else @typeName(@TypeOf(value));
+
+    return cimgui.ImGui_SetDragDropPayload(
+        @"type".ptr,
+        &value,
+        @sizeOf(@TypeOf(value)),
+        1,
+    );
+}
+
+pub fn beginDragDropSource(options: struct {}) bool {
+    _ = options; // autofix
+    return cimgui.ImGui_BeginDragDropSource(0);
+}
+
+pub fn endDragDropSource() void {
+    cimgui.ImGui_EndDragDropSource();
+}
+
+pub fn beginDragDropTarget() bool {
+    return cimgui.ImGui_BeginDragDropTarget();
+}
+
+pub fn endDragDropTarget() void {
+    cimgui.ImGui_EndDragDropTarget();
+}
+
+pub fn acceptDragDropTarget(
+    comptime T: type,
+    options: struct {
+        //If this is null, the full type name of T is used as the type stirng
+        type_string: ?[:0]const u8 = null,
+    },
+) ?T {
+    const @"type": [:0]const u8 = if (options.type_string) |type_string| type_string else @typeName(T);
+
+    const payload = cimgui.ImGui_AcceptDragDropPayload(@"type", 0);
+
+    if (payload == null) {
+        return null;
+    }
+
+    const ptr: *const T = @ptrCast(@alignCast(payload.*.Data));
+
+    return ptr.*;
+}
+
 ///Push and id value, can be an integer, pointer or a string
 pub fn pushId(value: anytype) void {
     const T = @TypeOf(value);
@@ -343,11 +397,23 @@ fn DragScalarOptions(comptime T: type) type {
 }
 
 pub fn dragFloat3(
-    label: []const u8,
+    label: [:0]const u8,
     comptime fmt: []const u8,
     value: [*]f32,
     options: DragScalarOptions(f32),
 ) bool {
+    if (true) {
+        return cimgui.ImGui_DragFloat3Ex(
+            label.ptr,
+            @ptrCast(value),
+            options.speed,
+            options.value_min,
+            options.value_max,
+            null,
+            0,
+        );
+    }
+
     return dragScalarN(
         label,
         fmt,
@@ -419,6 +485,15 @@ fn dragScalarN(
     cimgui.ImGui_EndGroup();
 
     return value_change;
+}
+
+pub fn colorEdit(
+    label: [:0]const u8,
+    colour: anytype,
+    options: struct {},
+) bool {
+    _ = options; // autofix
+    return cimgui.ImGui_ColorEdit4(label.ptr, @ptrCast(colour), 0);
 }
 
 pub fn newFrame() void {
@@ -588,7 +663,19 @@ const reimpls = struct {
         p_data: *T,
         options: DragScalarOptions(T),
     ) bool {
-        if (true) return false;
+        if (true) {
+            if (T == f32) {
+                return cimgui.ImGui_DragFloatEx(
+                    label.ptr,
+                    @ptrCast(p_data),
+                    options.speed,
+                    options.value_min,
+                    options.value_max,
+                    null,
+                    0,
+                );
+            }
+        }
         const DRAG_MOUSE_THRESHOLD_FACTOR = 0.50;
         _ = DRAG_MOUSE_THRESHOLD_FACTOR; // autofix
         const v_speed = options.speed;
