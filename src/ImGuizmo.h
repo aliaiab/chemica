@@ -122,7 +122,7 @@ namespace IMGUIZMO_NAMESPACE
 {
    // call inside your own window and before Manipulate() in order to draw gizmo to that window.
    // Or pass a specific ImDrawList to draw to (e.g. ImGui::GetForegroundDrawList()).
-   IMGUI_API void SetDrawlist(ImDrawList* drawlist = nullptr);
+   IMGUI_API void SetDrawlist(ImDrawList *drawlist = nullptr);
 
    // call BeginFrame right after ImGui_XXXX_NewFrame();
    IMGUI_API void BeginFrame();
@@ -131,7 +131,7 @@ namespace IMGUIZMO_NAMESPACE
    // globals are not shared between them.
    // More details at https://stackoverflow.com/questions/19373061/what-happens-to-global-and-static-variables-in-a-shared-library-when-it-is-dynam
    // expose method to set imgui context
-   IMGUI_API void SetImGuiContext(ImGuiContext* ctx);
+   IMGUI_API void SetImGuiContext(ImGuiContext *ctx);
 
    // return true if mouse cursor is over any gizmo control (axis, plan or screen component)
    IMGUI_API bool IsOver();
@@ -163,23 +163,23 @@ namespace IMGUIZMO_NAMESPACE
    // ImGuizmo::RecomposeMatrixFromComponents(matrixTranslation, matrixRotation, matrixScale, gizmoMatrix.m16);
    //
    // These functions have some numerical stability issues for now. Use with caution.
-   IMGUI_API void DecomposeMatrixToComponents(const float* matrix, float* translation, float* rotation, float* scale);
-   IMGUI_API void RecomposeMatrixFromComponents(const float* translation, const float* rotation, const float* scale, float* matrix);
+   IMGUI_API void DecomposeMatrixToComponents(const float *matrix, float *translation, float *rotation, float *scale);
+   IMGUI_API void RecomposeMatrixFromComponents(const float *translation, const float *rotation, const float *scale, float *matrix);
 
    IMGUI_API void SetRect(float x, float y, float width, float height);
    // default is false
    IMGUI_API void SetOrthographic(bool isOrthographic);
 
    // Render coordinate system axes (red X, green Y and blue Z). Usefull for debug/tests
-   IMGUI_API void DrawAxes(const float* view, const float* projection, const float* matrices, int matrixCount);
+   IMGUI_API void DrawAxes(const float *view, const float *projection, const float *matrices, int matrixCount);
    // Render a cube with face color corresponding to face normal. Usefull for debug/tests
-   IMGUI_API void DrawCubes(const float* view, const float* projection, const float* matrices, int matrixCount);
-   IMGUI_API void DrawGrid(const float* view, const float* projection, const float* matrix, const float gridSize);
+   IMGUI_API void DrawCubes(const float *view, const float *projection, const float *matrices, int matrixCount);
+   IMGUI_API void DrawGrid(const float *view, const float *projection, const float *matrix, const float gridSize);
    // Render grid with customizable major line step and amount of segments between major lines.
    // NOTE(m.wlasiuk) : calling this function with majorStep = 1.0f and subdivision = 1 is equivalent to DrawGrid in terms of the end result but performs more calculations
-   IMGUI_API void DrawGridCustom(const float* view, const float* projection, const float* matrix, const float gridSize, const float majorStep, const unsigned int subdivision);
+   IMGUI_API void DrawGridCustom(const float *view, const float *projection, const float *matrix, const float gridSize, const float majorStep, const unsigned int subdivision);
    // Render grid with customizable major line step and amount of segments between major lines and with possibility to set custom colors for major, minor and center lines
-   IMGUI_API void DrawGridCustomColor(const float* view, const float* projection, const float* matrix, const float gridSize, const float majorStep, const unsigned int subdivision, const ImU32 majorCol, const ImU32 minorCol, const ImU32 centerCol);
+   IMGUI_API void DrawGridCustomColor(const float *view, const float *projection, const float *matrix, const float gridSize, const float majorStep, const unsigned int subdivision, const ImU32 majorCol, const ImU32 minorCol, const ImU32 centerCol);
 
    // call it when you want a gizmo
    // Needs view and projection matrices.
@@ -187,20 +187,20 @@ namespace IMGUIZMO_NAMESPACE
    // translation is applied in world space
    enum OPERATION
    {
-      TRANSLATE_X      = (1u << 0),
-      TRANSLATE_Y      = (1u << 1),
-      TRANSLATE_Z      = (1u << 2),
-      ROTATE_X         = (1u << 3),
-      ROTATE_Y         = (1u << 4),
-      ROTATE_Z         = (1u << 5),
-      ROTATE_SCREEN    = (1u << 6),
-      SCALE_X          = (1u << 7),
-      SCALE_Y          = (1u << 8),
-      SCALE_Z          = (1u << 9),
-      BOUNDS           = (1u << 10),
-      SCALE_XU         = (1u << 11),
-      SCALE_YU         = (1u << 12),
-      SCALE_ZU         = (1u << 13),
+      TRANSLATE_X = (1u << 0),
+      TRANSLATE_Y = (1u << 1),
+      TRANSLATE_Z = (1u << 2),
+      ROTATE_X = (1u << 3),
+      ROTATE_Y = (1u << 4),
+      ROTATE_Z = (1u << 5),
+      ROTATE_SCREEN = (1u << 6),
+      SCALE_X = (1u << 7),
+      SCALE_Y = (1u << 8),
+      SCALE_Z = (1u << 9),
+      BOUNDS = (1u << 10),
+      SCALE_XU = (1u << 11),
+      SCALE_YU = (1u << 12),
+      SCALE_ZU = (1u << 13),
 
       TRANSLATE = TRANSLATE_X | TRANSLATE_Y | TRANSLATE_Z,
       ROTATE = ROTATE_X | ROTATE_Y | ROTATE_Z | ROTATE_SCREEN,
@@ -211,7 +211,7 @@ namespace IMGUIZMO_NAMESPACE
 
    inline OPERATION operator|(OPERATION lhs, OPERATION rhs)
    {
-     return static_cast<OPERATION>(static_cast<int>(lhs) | static_cast<int>(rhs));
+      return static_cast<OPERATION>(static_cast<int>(lhs) | static_cast<int>(rhs));
    }
 
    enum MODE
@@ -220,41 +220,41 @@ namespace IMGUIZMO_NAMESPACE
       WORLD
    };
 
-   IMGUI_API bool Manipulate(const float* view, const float* projection, OPERATION operation, MODE mode, float* matrix, float* deltaMatrix = NULL, const float* snap = NULL, const float* localBounds = NULL, const float* boundsSnap = NULL);
+   IMGUI_API bool Manipulate(const float *view, const float *projection, OPERATION operation, MODE mode, float *matrix, float *delta_quat, float *deltaMatrix = NULL, const float *snap = NULL, const float *localBounds = NULL, const float *boundsSnap = NULL);
    //
    // Please note that this cubeview is patented by Autodesk : https://patents.google.com/patent/US7782319B2/en
    // It seems to be a defensive patent in the US. I don't think it will bring troubles using it as
    // other software are using the same mechanics. But just in case, you are now warned!
    //
-   IMGUI_API void ViewManipulate(float* view, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor);
+   IMGUI_API void ViewManipulate(float *view, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor);
 
    // use this version if you did not call Manipulate before and you are just using ViewManipulate
-   IMGUI_API void ViewManipulate(float* view, const float* projection, OPERATION operation, MODE mode, float* matrix, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor);
+   IMGUI_API void ViewManipulate(float *view, const float *projection, OPERATION operation, MODE mode, float *matrix, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor);
 
-   IMGUI_API void SetAlternativeWindow(ImGuiWindow* window);
+   IMGUI_API void SetAlternativeWindow(ImGuiWindow *window);
 
    [[deprecated("Use PushID/PopID instead.")]]
    IMGUI_API void SetID(int id);
 
-	// ID stack/scopes
-	// Read the FAQ (docs/FAQ.md or http://dearimgui.org/faq) for more details about how ID are handled in dear imgui.
-	// - Those questions are answered and impacted by understanding of the ID stack system:
-	//   - "Q: Why is my widget not reacting when I click on it?"
-	//   - "Q: How can I have widgets with an empty label?"
-	//   - "Q: How can I have multiple widgets with the same label?"
-	// - Short version: ID are hashes of the entire ID stack. If you are creating widgets in a loop you most likely
-	//   want to push a unique identifier (e.g. object pointer, loop index) to uniquely differentiate them.
-	// - You can also use the "Label##foobar" syntax within widget label to distinguish them from each others.
-	// - In this header file we use the "label"/"name" terminology to denote a string that will be displayed + used as an ID,
-	//   whereas "str_id" denote a string that is only used as an ID and not normally displayed.
-	IMGUI_API void          PushID(const char* str_id);                                     // push string into the ID stack (will hash string).
-	IMGUI_API void          PushID(const char* str_id_begin, const char* str_id_end);       // push string into the ID stack (will hash string).
-	IMGUI_API void          PushID(const void* ptr_id);                                     // push pointer into the ID stack (will hash pointer).
-	IMGUI_API void          PushID(int int_id);                                             // push integer into the ID stack (will hash integer).
-	IMGUI_API void          PopID();                                                        // pop from the ID stack.
-	IMGUI_API ImGuiID       GetID(const char* str_id);                                      // calculate unique ID (hash of whole ID stack + given parameter). e.g. if you want to query into ImGuiStorage yourself
-	IMGUI_API ImGuiID       GetID(const char* str_id_begin, const char* str_id_end);
-	IMGUI_API ImGuiID       GetID(const void* ptr_id);
+   // ID stack/scopes
+   // Read the FAQ (docs/FAQ.md or http://dearimgui.org/faq) for more details about how ID are handled in dear imgui.
+   // - Those questions are answered and impacted by understanding of the ID stack system:
+   //   - "Q: Why is my widget not reacting when I click on it?"
+   //   - "Q: How can I have widgets with an empty label?"
+   //   - "Q: How can I have multiple widgets with the same label?"
+   // - Short version: ID are hashes of the entire ID stack. If you are creating widgets in a loop you most likely
+   //   want to push a unique identifier (e.g. object pointer, loop index) to uniquely differentiate them.
+   // - You can also use the "Label##foobar" syntax within widget label to distinguish them from each others.
+   // - In this header file we use the "label"/"name" terminology to denote a string that will be displayed + used as an ID,
+   //   whereas "str_id" denote a string that is only used as an ID and not normally displayed.
+   IMGUI_API void PushID(const char *str_id);                               // push string into the ID stack (will hash string).
+   IMGUI_API void PushID(const char *str_id_begin, const char *str_id_end); // push string into the ID stack (will hash string).
+   IMGUI_API void PushID(const void *ptr_id);                               // push pointer into the ID stack (will hash pointer).
+   IMGUI_API void PushID(int int_id);                                       // push integer into the ID stack (will hash integer).
+   IMGUI_API void PopID();                                                  // pop from the ID stack.
+   IMGUI_API ImGuiID GetID(const char *str_id);                             // calculate unique ID (hash of whole ID stack + given parameter). e.g. if you want to query into ImGuiStorage yourself
+   IMGUI_API ImGuiID GetID(const char *str_id_begin, const char *str_id_end);
+   IMGUI_API ImGuiID GetID(const void *ptr_id);
 
    // return true if the cursor is over the operation's gizmo
    IMGUI_API bool IsOver(OPERATION op);
@@ -301,12 +301,12 @@ namespace IMGUIZMO_NAMESPACE
    // Configure the limit where planes are hiden
    IMGUI_API void SetPlaneLimit(float value);
    // from a x,y,z point in space and using Manipulation view/projection matrix, check if mouse is in pixel radius distance of that projected point
-   IMGUI_API bool IsOver(float* position, float pixelRadius);
+   IMGUI_API bool IsOver(float *position, float pixelRadius);
 
    // Compute the world-space mouse picking ray from explicit inputs, without reading ImGui IO.
    // Useful for tests/headless usage. view and projection are column-major float[16] (same
    // layout as Manipulate). rayOrigin and rayDirection receive a float[3] each.
-   IMGUI_API void ComputeMouseRay(const float* view, const float* projection, const ImVec2& mousePosition, const ImVec2& rectPosition, const ImVec2& rectSize, float* rayOrigin, float* rayDirection);
+   IMGUI_API void ComputeMouseRay(const float *view, const float *projection, const ImVec2 &mousePosition, const ImVec2 &rectPosition, const ImVec2 &rectSize, float *rayOrigin, float *rayDirection);
 
    enum COLOR
    {
@@ -344,5 +344,5 @@ namespace IMGUIZMO_NAMESPACE
       ImVec4 Colors[COLOR::COUNT];
    };
 
-   IMGUI_API Style& GetStyle();
+   IMGUI_API Style &GetStyle();
 }

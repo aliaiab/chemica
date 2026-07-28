@@ -255,6 +255,14 @@ pub fn textUnformatted(string: []const u8) void {
     cimgui.ImGui_TextUnformattedEx(string.ptr, string.ptr + string.len);
 }
 
+pub fn loadIniSettingsFromMemory(ini_data: []const u8) void {
+    cimgui.ImGui_LoadIniSettingsFromMemory(ini_data.ptr, ini_data.len);
+}
+
+pub fn saveIniSettingsToDisk(file_name: [:0]const u8) void {
+    cimgui.ImGui_SaveIniSettingsToDisk(file_name.ptr);
+}
+
 pub fn openPopup(string: [:0]const u8) void {
     cimgui.ImGui_OpenPopup(string.ptr, 0);
 }
@@ -288,6 +296,42 @@ pub fn button(
     return cimgui.ImGui_ButtonEx(
         label.ptr,
         .{ .x = options.size[0], .y = options.size[1] },
+    );
+}
+
+pub fn inputText(
+    label: [:0]const u8,
+    buffer: []u8,
+    options: struct {},
+) ?[]const u8 {
+    _ = options; // autofix
+    const edited = cimgui.ImGui_InputText(
+        label.ptr,
+        buffer.ptr,
+        buffer.len,
+        0,
+    );
+
+    if (!edited) {
+        return null;
+    }
+
+    const buffer_end = std.mem.find(u8, buffer, &.{0}) orelse return buffer;
+
+    return buffer[0..buffer_end];
+}
+
+pub fn plotLines(label: [:0]const u8, values: []const f32) void {
+    cimgui.ImGui_PlotLinesEx(
+        label.ptr,
+        values.ptr,
+        @intCast(values.len),
+        0,
+        "",
+        std.math.floatMax(f32),
+        std.math.floatMax(f32),
+        .{ .x = 200, .y = 200 },
+        @sizeOf(f32),
     );
 }
 

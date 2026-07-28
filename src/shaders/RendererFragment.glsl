@@ -277,12 +277,12 @@ float raycastVoxelsOld(
         uint type = uVoxelMaterials[index];
 
         /*
-                                                                                                                                        if (position.y > index % (uSize.x * uSize.z)) {
-                                                                                                                                            res = -1;
-                                                                                                                                            voxel_index = 0;
-                                                                                                                                            break;
-                                                                                                                                        }
-                                                                                                                                        */
+                                                                                                                                                        if (position.y > index % (uSize.x * uSize.z)) {
+                                                                                                                                                            res = -1;
+                                                                                                                                                            voxel_index = 0;
+                                                                                                                                                            break;
+                                                                                                                                                        }
+                                                                                                                                                        */
 
         if (false) {
             type = loadVoxelMaterial(ivec3(position));

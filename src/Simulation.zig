@@ -12,6 +12,9 @@ simulation_material_buffers: [2]u32 = .{ 0, 0 },
 simulation_deviation_buffers: [2]u32 = .{ 0, 0 },
 simulation_temperature_buffers: [2]u32 = .{ 0, 0 },
 
+heat_measurement_buffer: u32 = 0,
+measured_heat: i32 = 0,
+
 voxel_materials_buffer: u32 = 0,
 voxel_materials_visual_buffer: u32 = 0,
 
@@ -21,6 +24,7 @@ grain_simulation_shader: u32 = 0,
 fill_region_shader: u32 = 0,
 
 enable_simulation: bool = true,
+enable_radiative_cooling: bool = true,
 csg_dirty: bool = true,
 
 point_light_buffer: u32 = 0,
@@ -98,6 +102,7 @@ pub fn init(
     gl.CreateBuffers(2, &sim.simulation_material_buffers);
     gl.CreateBuffers(2, &sim.simulation_temperature_buffers);
     gl.CreateBuffers(2, &sim.simulation_deviation_buffers);
+    gl.CreateBuffers(1, @ptrCast(&sim.heat_measurement_buffer));
 
     gl.CreateBuffers(1, @ptrCast(&sim.csg_instruction_buffer));
     gl.CreateBuffers(1, @ptrCast(&sim.csg_instructions_box_buffer));
@@ -227,6 +232,13 @@ pub fn init(
         gl.DYNAMIC_STORAGE_BIT,
     );
 
+    gl.NamedBufferStorage(
+        sim.heat_measurement_buffer,
+        @sizeOf(f32),
+        null,
+        gl.DYNAMIC_STORAGE_BIT,
+    );
+
     gl.NamedBufferData(
         sim.voxel_materials_buffer,
         @intCast(@sizeOf(VoxelMaterial) * sim.voxel_materials.items.len),
@@ -281,6 +293,7 @@ pub fn update(sim: *Simulation) void {
         .substep_index = sim.timestep_index,
         .window_size = sim.window_size,
         .delta_time = 0,
+        .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
     };
 
     gl.NamedBufferSubData(
@@ -312,6 +325,7 @@ pub fn update(sim: *Simulation) void {
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 20, sim.simulation_deviation_buffers[0]);
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 21, sim.simulation_deviation_buffers[1]);
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 22, sim.point_light_buffer);
+    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 32, sim.heat_measurement_buffer);
 
     if (!sim.enable_simulation and sim.csg_dirty) {
         gl.UseProgram(sim.fill_region_shader);
@@ -354,6 +368,16 @@ pub fn update(sim: *Simulation) void {
     gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
 
     if (sim.enable_simulation) {
+        gl.ClearNamedBufferData(
+            sim.heat_measurement_buffer,
+            gl.R32F,
+            gl.RED,
+            gl.FLOAT,
+            &@as(f32, 0),
+        );
+
+        gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+
         gl.UseProgram(sim.thermal_shader);
         gl.DispatchCompute(
             sim.width / 8,
@@ -379,15 +403,16 @@ pub fn update(sim: *Simulation) void {
             5,
             sim.simulation_material_buffers[1],
         );
+
         gl.BindBufferBase(
             gl.SHADER_STORAGE_BUFFER,
             6,
-            sim.simulation_temperature_buffers[0],
+            sim.simulation_temperature_buffers[1],
         );
         gl.BindBufferBase(
             gl.SHADER_STORAGE_BUFFER,
             7,
-            sim.simulation_temperature_buffers[1],
+            sim.simulation_temperature_buffers[0],
         );
 
         gl.DispatchCompute(
@@ -411,11 +436,7 @@ pub fn update(sim: *Simulation) void {
             &sim.simulation_material_buffers[0],
             &sim.simulation_material_buffers[1],
         );
-        std.mem.swap(
-            u32,
-            &sim.simulation_temperature_buffers[0],
-            &sim.simulation_temperature_buffers[1],
-        );
+
         std.mem.swap(
             u32,
             &sim.simulation_deviation_buffers[0],
@@ -423,6 +444,16 @@ pub fn update(sim: *Simulation) void {
         );
 
         sim.timestep_index += 1;
+
+        gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+
+        //TODO: hard cpu-gpu sync here, must change when porting to vulkan
+        gl.GetNamedBufferSubData(
+            sim.heat_measurement_buffer,
+            0,
+            @sizeOf(i32),
+            &sim.measured_heat,
+        );
     }
 }
 
@@ -441,6 +472,11 @@ pub fn render(sim: *Simulation) void {
         gl.SHADER_STORAGE_BUFFER,
         2,
         sim.simulation_temperature_buffers[0],
+    );
+    gl.BindBufferBase(
+        gl.SHADER_STORAGE_BUFFER,
+        21,
+        sim.simulation_deviation_buffers[0],
     );
 
     gl.BindBufferBase(
@@ -520,16 +556,23 @@ pub const ShaderUniforms = extern struct {
     csg_bounding_min: [3]i32,
     padding1: u32 = 0,
     csg_bounding_max: [3]i32,
-    padding2: u32 = 0,
     delta_time: f32,
     window_size: [2]u32,
+    enable_radiative_cooling: u32,
 };
 
 pub const VoxelMaterial = extern struct {
+    //kgmol^-1
+    molar_mass: f32 = 12.0 / 1000.0,
+    //kgm^-3
     density: f32 = 10,
-    heat_conductivity: f32 = 1,
-    heat_capacity: f32 = 1,
+    heat_conductivity: f32 = 100,
+    thermal_emisivity: f32 = 1.0,
+    //JK^-1kg^-1
+    heat_capacity: f32 = 1000,
+    //K
     melting_point: f32 = 10000,
+    //K
     boiling_point: f32 = 2000,
 };
 
@@ -601,7 +644,7 @@ pub const CSGInstructionExtrudePost = extern struct {
 pub const CSGRigidTransform = extern struct {
     position: [3]f32,
     uniform_scale: f32,
-    rotation: [4]f32,
+    rotation: @Vector(4, f32) align(@alignOf(f32)),
 
     pub const identity: CSGRigidTransform = .{
         .position = .{ 0, 0, 0 },

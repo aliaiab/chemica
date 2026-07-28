@@ -52,10 +52,13 @@ pub fn main(init: std.process.Init) !void {
     );
     defer simulation.deinit(arena);
 
+    var voxel_material_names: std.ArrayList([]const u8) = .empty;
+
     try simulation.voxel_materials.append(arena, .{
         .heat_conductivity = 0,
     });
     try simulation.voxel_materials_visual.append(arena, .{});
+    try voxel_material_names.append(arena, "Air");
 
     try simulation.voxel_materials.append(arena, .{
         .heat_conductivity = 0.5,
@@ -63,6 +66,7 @@ pub fn main(init: std.process.Init) !void {
     try simulation.voxel_materials_visual.append(arena, .{
         .albedo = packUnorm4x8(.{ 0.89, 0.79, 0.55, 1.0 }),
     });
+    try voxel_material_names.append(arena, "Sand");
 
     try simulation.voxel_materials.append(arena, .{
         .heat_conductivity = 1,
@@ -71,6 +75,7 @@ pub fn main(init: std.process.Init) !void {
     try simulation.voxel_materials_visual.append(arena, .{
         .albedo = packUnorm4x8(.{ 0.29, 0.29, 0.29, 1.0 }),
     });
+    try voxel_material_names.append(arena, "Stone");
 
     try simulation.voxel_materials.append(arena, .{
         .heat_conductivity = 0.9,
@@ -80,6 +85,7 @@ pub fn main(init: std.process.Init) !void {
     try simulation.voxel_materials_visual.append(arena, .{
         .albedo = packUnorm4x8(.{ 0.17, 0.56, 0.82, 0.19 }),
     });
+    try voxel_material_names.append(arena, "Water");
 
     try simulation.voxel_materials.append(arena, .{
         .heat_conductivity = 3,
@@ -89,6 +95,79 @@ pub fn main(init: std.process.Init) !void {
     try simulation.voxel_materials_visual.append(arena, .{
         .albedo = 0xff1d2971,
     });
+    try voxel_material_names.append(arena, "Copper");
+
+    if (true) {
+        simulation.voxel_materials.clearAndFree(arena);
+        simulation.voxel_materials_visual.clearAndFree(arena);
+        voxel_material_names.clearAndFree(arena);
+
+        try simulation.voxel_materials.append(arena, .{
+            .heat_conductivity = 0,
+        });
+        try simulation.voxel_materials_visual.append(arena, .{});
+        try voxel_material_names.append(arena, "Air");
+
+        const materials_file_source = @embedFile("assets/pbr_materials.json");
+
+        const PbrMaterialsJson = struct {
+            data: []Material,
+
+            const Material = struct {
+                name: []const u8,
+                color: []Color,
+                metalness: f32 = 1,
+                roughness: f32 = 1,
+                density: []const f32 = &.{1},
+                transmission: f32 = 0,
+                ior: f32 = 1,
+
+                pub const Color = struct {
+                    colorSpace: []const u8,
+                    color: [3]f32,
+                };
+            };
+        };
+
+        const materials_json_parsed = try std.json.parseFromSlice(
+            PbrMaterialsJson,
+            arena,
+            materials_file_source,
+            .{ .ignore_unknown_fields = true },
+        );
+
+        const materials_json = materials_json_parsed.value;
+
+        for (materials_json.data) |material| {
+            try voxel_material_names.append(arena, material.name);
+            try simulation.voxel_materials_visual.append(arena, .{
+                .albedo = packUnorm4x8(
+                    .{
+                        material.color[0].color[0],
+                        material.color[0].color[1],
+                        material.color[0].color[2],
+                        1 - material.transmission,
+                    },
+                ),
+                .roughness_metalness = packUnorm4x8(.{
+                    material.roughness + 0.25,
+                    material.metalness,
+                    0,
+                    0,
+                }),
+                .refractive_index = material.ior,
+            });
+            try simulation.voxel_materials.append(arena, .{
+                .density = material.density[0],
+            });
+        }
+    }
+
+    const voxel_material_names_ptrs = try arena.alloc([*]const u8, voxel_material_names.items.len);
+
+    for (voxel_material_names_ptrs, voxel_material_names.items) |*ptr, name| {
+        ptr.* = name.ptr;
+    }
 
     try simulation.csg_invocations.append(arena, .{
         .transform = .identity,
@@ -105,6 +184,22 @@ pub fn main(init: std.process.Init) !void {
     defer imgui.impl.opengl3.shutdown();
 
     imguiStyleSetup();
+
+    imgui.loadIniSettingsFromMemory(@embedFile("assets/imgui.ini"));
+
+    defer blk: {
+        std.Io.Dir.cwd().access(init.io, "src/assets/", .{}) catch |e| {
+            switch (e) {
+                error.FileNotFound => {
+                    imgui.getIO().WantSaveIniSettings = false;
+                    break :blk;
+                },
+                else => @panic(""),
+            }
+        };
+
+        imgui.saveIniSettingsToDisk("src/assets/imgui.ini");
+    }
 
     var last_mouse_pos: [2]f32 = undefined;
 
@@ -185,7 +280,7 @@ pub fn main(init: std.process.Init) !void {
     try simulation.point_lights.append(arena, .{
         .position = .{ 128, 128, 64 },
         .radiance = 1,
-        .colour = packUnorm4x8(.{ 0.5, 0.3, 0.3, 1 }),
+        .colour = packUnorm4x8(.{ 0.5, 0.5, 0.5, 1 }),
     });
 
     camera.target = .{
@@ -233,6 +328,10 @@ pub fn main(init: std.process.Init) !void {
         var sim_file_writer = sim_file.writer(init.io, &.{});
         std.zon.stringify.serializeArbitraryDepth(@as(*CSGTreeZonSerializable, @ptrCast(&csg_tree)).*, .{}, &sim_file_writer.interface) catch @panic("Write failed!");
     }
+
+    const heat_measurement_values = try arena.alloc(f32, 512);
+
+    const enthalpy_change_values = try arena.alloc(f32, 512);
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
@@ -317,6 +416,13 @@ pub fn main(init: std.process.Init) !void {
 
         simulation.update();
 
+        const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
+
+        heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] = @floatFromInt(simulation.measured_heat);
+        heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] /= @floatFromInt(1);
+
+        enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
+
         gl.UseProgram(env_map_shader);
         gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, simulation.uniform_buffer);
         gl.BindTexture(gl.TEXTURE_2D, env_map_texture);
@@ -386,7 +492,7 @@ pub fn main(init: std.process.Init) !void {
                 }
             }
 
-            if (selected_node_handles.items.len != 0) blk: {
+            if (selected_node_handles.items.len != 0 and !imgui.isAnyItemActive()) blk: {
                 var pressed: bool = false;
 
                 var name: [:0]const u8 = "";
@@ -498,28 +604,36 @@ pub fn main(init: std.process.Init) !void {
                             .{},
                         );
 
-                        simulation.csg_dirty |= imgui.colorEdit(
-                            "Rotation",
-                            &selected_node.transform.rotation,
-                            .{},
-                        );
-
-                        selected_node.transform.rotation = zmath.normalize4(selected_node.transform.rotation);
-
-                        const material_names = [_][*]const u8{
-                            "Sand",
-                            "Stone",
-                            "Water",
-                            "Copper",
-                            "Glass",
-                        };
+                        //selected_node.transform.rotation = zmath.normalize4(selected_node.transform.rotation);
 
                         if (selected_node.material != .air) {
-                            var material: usize = @intFromEnum(selected_node.material) - 1;
+                            var material: usize = @intFromEnum(selected_node.material);
 
-                            simulation.csg_dirty |= imgui.combo("Material", &material, &material_names);
+                            //simulation.csg_dirty |= imgui.combo("Material", &material, voxel_material_names_ptrs);
 
-                            selected_node.material = @enumFromInt(material + 1);
+                            var input_buffer: [1024]u8 = [1]u8{0} ** 1024;
+
+                            for (voxel_material_names.items, 0..) |mat_name, mat_id| {
+                                if (mat_id == material) {
+                                    std.mem.copyForwards(u8, &input_buffer, mat_name);
+                                }
+                            }
+
+                            if (imgui.inputText(
+                                "Material",
+                                &input_buffer,
+                                .{},
+                            )) |str| {
+                                for (voxel_material_names.items, 0..) |mat_name, mat_id| {
+                                    if (std.mem.eql(u8, mat_name, str)) {
+                                        material = mat_id;
+                                        simulation.csg_dirty = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            selected_node.material = @enumFromInt(material);
                         }
                     }
 
@@ -620,6 +734,40 @@ pub fn main(init: std.process.Init) !void {
                 imgui.end();
             }
 
+            if (imgui.begin("Simulation", .{})) {
+                if (imgui.button("Play/Pause Simulation", .{})) {
+                    simulation.enable_simulation = !simulation.enable_simulation;
+                }
+
+                imgui.sameLine(.{});
+
+                _ = imgui.checkbox("Radiative Cooling", &simulation.enable_radiative_cooling);
+
+                if (imgui.button("Reset Simulation", .{})) {
+                    simulation.csg_dirty = true;
+                    simulation.enable_simulation = false;
+                }
+
+                var heat_unit: []const u8 = "J";
+                var heat_value: f32 = @floatFromInt(simulation.measured_heat);
+
+                if (simulation.measured_heat >= 1e3 and simulation.measured_heat < 1e6) {
+                    heat_value *= 1e-3;
+                    heat_unit = "KJ";
+                }
+
+                if (simulation.measured_heat >= 1e6) {
+                    heat_value *= 1e-6;
+                    heat_unit = "MJ";
+                }
+
+                imgui.text("Total Heat: {:.2}{s}", .{ heat_value, heat_unit });
+
+                imgui.plotLines("Total Enthalpy: ", heat_measurement_values);
+                imgui.plotLines("Enthalpy Change: ", enthalpy_change_values);
+            }
+            imgui.end();
+
             if (window.getKey(.left_control) != .release and window.getKey(.c) == .press) {
                 copied_node_handles = try selected_node_handles.clone(arena);
                 copied_node_parents = try selected_node_parents.clone(arena);
@@ -637,9 +785,7 @@ pub fn main(init: std.process.Init) !void {
 
                 var matrix: [4]@Vector(4, f32) = zmath.identity();
 
-                var local_bounds: [2][3]f32 = .{
-                    .{ -10, -10, -10 }, .{ 10, 10, 10 },
-                };
+                var local_bounds: [2][3]f32 = undefined;
 
                 var resultant_transform = selected_node.transform;
 
@@ -650,6 +796,12 @@ pub fn main(init: std.process.Init) !void {
                         resultant_transform = .compose(parent.transform, resultant_transform);
                     }
                 }
+
+                var rotation: @Vector(4, f32) = selected_node.transform.rotation;
+
+                rotation = math.mulQuat(resultant_transform.rotation, rotation);
+
+                matrix = zmath.mul(zmath.matFromQuat(rotation), matrix);
 
                 if (selected_node.data == .box) {
                     local_bounds[0][0] = -@as(f32, @floatFromInt(std.math.sign(selected_node.data.box.bounds[0]))) * resultant_transform.uniform_scale;
@@ -672,12 +824,6 @@ pub fn main(init: std.process.Init) !void {
                     ));
                 }
 
-                var rotation: @Vector(4, f32) = .{ 0, 0, 0, 1 };
-
-                rotation = math.mulQuat(resultant_transform.rotation, rotation);
-
-                matrix = zmath.mul(zmath.matFromQuat(rotation), matrix);
-
                 var position: @Vector(3, f32) = @splat(0);
 
                 position += resultant_transform.position;
@@ -692,6 +838,9 @@ pub fn main(init: std.process.Init) !void {
                 _ = snap; // autofix
 
                 var delta_matrix: [4][4]f32 = undefined;
+                var delta_quat: @Vector(4, f32) = .{ 0, 0, 0, 0 };
+                var stub_mat: [4][4]f32 = @bitCast(zmath.identity());
+                stub_mat = @bitCast(zmath.matFromQuat(resultant_transform.rotation));
 
                 if (imguizmo.manipulate(
                     @ptrCast(&camera.view),
@@ -699,13 +848,12 @@ pub fn main(init: std.process.Init) !void {
                     .universal,
                     .local,
                     @ptrCast(&matrix),
+                    @ptrCast(&delta_quat),
                     .{
                         .local_bounds = if (selected_node.data == .box) @ptrCast(&local_bounds) else null,
                         .delta_matrix = @ptrCast(&delta_matrix),
                     },
-                )) {
-                    simulation.csg_dirty = true;
-                }
+                )) {}
 
                 const translation: [3]f32 = .{
                     @floor(matrix[3][0]),
@@ -732,9 +880,8 @@ pub fn main(init: std.process.Init) !void {
                     (delta_matrix[2][2]),
                 };
 
-                rotation = (zmath.quatFromMat(@bitCast(delta_matrix)));
-
-                rotation[3] *= -1;
+                const old_transform = selected_node.transform;
+                const old_data = selected_node.data;
 
                 for (selected_node_handles.items) |node_handle| {
                     const node = csg_tree.getNode(node_handle);
@@ -754,8 +901,38 @@ pub fn main(init: std.process.Init) !void {
                     selected_node.data.box.bounds[2] = @floor(scale[2]);
                 }
 
-                if (selected_node.data != .box) {
+                if (selected_node.data != .empty and selected_node.data != .box) {
                     selected_node.transform.uniform_scale = scale[0];
+                } else {
+                    selected_node.transform.uniform_scale = 1;
+                }
+
+                delta_quat[3] = 0;
+                //selected_node.transform.rotation = math.mulQuat(delta_quat, selected_node.transform.rotation);
+                selected_node.transform.rotation = @as(@Vector(4, f32), selected_node.transform.rotation) + delta_quat;
+                //selected_node.transform.rotation = zmath.normalize4(selected_node.transform.rotation);
+                std.log.info("delta_quat: {}", .{delta_quat});
+                std.log.info("selected_node.transform.rotation = {}", .{selected_node.transform.rotation});
+                //selected_node.transform.rotation = zmath.normalize4(selected_node.transform.rotation);
+
+                std.log.info("selected_node.transform.rotation = {}", .{selected_node.transform.rotation});
+                const Static = struct {
+                    pub var quat_total: @Vector(4, f32) = @splat(0);
+                };
+                //selected_node.transform.rotation += delta_quat;
+                //selected_node.transform.rotation = zmath.normalize4(selected_node.transform.rotation);
+                Static.quat_total += delta_quat;
+                //selected_node.transform.rotation[3] = 1;
+                //Static.quat_total = zmath.normalize4(Static.quat_total);
+                std.log.info("{}", .{delta_quat});
+                std.log.info("quat_accum: {}", .{Static.quat_total});
+
+                if (!std.meta.eql(old_data, selected_node.data)) {
+                    simulation.csg_dirty = true;
+                }
+
+                if (!std.meta.eql(old_transform, selected_node.transform)) {
+                    simulation.csg_dirty = true;
                 }
             }
         }
@@ -878,13 +1055,20 @@ const Camera = struct {
     view: [4][4]f32,
 };
 
-fn packUnorm4x8(v: [4]f32) u32 {
+fn packUnorm4x8(vector: [4]f32) u32 {
     const Rgba = packed struct(u32) {
         x: u8,
         y: u8,
         z: u8,
         w: u8,
     };
+
+    var v = vector;
+
+    v[0] = std.math.clamp(v[0], 0, 1);
+    v[1] = std.math.clamp(v[1], 0, 1);
+    v[2] = std.math.clamp(v[2], 0, 1);
+    v[3] = std.math.clamp(v[3], 0, 1);
 
     const rgba: Rgba = .{
         .x = @intFromFloat(v[0] * 255),

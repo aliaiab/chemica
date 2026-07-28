@@ -3,4 +3,3 @@ Build/
 zig-out/
 zig-pkg/
 .zig-cache/
-imgui.ini

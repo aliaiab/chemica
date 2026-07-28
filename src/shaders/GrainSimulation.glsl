@@ -197,7 +197,7 @@ void main() {
             }
         }
     }
-
+    #if 0
     for (int z = 0; z < 2; z++) {
         for (int y = 0; y < 2; y++) {
             for (int x = 0; x < 2; x++) {
@@ -261,9 +261,9 @@ void main() {
                 ivec3 below_right = local_pos + ivec3(-z, -1, 1 - z);
 
                 if (phase == VOXEL_PHASE_GAS) {
-                    local_pos_below = local_pos + ivec3(0, 1, 0);
-                    below_left = local_pos + ivec3(1 - x, 1, 0);
-                    below_right = local_pos + ivec3(0, 1, 1 - z);
+                    //local_pos_below = local_pos + ivec3(0, 1, 0);
+                    //below_left = local_pos + ivec3(1 - x, 1, 0);
+                    //below_right = local_pos + ivec3(0, 1, 1 - z);
                 }
 
                 uint i_below = x + (local_pos_below.y) * 2 + z * 2 * 2;
@@ -295,6 +295,7 @@ void main() {
             }
         }
     }
+    #endif
 
     out_voxel_lattice[index] = in_voxel_lattice[grid[local_index]];
     out_temperature[index] = in_temperature[grid[local_index]];

@@ -27,6 +27,10 @@ layout(std430, binding = 4) restrict readonly buffer VoxelMaterials
     uint16_t voxel_materials[];
 };
 
+layout(std430, binding = 32) restrict buffer TotalEnergyBuffer {
+    int total_energy;
+};
+
 void main()
 {
     uvec3 position = gl_GlobalInvocationID;
@@ -56,6 +60,11 @@ void main()
     VoxelMaterial material = uMaterials[uint(voxel_materials[index])];
 
     uint occluded_faces = 0;
+    float heat_differential = 0;
+    float temperature_differential = 0;
+
+    float specific_heat_capacity = uMaterials[voxel_materials[index]].heat_capacity;
+    float voxel_mass = VOXEL_MOLARITY * uMaterials[voxel_materials[index]].molar_mass;
 
     for (int i = 0; i < neighbours.length(); i++)
     {
@@ -65,9 +74,15 @@ void main()
         {
             float difference = float(uInput[neighbourIndex]) - currentTemperature;
 
-            float interface_conductivity = uMaterials[uint(voxel_materials[neighbourIndex])].heat_conductivity * material.heat_conductivity;
+            float interface_conductivity = uMaterials[uint(voxel_materials[neighbourIndex])].heat_conductivity;
 
-            uOutput[index] += difference * 0.025 * interface_conductivity;
+            if (voxel_materials[neighbourIndex] == 0) {
+                continue;
+            }
+
+            float dt = 0.016;
+
+            heat_differential += interface_conductivity * (VOXEL_FACE_AREA / (VOXEL_SIDE_LENGTH)) * difference * dt;
 
             accumulatedTemperature += uInput[neighbourIndex];
             temperatureSolidCount += 1;
@@ -76,14 +91,21 @@ void main()
                 occluded_faces += 1;
             }
         }
-        else {
-            // occluded_faces += 1;
-        }
     }
 
-    float radiation_rate = 0.0001 * 5.6e-8 * pow(currentTemperature, 4);
-    float radiation_factor = 1 - (float(occluded_faces) / float(neighbours.length()));
+    float stefan_boltzman_constant = 5.67e-8;
 
-    uOutput[index] += -radiation_rate * radiation_factor;
+    float radiation_rate = stefan_boltzman_constant * pow(currentTemperature, 4) * 0.016;
+    float radiation_factor = uMaterials[voxel_materials[index]].thermal_emissivity * (neighbours.length() - float(occluded_faces)) * VOXEL_FACE_AREA;
+
+    if (enable_radiative_cooling) {
+        heat_differential += -radiation_rate * radiation_factor;
+    }
+
+    temperature_differential = (heat_differential / specific_heat_capacity) / voxel_mass * 0.1;
+
+    uOutput[index] = uInput[index] + temperature_differential;
+
+    atomicAdd(total_energy, int(uOutput[index] * specific_heat_capacity * voxel_mass));
     uOutput[index] = max(0, uOutput[index]);
 }

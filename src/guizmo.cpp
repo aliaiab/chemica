@@ -64,9 +64,9 @@ extern "C"
         ImGuizmo::DrawGrid(view, projection, matrix, gridSize);
     }
 
-    bool ImGuizmo_Manipulate(const float *view, const float *projection, ImGuizmo::OPERATION operation, ImGuizmo::MODE mode, float *matrix, float *deltaMatrix, const float *snap, const float *localBounds, const float *boundsSnap)
+    bool ImGuizmo_Manipulate(const float *view, const float *projection, ImGuizmo::OPERATION operation, ImGuizmo::MODE mode, float *matrix, float *delta_quat, float *deltaMatrix, const float *snap, const float *localBounds, const float *boundsSnap)
     {
-        return ImGuizmo::Manipulate(view, projection, operation, mode, matrix, deltaMatrix, boundsSnap, localBounds, boundsSnap);
+        return ImGuizmo::Manipulate(view, projection, operation, mode, matrix, delta_quat, deltaMatrix, boundsSnap, localBounds, boundsSnap);
     }
 
     void ImGuizmo_ViewManipulate(float *view, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor)

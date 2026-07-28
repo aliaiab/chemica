@@ -11,8 +11,10 @@
 //TODO: Make material data SOA/data oriented
 struct VoxelMaterial
 {
+    float molar_mass;
     float density;
     float heat_conductivity;
+    float thermal_emissivity;
     float heat_capacity;
     float melting_point;
     float boiling_point;
@@ -83,6 +85,20 @@ layout(std430, binding = 28) restrict coherent buffer VoxelAllocatorBins {
     uint allocation_lock;
 };
 
+//TODO: make this a specialization constant
+#define VOXELS_IN_A_METRE 500.0f
+//The side length of a voxel in metres
+#define VOXEL_SIDE_LENGTH (1.0f / VOXELS_IN_A_METRE)
+#define VOXEL_FACE_AREA VOXEL_SIDE_LENGTH * VOXEL_SIDE_LENGTH
+#define VOXEL_VOLUME VOXEL_FACE_AREA * VOXEL_SIDE_LENGTH
+
+//kgmol^-1
+#define CARBON_MOLAR_MASS (12.0f / 1000.0f)
+//kgm^-3
+#define CARBON_GRAPHITE_DENSITY (2267.0f)
+//The number of moles in a (solid or liquid) voxel
+#define VOXEL_MOLARITY (VOXEL_VOLUME * (CARBON_GRAPHITE_DENSITY / CARBON_MOLAR_MASS))
+
 #define CHUNK_SIZE 16
 #define CHUNK_VOLUME (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE)
 
@@ -137,6 +153,7 @@ layout(std140, binding = 0) uniform Uniforms
     ivec3 csg_bounding_max;
     float delta_time;
     uvec2 window_size;
+    bool enable_radiative_cooling;
 };
 
 bool isInBounds(ivec3 position) {

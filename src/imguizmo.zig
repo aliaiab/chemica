@@ -48,7 +48,7 @@ extern fn ImGuizmo_SetRect(x: f32, y: f32, width: f32, height: f32) void;
 pub extern fn ImGuizmo_SetOrthographic(is_orthographic: bool) void;
 pub extern fn ImGuizmo_DrawCubes(view: [*]const f32, projection: [*]const f32, matrices: [*]const f32, matrix_count: c_int) void;
 pub extern fn ImGuizmo_DrawGrid(view: [*]const f32, projection: [*]const f32, matrix: [*]const f32, grid_size: f32) void;
-extern fn ImGuizmo_Manipulate(view: [*]const f32, projection: [*]const f32, operation: Operation, mode: Mode, matrix: [*]f32, delta_matrix: ?[*]f32, snap: ?[*]f32, local_bounds: ?[*]const f32, bounds_snap: ?[*]const f32) bool;
+extern fn ImGuizmo_Manipulate(view: [*]const f32, projection: [*]const f32, operation: Operation, mode: Mode, matrix: [*]f32, delta_quat: [*]f32, delta_matrix: ?[*]f32, snap: ?[*]f32, local_bounds: ?[*]const f32, bounds_snap: ?[*]const f32) bool;
 pub extern fn ImGuizmo_ViewManipulate(view: [*]f32, length: f32, position: cimgui.ImVec2, size: cimgui.ImVec2, background_color: u32) void;
 pub extern fn ImGuizmo_ViewManipulateExt(view: [*]f32, projection: [*]const f32, operation: Operation, mode: Mode, matrix: [*]f32, length: f32, position: cimgui.ImVec2, size: cimgui.ImVec2, background_color: u32) void;
 pub extern fn ImGuizmo_SetID(id: u32) void;
@@ -78,6 +78,7 @@ pub inline fn manipulate(
     operation: Operation,
     mode: Mode,
     matrix: [*]f32,
+    delta_quat: [*]f32,
     optionals: struct {
         delta_matrix: ?[*]f32 = null,
         snap: ?[*]f32 = null,
@@ -91,6 +92,7 @@ pub inline fn manipulate(
         operation,
         mode,
         matrix,
+        delta_quat,
         optionals.delta_matrix,
         optionals.snap,
         optionals.local_bounds,
