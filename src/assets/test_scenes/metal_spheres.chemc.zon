@@ -1,0 +1,37 @@
+.{ .nodes = .{ .items = .{
+    .{ .children = .{ .items = .{
+        1,
+        2,
+        3,
+    }, .capacity = 3 } },
+    .{
+        .transform = .{ .position = .{
+            62,
+            31,
+            68,
+        }, .uniform_scale = 1.8793931 },
+        .data = .{ .sphere = .{ .radius = 10 } },
+        .material = 12,
+        .name = "Sphere",
+    },
+    .{
+        .transform = .{ .position = .{
+            64,
+            75,
+            86,
+        }, .uniform_scale = 1.8730235 },
+        .data = .{ .sphere = .{ .radius = 10 } },
+        .material = 26,
+        .name = "Sphere",
+    },
+    .{
+        .transform = .{ .position = .{
+            62,
+            64,
+            48,
+        } },
+        .data = .{ .sphere = .{ .radius = 10 } },
+        .material = 1,
+        .name = "Sphere",
+    },
+}, .capacity = 4 } }

@@ -15,6 +15,8 @@ pub fn build(b: *std.Build) !void {
         .docking = true, // Default value: false
     });
 
+    const glm_dep = b.dependency("glm", .{});
+
     const zigimg = b.dependency("zigimg", .{});
     const zmath = b.dependency("zmath", .{});
 
@@ -42,6 +44,12 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("zigimg", zigimg.module("zigimg"));
     main_module.addImport("zmath", zmath.module("root"));
 
+    const nfd = b.dependency("nfd", .{ .target = target, .optimize = optimize });
+    const nfd_mod = nfd.module("nfd");
+    main_module.addImport("nfd", nfd_mod);
+
+    main_module.link_libc = true;
+
     const cimgui_lib = cimgui_dep.artifact("cimgui");
     addIncludePathsToTranslateC(cimgui_translate_c, cimgui_lib);
     const c_module = cimgui_translate_c.createModule();
@@ -62,6 +70,7 @@ pub fn build(b: *std.Build) !void {
         },
         .root = b.path("src/"),
     });
+    main_module.addIncludePath(glm_dep.path(""));
 
     main_module.strip = optimize != .Debug;
 

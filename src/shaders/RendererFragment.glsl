@@ -37,7 +37,7 @@ layout(std430, binding = 21) restrict buffer OutDeviationBuffer {
     int8_t out_deviation_buffer[];
 };
 
-layout(binding = 22) uniform sampler2D environment_map;
+layout(binding = 22) uniform sampler2D environment_fetchVoxel;
 
 layout(std430, binding = 22) restrict readonly buffer PointLights {
     PointLight point_lights[];
@@ -47,7 +47,7 @@ layout(std430, binding = 32) restrict readonly buffer SpotLights {
     SpotLight spot_lights[];
 };
 
-vec2 SampleSphericalMap(vec3 v)
+vec2 SampleSphericalfetchVoxel(vec3 v)
 {
     const vec2 invAtan = vec2(0.1591, 0.3183);
     vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
@@ -126,7 +126,46 @@ vec3 spectrum(float temperature)
         xyz += cie_colour_match[i] * Me;
     }
 
-    return srgbXYZ2RGB(normalize(xyz));
+    return srgbXYZ2RGB((xyz));
+}
+
+vec3 lerp(vec3 p, vec3 p1, float t) {
+    return mix(p, p1, vec3(t));
+}
+
+vec3 getTemperatureVisColour(float kelvin) {
+    // Ensure kelvin is within our supported range
+    kelvin = max(1000, min(10000, kelvin));
+
+    // Define color points based on the reference image
+    if (kelvin <= 2000) {
+        // Deep amber/orange (1000K-2000K)
+        return lerp(vec3(255, 120, 0), vec3(255, 147, 41), (kelvin - 1000) / 1000);
+    } else if (kelvin <= 3000) {
+        // Amber to yellow (2000K-3000K)
+        return lerp(vec3(255, 147, 41), vec3(255, 180, 60), (kelvin - 2000) / 1000);
+    } else if (kelvin <= 4000) {
+        // Yellow to neutral white (3000K-4000K)
+        return lerp(vec3(255, 180, 60), vec3(255, 220, 180), (kelvin - 3000) / 1000);
+    } else if (kelvin <= 5000) {
+        // Neutral white (4000K-5000K)
+        return lerp(vec3(255, 220, 180), vec3(240, 240, 240), (kelvin - 4000) / 1000);
+    } else if (kelvin <= 6000) {
+        // Neutral to cool white (5000K-6000K)
+        return lerp(vec3(240, 240, 240), vec3(220, 230, 255), (kelvin - 5000) / 1000);
+    } else if (kelvin <= 7000) {
+        // Cool white to light blue (6000K-7000K)
+        return lerp(vec3(220, 230, 255), vec3(180, 210, 255), (kelvin - 6000) / 1000);
+    } else if (kelvin <= 8000) {
+        // Light blue to blue (7000K-8000K)
+        return lerp(vec3(180, 210, 255), vec3(150, 180, 255), (kelvin - 7000) / 1000);
+    } else if (kelvin <= 9000) {
+        // Blue (8000K-9000K)
+        return lerp(vec3(150, 180, 255), vec3(120, 150, 255), (kelvin - 8000) / 1000);
+    } else {
+        // Deep blue (9000K-10000K)
+        return lerp(vec3(120, 150, 255), vec3(90, 120, 255), (kelvin - 9000) / 1000);
+    }
 }
 
 struct RayCastResult {
@@ -277,12 +316,12 @@ float raycastVoxelsOld(
         uint type = uVoxelMaterials[index];
 
         /*
-                                                                                                                                                        if (position.y > index % (uSize.x * uSize.z)) {
-                                                                                                                                                            res = -1;
-                                                                                                                                                            voxel_index = 0;
-                                                                                                                                                            break;
-                                                                                                                                                        }
-                                                                                                                                                        */
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                if (position.y > index % (uSize.x * uSize.z)) {
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    res = -1;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    voxel_index = 0;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    break;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                */
 
         if (false) {
             type = loadVoxelMaterial(ivec3(position));
@@ -394,6 +433,30 @@ vec3 computeLightRadiance(
     return out_radiance;
 }
 
+float calcOcc(vec2 uv, vec4 va, vec4 vb, vec4 vc, vec4 vd)
+{
+    vec2 st = 1.0 - uv;
+
+    // edges
+    vec4 wa = vec4(uv.x, st.x, uv.y, st.y) * vc;
+
+    // corners
+    vec4 wb = vec4(uv.x * uv.y,
+            st.x * uv.y,
+            st.x * st.y,
+            uv.x * st.y) * vd * (1.0 - vc.xzyw) * (1.0 - vc.zywx);
+
+    return wa.x + wa.y + wa.z + wa.w +
+        wb.x + wb.y + wb.z + wb.w;
+}
+
+float fetchVoxel(vec3 pos) {
+    ivec3 ipos = ivec3(pos);
+    uint index = ipos.x + ipos.y * uSize.x + ipos.z * uSize.x * uSize.y;
+
+    return float(uVoxelMaterials[index] != 0);
+}
+
 //Compute the incoming light reflecting off a voxel
 vec4 computeVoxelLight(
     vec3 ray_origin,
@@ -409,14 +472,81 @@ vec4 computeVoxelLight(
     vec3 pos = ray_origin + ray_direction * ray_cast_t;
     vec3 uvw = pos - out_ray_origin;
 
+    ivec3 voxel_pos = ivec3(pos);
+
     vec2 uv = vec2(dot(out_ray_direction.yzx, uvw), dot(out_ray_direction.zxy, uvw));
+
+    ivec3 ao_neighbours[] = ivec3[](
+            ivec3(0, 1, 1),
+            ivec3(1, 1, 0),
+            ivec3(-1, 1, 0),
+            ivec3(0, 1, -1)
+        );
+
+    float ambient_occlusion = 1;
+    ivec3 tangent_0 = ivec3(normal.y, -normal.x, normal.z);
+    if (normal.z != 0) {
+        tangent_0 = ivec3(normal.x, normal.z, -normal.y);
+    }
+    ivec3 trangent_1 = ivec3(cross(vec3(tangent_0), normal));
+
+    {
+        vec3 vos = pos;
+        vec3 dir = sign(ray_direction);
+        vec3 nor = normal;
+
+        vec3 v1 = vos + nor + dir.yzx;
+        vec3 v2 = vos + nor - dir.yzx;
+        vec3 v3 = vos + nor + dir.zxy;
+        vec3 v4 = vos + nor - dir.zxy;
+        vec3 v5 = vos + nor + dir.yzx + dir.zxy;
+        vec3 v6 = vos + nor - dir.yzx + dir.zxy;
+        vec3 v7 = vos + nor - dir.yzx - dir.zxy;
+        vec3 v8 = vos + nor + dir.yzx - dir.zxy;
+        vec3 v9 = vos + dir.yzx;
+        vec3 v10 = vos - dir.yzx;
+        vec3 v11 = vos + dir.zxy;
+        vec3 v12 = vos - dir.zxy;
+        vec3 v13 = vos + dir.yzx + dir.zxy;
+        vec3 v14 = vos - dir.yzx + dir.zxy;
+        vec3 v15 = vos - dir.yzx - dir.zxy;
+        vec3 v16 = vos + dir.yzx - dir.zxy;
+
+        vec4 vc = vec4(fetchVoxel(v1), fetchVoxel(v2), fetchVoxel(v3), fetchVoxel(v4));
+        vec4 vd = vec4(fetchVoxel(v5), fetchVoxel(v6), fetchVoxel(v7), fetchVoxel(v8));
+        vec4 va = vec4(fetchVoxel(v9), fetchVoxel(v10), fetchVoxel(v11), fetchVoxel(v12));
+        vec4 vb = vec4(fetchVoxel(v13), fetchVoxel(v14), fetchVoxel(v15), fetchVoxel(v16));
+
+        for (int y = -1; y < 2; y++) {
+            for (int x = -1; x < 2; x++) {
+                ivec3 neighbour_pos = voxel_pos + ivec3(normal) + tangent_0 * x + trangent_1 * y;
+                ivec3 lower_neighbour_pos = voxel_pos + tangent_0 * x + trangent_1 * y;
+                uint neighbour_index = neighbour_pos.x + neighbour_pos.y * uSize.x + neighbour_pos.z * uSize.x * uSize.y;
+                uint lower_neighbour_index = lower_neighbour_pos.x + lower_neighbour_pos.y * uSize.x + lower_neighbour_pos.z * uSize.x * uSize.y;
+
+                if (x == 0 || y == 0) {
+                    continue;
+                }
+
+                if (uVoxelMaterials[neighbour_index] != 0) {
+                    //ambient_occlusion *= abs(dot(vec2(x, y), 2.0 * (uv * 2.0 - 1.0)));
+                    ambient_occlusion *= distance(vec2(x, y), 2.0 * (uv * 2.0 - 1.0));
+                    ambient_occlusion = sqrt(2.0) - length(2.0 * uv - 1.0);
+                }
+            }
+        }
+
+        ambient_occlusion = calcOcc(uv, va, vb, vc, vd);
+        ambient_occlusion = 1;
+    }
 
     float voxel_deviation = float(out_deviation_buffer[voxel_index]) / 255;
 
     float position_variation = (voxel_deviation) * 0.1;
     vec4 raw_color = unpackUnorm4x8(voxel_materials_visual[uVoxelMaterials[voxel_index]].albedo);
+    raw_color.rgb = pow(raw_color.rgb, vec3(2.2));
 
-    vec4 albedo_vec4 = vec4(0.5 * (raw_color.rgb + raw_color.rgb * position_variation), raw_color.a) + vec4(spectrum(uVoxelTemperatures[voxel_index]), 0);
+    vec4 albedo_vec4 = vec4(0.5 * (raw_color.rgb + raw_color.rgb * position_variation), raw_color.a) + vec4(0);
     vec3 albedo = albedo_vec4.xyz;
 
     uint roughness_metalness_packed = voxel_materials_visual[uVoxelMaterials[voxel_index]].roughness_metalness;
@@ -428,6 +558,8 @@ vec4 computeVoxelLight(
     F0 = mix(F0, albedo, metallic);
 
     vec3 out_radiance = vec3(0);
+
+    out_radiance += spectrum(uVoxelTemperatures[voxel_index]);
 
     for (int i = 0; i < point_lights.length(); i++) {
         PointLight point_light = point_lights[i];
@@ -468,11 +600,68 @@ vec4 computeVoxelLight(
         // add to outgoing radiance Lo
         float NdotL = max(dot(normal, displacement_to_light), 0.0);
 
-        out_radiance += (kD * albedo / PI + specular) * radiance * NdotL;
+        out_radiance += (kD * albedo / PI + specular) * radiance * NdotL * ambient_occlusion;
     }
 
     vec3 ambient = vec3(0.03) * albedo;
     vec3 final_radiance = ambient + out_radiance;
+
+    switch (renderer_mode) {
+        case RENDERER_MODE_PBR:
+        {
+            break;
+        }
+        case RENDERER_MODE_ALBEDO:
+        {
+            final_radiance = albedo;
+            break;
+        }
+        case RENDERER_MODE_ROUGHNESS:
+        {
+            final_radiance = vec3(roughness);
+            break;
+        }
+        case RENDERER_MODE_METALNESS:
+        {
+            final_radiance = vec3(metallic);
+            break;
+        }
+        case RENDERER_MODE_NORMAL:
+        {
+            final_radiance = normal;
+            break;
+        }
+        case RENDERER_MODE_AMBIENT_OCCLUSION:
+        {
+            final_radiance = vec3(ambient_occlusion);
+            break;
+        }
+        case RENDERER_MODE_MATERIAL:
+        {
+            uint material = uVoxelMaterials[voxel_index];
+            final_radiance = vec3(float(material % 2), float(material % 3), float(material % 4));
+            break;
+        }
+        case RENDERER_MODE_DEVIATION:
+        {
+            if (voxel_deviation > 0) {
+                final_radiance = vec3(0, voxel_deviation, 0);
+            }
+            else {
+                final_radiance = vec3(-voxel_deviation, 0, 0);
+            }
+            break;
+        }
+        case RENDERER_MODE_TEMPERATURE:
+        {
+            final_radiance = getTemperatureVisColour(uVoxelTemperatures[voxel_index]);
+            break;
+        }
+        default:
+        {
+            break;
+        }
+    }
 
     return vec4(final_radiance, albedo_vec4.a);
 }
@@ -590,8 +779,8 @@ void main()
                 //sky colour
                 vec4 reflected_material = unpackUnorm4x8(0xFF9B7C70);
 
-                vec2 env_map_uv = SampleSphericalMap(normalize(reflected_dir));
-                reflected_material = texture(environment_map, env_map_uv);
+                vec2 env_fetchVoxel_uv = SampleSphericalfetchVoxel(normalize(reflected_dir));
+                reflected_material = texture(environment_fetchVoxel, env_fetchVoxel_uv);
 
                 if (t > 0) {
                     reflected_material = computeVoxelLight(
@@ -623,8 +812,8 @@ void main()
             }
         }
         else {
-            vec2 env_map_uv = SampleSphericalMap(normalize(ray_direction));
-            total_radiance += texture(environment_map, env_map_uv);
+            vec2 env_fetchVoxel_uv = SampleSphericalfetchVoxel(normalize(ray_direction));
+            total_radiance += texture(environment_fetchVoxel, env_fetchVoxel_uv);
             break;
         }
     }

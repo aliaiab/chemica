@@ -1,9 +1,21 @@
 
 #include "imgui.h"
 #include "ImGuizmo.h"
+#define IMVIEWGUIZMO_IMPLEMENTATION
+#include "ImViewGuizmo.h"
 
 extern "C"
 {
+    void ImViewGuizmo_BeginFrame()
+    {
+        ImViewGuizmo::BeginFrame();
+    }
+
+    bool ImViewGuizmo_Rotate(ImViewGuizmo::vec3_t *camera_pos, ImViewGuizmo::quat_t *camera_rot, ImViewGuizmo::vec3_t *pivot, ImVec2 *position, float rotation_speed)
+    {
+        return ImViewGuizmo::Rotate(*camera_pos, *camera_rot, *pivot, *position, rotation_speed);
+    }
+
     void ImGuizmo_SetDrawlist(ImDrawList *drawlist = nullptr)
     {
         ImGuizmo::SetDrawlist(drawlist);

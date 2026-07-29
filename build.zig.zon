@@ -24,6 +24,14 @@
             .url = "git+https://github.com/zigimg/zigimg.git#d695acd97c02e57bb151e8f659d1280f5cd6ca70",
             .hash = "zigimg-0.1.0-8_eo2oyaFwBZwJpmqPkCfVXWBrHcqbYwmrp1I6bTD3lI",
         },
+        .glm = .{
+            .url = "git+https://github.com/g-truc/glm.git#6f14f4792a0cde5d0cf2c910506724d61cb95834",
+            .hash = "N-V-__8AAKvLSQFMmnxKgPgSZhAlDHhho5wMmywvjIVqm11V",
+        },
+        .nfd = .{
+            .url = "git+https://github.com/fabioarnold/nfd-zig.git#031b6b08c28b4c209fde1d7cfc2387aa956febb2",
+            .hash = "nfd-0.1.0-y82kbsSLBgBgSEauGFsHxH7RmcL4AEOqZEqOvA8-NEFq",
+        },
     },
     .paths = .{
         "build.zig",

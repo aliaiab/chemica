@@ -73,8 +73,8 @@ pub inline fn enable(should_enable: bool) void {
 }
 
 pub inline fn manipulate(
-    view: [*]const f32,
-    projection: [*]const f32,
+    view_matrix: [*]const f32,
+    projection_matrix: [*]const f32,
     operation: Operation,
     mode: Mode,
     matrix: [*]f32,
@@ -87,8 +87,8 @@ pub inline fn manipulate(
     },
 ) bool {
     return ImGuizmo_Manipulate(
-        view,
-        projection,
+        view_matrix,
+        projection_matrix,
         operation,
         mode,
         matrix,
@@ -99,5 +99,38 @@ pub inline fn manipulate(
         optionals.bounds_snap,
     );
 }
+
+pub const view = struct {
+    extern fn ImViewGuizmo_BeginFrame() void;
+    extern fn ImViewGuizmo_Rotate(
+        camera_pos: *[3]f32,
+        camera_rot: *[4]f32,
+        pivot: *const [3]f32,
+        position: *const [2]f32,
+        rotation_speed: f32,
+    ) bool;
+
+    pub fn beginFrame() void {
+        return ImViewGuizmo_BeginFrame();
+    }
+
+    pub fn rotate(
+        camera_pos: *[3]f32,
+        camera_rot: *[4]f32,
+        pivot: [3]f32,
+        position: [2]f32,
+        options: struct {
+            rotation_speed: f32 = 0.01,
+        },
+    ) bool {
+        return ImViewGuizmo_Rotate(
+            camera_pos,
+            camera_rot,
+            &pivot,
+            &position,
+            options.rotation_speed,
+        );
+    }
+};
 
 const cimgui = @import("cimgui");

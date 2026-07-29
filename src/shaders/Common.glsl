@@ -154,7 +154,18 @@ layout(std140, binding = 0) uniform Uniforms
     float delta_time;
     uvec2 window_size;
     bool enable_radiative_cooling;
+    uint renderer_mode;
 };
+
+#define RENDERER_MODE_PBR 0
+#define RENDERER_MODE_ALBEDO 1
+#define RENDERER_MODE_ROUGHNESS 2
+#define RENDERER_MODE_METALNESS 3
+#define RENDERER_MODE_AMBIENT_OCCLUSION 4
+#define RENDERER_MODE_NORMAL 5
+#define RENDERER_MODE_MATERIAL 6
+#define RENDERER_MODE_DEVIATION 7
+#define RENDERER_MODE_TEMPERATURE 8
 
 bool isInBounds(ivec3 position) {
     return all(greaterThanEqual(position, ivec3(0))) && all(lessThan(position, uSize));

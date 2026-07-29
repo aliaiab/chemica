@@ -1,0 +1,64 @@
+.{ .nodes = .{ .items = .{
+    .{ .children = .{ .items = .{
+        1,
+        2,
+        3,
+        4,
+    }, .capacity = 4 } },
+    .{
+        .transform = .{ .position = .{
+            64,
+            64,
+            64,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            15,
+            10,
+            27,
+        } } },
+        .material = 1,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            64,
+            88,
+            64,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            5,
+            10,
+            53,
+        } } },
+        .material = 26,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            64,
+            114,
+            64,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            15,
+            10,
+            27,
+        } } },
+        .material = 12,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            64,
+            34,
+            64,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            15,
+            10,
+            27,
+        } } },
+        .material = 38,
+        .name = "Box",
+    },
+}, .capacity = 5 } }

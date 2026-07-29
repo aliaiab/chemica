@@ -61,27 +61,14 @@ pub fn beginMenu(
         enabled: bool = true,
     },
 ) bool {
-    return cimgui.ImGui_BeginMenu(label.ptr, options.enabled);
+    return cimgui.ImGui_BeginMenuEx(
+        label.ptr,
+        options.enabled,
+    );
 }
 
 pub fn endMenu() void {
     return cimgui.ImGui_EndMenu();
-}
-
-pub fn menuItem(
-    label: [:0]const u8,
-    options: struct {
-        shortcut: ?[:0]const u8 = null,
-        selected: bool = false,
-        enabled: bool = true,
-    },
-) bool {
-    return cimgui.ImGui_MenuItemBool(
-        label.ptr,
-        if (options.shortcut != null) options.shortcut.?.ptr else null,
-        options.selected,
-        options.enabled,
-    );
 }
 
 pub const TreeNodeFlags = packed struct(u32) {
@@ -218,8 +205,15 @@ pub fn begin(
     options: struct {
         open: ?*bool = null,
         flags: WindowFlags = .{},
+        size: ?[2]f32 = null,
     },
 ) bool {
+    if (options.size) |size| {
+        cimgui.ImGui_SetNextWindowSize(.{
+            .x = size[0],
+            .y = size[1],
+        }, 1);
+    }
     return cimgui.ImGui_Begin(name.ptr, options.open, @bitCast(options.flags));
 }
 
@@ -261,6 +255,19 @@ pub fn loadIniSettingsFromMemory(ini_data: []const u8) void {
 
 pub fn saveIniSettingsToDisk(file_name: [:0]const u8) void {
     cimgui.ImGui_SaveIniSettingsToDisk(file_name.ptr);
+}
+
+pub fn menuItem(label: [:0]const u8, options: struct {
+    shortcut: ?[:0]const u8 = null,
+    selected: bool = false,
+    enabled: bool = true,
+}) bool {
+    return cimgui.ImGui_MenuItemEx(
+        label.ptr,
+        if (options.shortcut) |shortcut| shortcut.ptr else null,
+        options.selected,
+        options.enabled,
+    );
 }
 
 pub fn openPopup(string: [:0]const u8) void {
@@ -336,7 +343,7 @@ pub fn plotLines(label: [:0]const u8, values: []const f32) void {
 }
 
 pub fn combo(
-    label: []const u8,
+    label: [:0]const u8,
     current_item: *usize,
     items: []const [*]const u8,
 ) bool {
@@ -570,6 +577,111 @@ pub fn dockspaceOverViewport(
 
 pub fn dockspace(dockspace_id: u32) u32 {
     return cimgui.ImGui_DockSpace(dockspace_id);
+}
+
+pub fn getStyle() *cimgui.ImGuiStyle {
+    return @ptrCast(cimgui.ImGui_GetStyle());
+}
+
+pub fn getFrameHeightWithSpacing() f32 {
+    return cimgui.ImGui_GetFrameHeightWithSpacing();
+}
+
+pub fn getScrollMaxY() f32 {
+    return cimgui.ImGui_GetScrollMaxY();
+}
+
+pub fn setScrollY(scroll_y: f32) void {
+    cimgui.ImGui_SetScrollY(scroll_y);
+}
+
+pub fn beginChild(
+    name: [:0]const u8,
+    options: struct {
+        size: [2]f32,
+        child_flags: i32 = 0,
+        window_flags: WindowFlags = .{},
+    },
+) bool {
+    return cimgui.ImGui_BeginChild(
+        name.ptr,
+        @bitCast(options.size),
+        options.child_flags,
+        @bitCast(options.window_flags),
+    );
+}
+
+pub fn endChild() void {
+    cimgui.ImGui_EndChild();
+}
+
+///An automatic value edit widget for any type
+pub fn valueEdit(
+    label: [:0]const u8,
+    value: anytype,
+    options: struct {
+        naming_case: enum {
+            snake,
+            spaced_pascal,
+        } = .spaced_pascal,
+    },
+) bool {
+    const Type = std.meta.Child(@TypeOf(value));
+
+    switch (@typeInfo(Type)) {
+        .@"enum" => |enum_info| {
+            const ptr_to_enum = @as([*]u8, @ptrCast(value));
+
+            var items: [enum_info.fields.len][*]const u8 = undefined;
+
+            inline for (enum_info.fields, 0..) |field, i| {
+                items[i] = field.name.ptr;
+
+                switch (options.naming_case) {
+                    .spaced_pascal => {
+                        items[i] = &snakeToSpacedPascalCase(field.name);
+                    },
+                    else => {},
+                }
+            }
+
+            var current_item: usize = @as(usize, @intCast(ptr_to_enum[0]));
+
+            if (combo(label, &current_item, &items)) {
+                ptr_to_enum[0] = @as(u8, @intCast(current_item));
+
+                return true;
+            }
+
+            return false;
+        },
+        else => {},
+    }
+
+    return false;
+}
+
+fn snakeToSpacedPascalCase(comptime str: []const u8) [str.len + 1]u8 {
+    var result: [str.len + 1]u8 = [1]u8{0} ** (str.len + 1);
+
+    var previous_char: u8 = 0;
+
+    for (str, result[0..str.len]) |chr, *out_chr| {
+        switch (chr) {
+            '_' => out_chr.* = ' ',
+            else => {
+                if (previous_char == 0 or previous_char == '_') {
+                    out_chr.* = std.ascii.toUpper(chr);
+                } else {
+                    out_chr.* = chr;
+                }
+            },
+        }
+
+        previous_char = chr;
+    }
+
+    return result;
 }
 
 pub const Id = packed struct(u32) {
