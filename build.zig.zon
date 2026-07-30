@@ -32,6 +32,10 @@
             .url = "git+https://github.com/fabioarnold/nfd-zig.git#031b6b08c28b4c209fde1d7cfc2387aa956febb2",
             .hash = "nfd-0.1.0-y82kbsSLBgBgSEauGFsHxH7RmcL4AEOqZEqOvA8-NEFq",
         },
+        .MGL = .{
+            .url = "git+https://github.com/openglonmetal/MGL.git#de0ded04ec7dc99182e27e555a17775523b26911",
+            .hash = "N-V-__8AAIrO6wA_oY9CRnuHSR_kDCAOp4nlyCAb2Uzsdl4v",
+        },
     },
     .paths = .{
         "build.zig",
