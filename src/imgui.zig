@@ -804,6 +804,8 @@ fn userImageToImTextureID(
             break :blk @bitCast(user_image);
         },
         .int => user_image,
+        .pointer => @intFromPtr(user_image),
+        .optional => if (user_image) |img| @intFromPtr(img) else 0,
         else => @compileError("User image type not allowed! Must be a packed struct or enum"),
     };
 

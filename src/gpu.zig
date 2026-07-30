@@ -4,3 +4,8 @@ pub const Simulation = switch (@import("builtin").os.tag) {
 };
 
 pub const Texture = opaque {};
+
+pub const Context = switch (@import("builtin").os.tag) {
+    .macos => @import("gpu/metal.zig").Context,
+    else => @import("gpu/opengl.zig").Context,
+};

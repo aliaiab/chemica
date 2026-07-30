@@ -7,12 +7,20 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    var cimgui_renderers: [1]cimgui.Renderer = undefined;
+
+    if (target.result.os.tag == .macos) {
+        cimgui_renderers[0] = .Metal;
+    } else {
+        cimgui_renderers[0] = .OpenGL3;
+    }
+
     const cimgui_dep = b.dependency("cimgui_zig", .{
         .target = target,
         .optimize = optimize,
         .platforms = &[_]cimgui.Platform{.GLFW},
-        .renderers = &[_]cimgui.Renderer{ .OpenGL3, .Metal },
-        .docking = true, // Default value: false
+        .renderers = &cimgui_renderers,
+        .docking = true,
     });
 
     const glm_dep = b.dependency("glm", .{});
@@ -44,10 +52,12 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("zigimg", zigimg.module("zigimg"));
     main_module.addImport("zmath", zmath.module("root"));
 
-    main_module.addImport("objc", b.dependency("zig_objc", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("objc"));
+    if (target.result.os.tag == .macos) {
+        main_module.addImport("objc", b.dependency("zig_objc", .{
+            .target = target,
+            .optimize = optimize,
+        }).module("objc"));
+    }
 
     const nfd = b.dependency("nfd", .{ .target = target, .optimize = optimize });
     const nfd_mod = nfd.module("nfd");
@@ -60,12 +70,14 @@ pub fn build(b: *std.Build) !void {
     const c_module = cimgui_translate_c.createModule();
     c_module.linkLibrary(cimgui_lib);
 
-    const metal_dep = b.dependency("metal_bindings", .{
-        .target = target,
-        .optimize = optimize,
-    });
+    if (target.result.os.tag == .macos) {
+        const metal_dep = b.dependency("metal_bindings", .{
+            .target = target,
+            .optimize = optimize,
+        });
 
-    main_module.addImport("metal", metal_dep.module("metal_bindings"));
+        main_module.addImport("metal", metal_dep.module("metal_bindings"));
+    }
 
     main_module.addImport("cimgui", c_module);
 

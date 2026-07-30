@@ -1,3 +1,98 @@
+pub const Context = struct {
+    window: *glfw.Window,
+    env_map_texture: u32,
+    env_map_shader: u32,
+
+    pub fn init(arena: std.mem.Allocator, window: *glfw.Window) !Context {
+        var context: Context = undefined;
+
+        context.window = window;
+
+        const Static = struct {
+            pub var proc_table: gl.ProcTable = undefined;
+        };
+
+        if (!Static.proc_table.init(glfw.getProcAddress)) return error.GLInitFailed;
+
+        gl.makeProcTableCurrent(&Static.proc_table);
+
+        gl.Enable(gl.BLEND);
+        gl.Enable(gl.DEPTH_TEST);
+        gl.Enable(gl.CULL_FACE);
+        gl.CullFace(gl.BACK);
+        gl.FrontFace(gl.CCW);
+        gl.DepthMask(1);
+        gl.DepthFunc(gl.LESS);
+        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        var env_map_width: c_int = 0;
+        var env_map_height: c_int = 0;
+        var env_map_comps: c_int = 0;
+
+        const embedded_environment_map = @embedFile("../assets/vintage_measuring_lab_2k.png");
+
+        const env_map_data = stb_image.stbi_load_from_memory(
+            embedded_environment_map,
+            @intCast(embedded_environment_map.len),
+            &env_map_width,
+            &env_map_height,
+            &env_map_comps,
+            0,
+        );
+
+        gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&context.env_map_texture));
+        gl.TextureStorage2D(
+            context.env_map_texture,
+            1,
+            gl.RGB8,
+            env_map_width,
+            env_map_height,
+        );
+        gl.TextureSubImage2D(
+            context.env_map_texture,
+            0,
+            0,
+            0,
+            env_map_width,
+            env_map_height,
+            gl.RGB,
+            gl.UNSIGNED_BYTE,
+            env_map_data,
+        );
+
+        context.env_map_shader = try loadShaderProgram(arena, &.{
+            .{ .type = gl.VERTEX_SHADER, .binary = @embedFile("../shaders/Include/EnvMapVertex.spv") },
+            .{ .type = gl.FRAGMENT_SHADER, .binary = @embedFile("../shaders/Include/EnvMapFragment.spv") },
+        });
+
+        return context;
+    }
+
+    pub fn deinit(context: Context) void {
+        _ = context; // autofix
+    }
+
+    pub fn beginFrame(context: Context) void {
+        gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
+
+        gl.ClearColor(0, 0, 0, 1);
+        gl.ClearDepthf(1);
+        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        imgui.impl.opengl3.newFrame();
+
+        const framebuffer_size = context.window.getFramebufferSize();
+
+        gl.Viewport(0, 0, framebuffer_size[0], framebuffer_size[1]);
+
+        gl.BindTextureUnit(22, context.env_map_texture);
+    }
+
+    pub fn endFrame(context: Context) void {
+        _ = context; // autofix
+    }
+};
+
 pub const Simulation = struct {
     renderer_program: u32 = 0,
     vertex_array: u32 = 0,
@@ -28,63 +123,65 @@ pub const Simulation = struct {
     csg_transform_buffer: u32 = 0,
     csg_composite_material_buffer: u32 = 0,
 
-    pub fn init(arena: std.mem.Allocator) !Simulation {
-        var sim: Simulation = undefined;
+    scene_thumbnails: std.StringHashMapUnmanaged(?*Texture) = .empty,
 
-        sim.renderer_program = try loadShaderProgram(arena, &.{
+    pub fn init(sim: @import("../Simulation.zig"), arena: std.mem.Allocator) !Simulation {
+        var gpu_sim: Simulation = .{};
+
+        gpu_sim.renderer_program = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.VERTEX_SHADER,
-                .binary = @embedFile("shaders/Include/RendererVertex.spv"),
+                .binary = @embedFile("../shaders/Include/RendererVertex.spv"),
             },
             .{
                 .type = gl.FRAGMENT_SHADER,
-                .binary = @embedFile("shaders/Include/RendererFragment.spv"),
+                .binary = @embedFile("../shaders/Include/RendererFragment.spv"),
             },
         });
-        sim.simulation_shader = try loadShaderProgram(arena, &.{
+        gpu_sim.simulation_shader = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("shaders/Include/GrainSimulation.spv"),
+                .binary = @embedFile("../shaders/Include/GrainSimulation.spv"),
             },
         });
-        sim.thermal_shader = try loadShaderProgram(arena, &.{
+        gpu_sim.thermal_shader = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("shaders/Include/ThermalCompute.spv"),
+                .binary = @embedFile("../shaders/Include/ThermalCompute.spv"),
             },
         });
-        sim.grain_simulation_shader = try loadShaderProgram(arena, &.{
+        gpu_sim.grain_simulation_shader = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("shaders/Include/GrainSimulation.spv"),
+                .binary = @embedFile("../shaders/Include/GrainSimulation.spv"),
             },
         });
-        sim.fill_region_shader = try loadShaderProgram(arena, &.{
+        gpu_sim.fill_region_shader = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("shaders/Include/FillRegion.spv"),
+                .binary = @embedFile("../shaders/Include/FillRegion.spv"),
             },
         });
 
-        gl.CreateVertexArrays(1, @ptrCast(&sim.vertex_array));
+        gl.CreateVertexArrays(1, @ptrCast(&gpu_sim.vertex_array));
 
-        gl.CreateBuffers(1, @ptrCast(&sim.uniform_buffer));
-        gl.CreateBuffers(1, @ptrCast(&sim.vertex_buffer));
-        gl.CreateBuffers(2, &sim.simulation_material_buffers);
-        gl.CreateBuffers(2, &sim.simulation_temperature_buffers);
-        gl.CreateBuffers(2, &sim.simulation_deviation_buffers);
-        gl.CreateBuffers(1, @ptrCast(&sim.heat_measurement_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.uniform_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.vertex_buffer));
+        gl.CreateBuffers(2, &gpu_sim.simulation_material_buffers);
+        gl.CreateBuffers(2, &gpu_sim.simulation_temperature_buffers);
+        gl.CreateBuffers(2, &gpu_sim.simulation_deviation_buffers);
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.heat_measurement_buffer));
 
-        gl.CreateBuffers(1, @ptrCast(&sim.csg_instruction_buffer));
-        gl.CreateBuffers(1, @ptrCast(&sim.csg_instructions_box_buffer));
-        gl.CreateBuffers(1, @ptrCast(&sim.csg_instructions_sphere_buffer));
-        gl.CreateBuffers(1, @ptrCast(&sim.csg_instructions_extrude_post_buffer));
-        gl.CreateBuffers(1, @ptrCast(&sim.csg_transform_buffer));
-        gl.CreateBuffers(1, @ptrCast(&sim.csg_composite_material_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_instruction_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_instructions_box_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_instructions_sphere_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_instructions_extrude_post_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_transform_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_composite_material_buffer));
 
-        gl.CreateBuffers(1, @ptrCast(&sim.voxel_materials_buffer));
-        gl.CreateBuffers(1, @ptrCast(&sim.voxel_materials_visual_buffer));
-        gl.CreateBuffers(1, @ptrCast(&sim.point_light_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_materials_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_materials_visual_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.point_light_buffer));
 
         // gl.CreateBuffers(1, &voxel_allocator_bins_buffer);
         // gl.CreateBuffers(1, &voxel_pallete_memory_buffer);
@@ -95,23 +192,23 @@ pub const Simulation = struct {
         // gl.CreateBuffers(1, &voxel_chunks_buffer);
 
         gl.VertexArrayVertexBuffer(
-            sim.vertex_array,
+            gpu_sim.vertex_array,
             0,
-            sim.vertex_buffer,
+            gpu_sim.vertex_buffer,
             0,
             @sizeOf([3]f32),
         );
 
-        gl.EnableVertexArrayAttrib(sim.vertex_array, 0);
+        gl.EnableVertexArrayAttrib(gpu_sim.vertex_array, 0);
         gl.VertexArrayAttribFormat(
-            sim.vertex_array,
+            gpu_sim.vertex_array,
             0,
             3,
             gl.FLOAT,
             gl.FALSE,
             0,
         );
-        gl.VertexArrayAttribBinding(sim.vertex_array, 0, 0);
+        gl.VertexArrayAttribBinding(gpu_sim.vertex_array, 0, 0);
 
         const vertices = [_]f32{
             0.0, 0.0, 0.0,
@@ -153,7 +250,7 @@ pub const Simulation = struct {
         };
 
         gl.NamedBufferStorage(
-            sim.vertex_buffer,
+            gpu_sim.vertex_buffer,
             @sizeOf(@TypeOf(vertices)),
             &vertices,
             gl.DYNAMIC_STORAGE_BIT,
@@ -162,80 +259,83 @@ pub const Simulation = struct {
         const buffer_length = sim.width * sim.height * sim.depth;
 
         gl.NamedBufferStorage(
-            sim.simulation_material_buffers[0],
+            gpu_sim.simulation_material_buffers[0],
             buffer_length * @sizeOf(u16),
             null,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferStorage(
-            sim.simulation_material_buffers[1],
+            gpu_sim.simulation_material_buffers[1],
             buffer_length * @sizeOf(u16),
             null,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferStorage(
-            sim.simulation_temperature_buffers[0],
+            gpu_sim.simulation_temperature_buffers[0],
             buffer_length * @sizeOf(f32),
             null,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferStorage(
-            sim.simulation_temperature_buffers[1],
+            gpu_sim.simulation_temperature_buffers[1],
             buffer_length * @sizeOf(f32),
             null,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferStorage(
-            sim.simulation_deviation_buffers[0],
+            gpu_sim.simulation_deviation_buffers[0],
             buffer_length * @sizeOf(u8),
             null,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferStorage(
-            sim.simulation_deviation_buffers[1],
+            gpu_sim.simulation_deviation_buffers[1],
             buffer_length * @sizeOf(u8),
             null,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferStorage(
-            sim.heat_measurement_buffer,
+            gpu_sim.heat_measurement_buffer,
             @sizeOf(f32),
             null,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferData(
-            sim.voxel_materials_buffer,
+            gpu_sim.voxel_materials_buffer,
             @intCast(@sizeOf(VoxelMaterial) * sim.voxel_materials.items.len),
             sim.voxel_materials.items.ptr,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferData(
-            sim.voxel_materials_visual_buffer,
+            gpu_sim.voxel_materials_visual_buffer,
             @intCast(@sizeOf(VoxelMaterialVisual) * sim.voxel_materials_visual.items.len),
             sim.voxel_materials_visual.items.ptr,
             gl.DYNAMIC_STORAGE_BIT,
         );
 
         gl.NamedBufferData(
-            sim.uniform_buffer,
+            gpu_sim.uniform_buffer,
             @sizeOf(ShaderUniforms),
             null,
             gl.DYNAMIC_DRAW,
         );
+
+        return gpu_sim;
     }
 
     pub fn deinit() void {}
 
     pub fn updateCSGProgram(
-        sim: *Simulation,
+        gpu_sim: *Simulation,
+        sim: @import("../Simulation.zig"),
         program: CSGProgram,
     ) !void {
         if (program.instructions.items.len == 0) {
@@ -250,7 +350,7 @@ pub const Simulation = struct {
         };
 
         gl.NamedBufferData(
-            sim.csg_instruction_buffer,
+            gpu_sim.csg_instruction_buffer,
             @intCast(program.instructions.items.len * @sizeOf(CSGInstruction)),
             program.instructions.items.ptr,
             gl.DYNAMIC_DRAW,
@@ -258,7 +358,7 @@ pub const Simulation = struct {
 
         if (program.instructions_box.items.len > 0) {
             gl.NamedBufferData(
-                sim.csg_instructions_box_buffer,
+                gpu_sim.csg_instructions_box_buffer,
                 @intCast(program.instructions_box.items.len * @sizeOf(CSGInstructionBox)),
                 program.instructions_box.items.ptr,
                 gl.DYNAMIC_DRAW,
@@ -267,7 +367,7 @@ pub const Simulation = struct {
 
         if (program.instructions_sphere.items.len > 0) {
             gl.NamedBufferData(
-                sim.csg_instructions_sphere_buffer,
+                gpu_sim.csg_instructions_sphere_buffer,
                 @intCast(program.instructions_sphere.items.len * @sizeOf(CSGInstructionSphere)),
                 program.instructions_sphere.items.ptr,
                 gl.DYNAMIC_DRAW,
@@ -276,7 +376,7 @@ pub const Simulation = struct {
 
         if (program.instructions_extrude_post.items.len > 0) {
             gl.NamedBufferData(
-                sim.csg_instructions_extrude_post_buffer,
+                gpu_sim.csg_instructions_extrude_post_buffer,
                 @intCast(program.instructions_extrude_post.items.len * @sizeOf(CSGInstructionExtrudePost)),
                 program.instructions_extrude_post.items.ptr,
                 gl.DYNAMIC_DRAW,
@@ -284,76 +384,60 @@ pub const Simulation = struct {
         }
 
         gl.NamedBufferData(
-            sim.csg_transform_buffer,
+            gpu_sim.csg_transform_buffer,
             @intCast(program.transforms.items.len * @sizeOf(CSGRigidTransform)),
             program.transforms.items.ptr,
             gl.DYNAMIC_DRAW,
         );
     }
 
-    pub fn update(sim: Simulation) void {
+    pub fn update(gpu_sim: *Simulation, sim: *@import("../Simulation.zig"), shader_uniforms: ShaderUniforms) void {
         gl.NamedBufferData(
-            sim.voxel_materials_buffer,
+            gpu_sim.voxel_materials_buffer,
             @intCast(@sizeOf(VoxelMaterial) * sim.voxel_materials.items.len),
             sim.voxel_materials.items.ptr,
             gl.DYNAMIC_DRAW,
         );
         gl.NamedBufferData(
-            sim.voxel_materials_visual_buffer,
+            gpu_sim.voxel_materials_visual_buffer,
             @intCast(@sizeOf(VoxelMaterialVisual) * sim.voxel_materials_visual.items.len),
             sim.voxel_materials_visual.items.ptr,
             gl.DYNAMIC_DRAW,
         );
 
-        const shader_uniforms: ShaderUniforms = .{
-            .size = .{ sim.width, sim.height, sim.depth },
-            .base_velocity = undefined,
-            .model = sim.model_matrix,
-            .view = sim.view_matrix,
-            .projection = sim.projection_matrix,
-            .root_transform = sim.csg_invocations.items[0].transform,
-            .csg_bounding_min = sim.csg_invocations.items[0].bound_min,
-            .csg_bounding_max = sim.csg_invocations.items[0].bound_max,
-            .substep_index = sim.timestep_index,
-            .window_size = sim.window_size,
-            .delta_time = 0,
-            .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
-            .renderer_view_type = sim.renderer_view_type,
-        };
-
         gl.NamedBufferSubData(
-            sim.uniform_buffer,
+            gpu_sim.uniform_buffer,
             0,
             @sizeOf(ShaderUniforms),
             &shader_uniforms,
         );
         gl.NamedBufferData(
-            sim.point_light_buffer,
+            gpu_sim.point_light_buffer,
             @intCast(@sizeOf(PointLight) * sim.point_lights.items.len),
             sim.point_lights.items.ptr,
             gl.DYNAMIC_DRAW,
         );
 
-        gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, sim.uniform_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, sim.simulation_temperature_buffers[0]);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, sim.simulation_temperature_buffers[1]);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 2, sim.voxel_materials_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 23, sim.voxel_materials_visual_buffer);
+        gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, gpu_sim.uniform_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, gpu_sim.simulation_temperature_buffers[0]);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, gpu_sim.simulation_temperature_buffers[1]);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 2, gpu_sim.voxel_materials_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 23, gpu_sim.voxel_materials_visual_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, 0);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, sim.simulation_material_buffers[0]);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 10, sim.csg_transform_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, sim.csg_instruction_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 12, sim.csg_instructions_box_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 13, sim.csg_instructions_sphere_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 30, sim.csg_instructions_extrude_post_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 14, sim.csg_composite_material_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 20, sim.simulation_deviation_buffers[0]);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 21, sim.simulation_deviation_buffers[1]);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 22, sim.point_light_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 32, sim.heat_measurement_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, gpu_sim.simulation_material_buffers[0]);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 10, gpu_sim.csg_transform_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, gpu_sim.csg_instruction_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 12, gpu_sim.csg_instructions_box_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 13, gpu_sim.csg_instructions_sphere_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 30, gpu_sim.csg_instructions_extrude_post_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 14, gpu_sim.csg_composite_material_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 20, gpu_sim.simulation_deviation_buffers[0]);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 21, gpu_sim.simulation_deviation_buffers[1]);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 22, gpu_sim.point_light_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 32, gpu_sim.heat_measurement_buffer);
 
         if (!sim.enable_simulation and sim.csg_dirty) {
-            gl.UseProgram(sim.fill_region_shader);
+            gl.UseProgram(gpu_sim.fill_region_shader);
 
             sim.csg_dirty = false;
 
@@ -362,21 +446,21 @@ pub const Simulation = struct {
             const deviation_clear: u8 = 0;
 
             gl.ClearNamedBufferData(
-                sim.simulation_material_buffers[0],
+                gpu_sim.simulation_material_buffers[0],
                 gl.R16UI,
                 gl.RED,
                 gl.UNSIGNED_SHORT,
                 &material_clear,
             );
             gl.ClearNamedBufferData(
-                sim.simulation_temperature_buffers[0],
+                gpu_sim.simulation_temperature_buffers[0],
                 gl.R32UI,
                 gl.RED,
                 gl.FLOAT,
                 &temperature_clear,
             );
             gl.ClearNamedBufferData(
-                sim.simulation_deviation_buffers[0],
+                gpu_sim.simulation_deviation_buffers[0],
                 gl.R8I,
                 gl.RED,
                 gl.BYTE,
@@ -394,7 +478,7 @@ pub const Simulation = struct {
 
         if (sim.enable_simulation) {
             gl.ClearNamedBufferData(
-                sim.heat_measurement_buffer,
+                gpu_sim.heat_measurement_buffer,
                 gl.R32F,
                 gl.RED,
                 gl.FLOAT,
@@ -403,7 +487,7 @@ pub const Simulation = struct {
 
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
 
-            gl.UseProgram(sim.thermal_shader);
+            gl.UseProgram(gpu_sim.thermal_shader);
             gl.DispatchCompute(
                 sim.width / 8,
                 sim.height / 8,
@@ -411,33 +495,33 @@ pub const Simulation = struct {
             );
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
 
-            gl.UseProgram(sim.grain_simulation_shader);
+            gl.UseProgram(gpu_sim.grain_simulation_shader);
             gl.BindBufferBase(
                 gl.SHADER_STORAGE_BUFFER,
                 2,
-                sim.voxel_materials_buffer,
+                gpu_sim.voxel_materials_buffer,
             );
 
             gl.BindBufferBase(
                 gl.SHADER_STORAGE_BUFFER,
                 4,
-                sim.simulation_material_buffers[0],
+                gpu_sim.simulation_material_buffers[0],
             );
             gl.BindBufferBase(
                 gl.SHADER_STORAGE_BUFFER,
                 5,
-                sim.simulation_material_buffers[1],
+                gpu_sim.simulation_material_buffers[1],
             );
 
             gl.BindBufferBase(
                 gl.SHADER_STORAGE_BUFFER,
                 6,
-                sim.simulation_temperature_buffers[1],
+                gpu_sim.simulation_temperature_buffers[1],
             );
             gl.BindBufferBase(
                 gl.SHADER_STORAGE_BUFFER,
                 7,
-                sim.simulation_temperature_buffers[0],
+                gpu_sim.simulation_temperature_buffers[0],
             );
 
             gl.DispatchCompute(
@@ -458,14 +542,14 @@ pub const Simulation = struct {
         if (sim.enable_simulation) {
             std.mem.swap(
                 u32,
-                &sim.simulation_material_buffers[0],
-                &sim.simulation_material_buffers[1],
+                &gpu_sim.simulation_material_buffers[0],
+                &gpu_sim.simulation_material_buffers[1],
             );
 
             std.mem.swap(
                 u32,
-                &sim.simulation_deviation_buffers[0],
-                &sim.simulation_deviation_buffers[1],
+                &gpu_sim.simulation_deviation_buffers[0],
+                &gpu_sim.simulation_deviation_buffers[1],
             );
 
             sim.timestep_index += 1;
@@ -474,7 +558,7 @@ pub const Simulation = struct {
 
             //TODO: hard cpu-gpu sync here, must change when porting to vulkan
             gl.GetNamedBufferSubData(
-                sim.heat_measurement_buffer,
+                gpu_sim.heat_measurement_buffer,
                 0,
                 @sizeOf(i32),
                 &sim.measured_heat,
@@ -530,7 +614,7 @@ pub const Simulation = struct {
                 gl.FRAMEBUFFER,
                 gl.COLOR_ATTACHMENT0,
                 gl.TEXTURE_2D,
-                @intFromPtr(texture),
+                @intCast(@intFromPtr(texture)),
                 0,
             );
 
@@ -559,6 +643,61 @@ pub const Simulation = struct {
             gl.DeleteFramebuffers(1, @ptrCast(&framebuffer));
             gl.DeleteRenderbuffers(1, @ptrCast(&renderbuffer));
         }
+    }
+
+    pub fn renderSceneThumbnail(
+        gpu_sim: *Simulation,
+        context: Context,
+        sim: *@import("../Simulation.zig"),
+        scene: *CSGTree,
+        scene_path: []const u8,
+        gpa: std.mem.Allocator,
+    ) !?*Texture {
+        var scene_program: CSGProgram = .{};
+
+        try scene.compile(gpa, &scene_program);
+        sim.csg_dirty = true;
+
+        try sim.updateCSGProgram(scene_program);
+
+        const is_enabled: bool = sim.enable_simulation;
+        sim.update();
+
+        const thumbnail_result = try gpu_sim.scene_thumbnails.getOrPut(gpa, std.fs.path.basename(scene_path));
+
+        var texture_handle: u32 = 0;
+        gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&texture_handle));
+
+        thumbnail_result.value_ptr.* = @ptrFromInt(texture_handle);
+
+        gl.TextureStorage2D(texture_handle, 1, gl.RGBA8, 128, 128);
+        gl.Viewport(0, 0, 128, 128);
+
+        sim.projection_matrix = @bitCast((zmath.perspectiveFovRhGl(
+            sim.camera.fov,
+            @as(f32, @floatFromInt(128)) / @as(f32, @floatFromInt(128)),
+            sim.camera.near,
+            sim.camera.far,
+        )));
+        sim.view_matrix = @bitCast((zmath.lookAtRh(
+            .{ 128, 128, 128, 0 },
+            .{ 0, 0, 0, 0 },
+            .{ 0, 1, 0, 0 },
+        )));
+
+        gl.UseProgram(context.env_map_shader);
+        gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, gpu_sim.uniform_buffer);
+        gl.BindTexture(gl.TEXTURE_2D, context.env_map_texture);
+        gl.BindTextureUnit(2, context.env_map_texture);
+
+        gl.BindVertexArray(gpu_sim.vertex_array);
+        gl.Disable(gl.CULL_FACE);
+        gl.DrawArrays(gl.TRIANGLES, 0, 36);
+
+        sim.render(thumbnail_result.value_ptr.*);
+
+        sim.enable_simulation = is_enabled;
+        return null;
     }
 };
 
@@ -655,6 +794,7 @@ const VoxelMaterial = @import("../Simulation.zig").VoxelMaterial;
 const VoxelMaterialVisual = @import("../Simulation.zig").VoxelMaterialVisual;
 const PointLight = @import("../Simulation.zig").PointLight;
 const CSGProgram = @import("../Simulation.zig").CSGProgram;
+const CSGTree = @import("../main.zig").CSGTree;
 const CSGRigidTransform = @import("../Simulation.zig").CSGRigidTransform;
 const CSGInstruction = @import("../Simulation.zig").CSGInstruction;
 const CSGInstructionBox = @import("../Simulation.zig").CSGInstructionBox;
@@ -663,3 +803,7 @@ const CSGInstructionExtrudePost = @import("../Simulation.zig").CSGInstructionExt
 const std = @import("std");
 const Texture = @import("../gpu.zig").Texture;
 const gl = @import("gl");
+const imgui = @import("../imgui.zig");
+const glfw = @import("zglfw");
+const stb_image = @import("../stb_image.zig");
+const zmath = @import("zmath");

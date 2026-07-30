@@ -13,7 +13,7 @@ extern "C"
         ImGuiIO &io = ImGui::GetIO();
 
         io.Fonts->Clear();
-        io.Fonts->AddFontFromMemoryTTF(font_data, font_data_size, 32 * 2);
+        io.Fonts->AddFontFromMemoryTTF(font_data, font_data_size, 32);
         io.Fonts->Build();
         io.FontGlobalScale = 0.5;
 
