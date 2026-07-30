@@ -1,5 +1,6 @@
 pub const Context = struct {
     device: metal.MetalDevice = undefined,
+    swapchain: objc.Object = undefined,
 
     pub fn init(arena: std.mem.Allocator, window: *glfw.Window) !Context {
         var context: Context = undefined;
@@ -8,6 +9,7 @@ pub const Context = struct {
 
         const CAMetalLayer = objc.getClass("CAMetalLayer").?;
         const swapchain = CAMetalLayer.msgSend(objc.Object, objc.Sel.registerName("layer"), .{});
+        context.swapchain = swapchain;
 
         swapchain.setProperty("device", context.device.handle.value);
         swapchain.setProperty("opaque", true);
@@ -20,6 +22,7 @@ pub const Context = struct {
         content_view.setProperty("wantsLayer", true);
 
         try imgui.impl.metal.init(context.device);
+        try imgui.impl.glfw.initForMetal(window, .{});
 
         return .{};
     }
@@ -67,6 +70,7 @@ pub const Simulation = struct {
     render_encoder: metal.MetalRenderEncoder,
     render_pass: metal.MetalRenderPassDescriptor,
     output_texture: metal.MetalTexture,
+    scene_thumbnails: std.StringHashMapUnmanaged(*Texture),
 
     pub fn init(arena: std.mem.Allocator) !Simulation {
         _ = arena; // autofix
@@ -96,3 +100,4 @@ const std = @import("std");
 const glfw = @import("zglfw");
 const imgui = @import("../imgui.zig");
 const objc = @import("objc");
+const Texture = @import("../gpu.zig").Texture;

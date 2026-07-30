@@ -37,7 +37,7 @@ pub fn init(
         .window_size = window_size,
     };
 
-    sim.gpu_sim = try .init(sim, arena);
+    sim.gpu_sim = try .init(arena);
 
     return sim;
 }
@@ -63,7 +63,7 @@ pub fn update(sim: *Simulation) void {
         .renderer_view_type = sim.renderer_view_type,
     };
 
-    sim.gpu_sim.update(sim, shader_uniforms);
+    sim.gpu_sim.update(shader_uniforms);
 }
 
 pub fn render(sim: *Simulation, render_texture: ?*Texture) void {
@@ -90,7 +90,57 @@ pub fn updateCSGProgram(
     sim: *Simulation,
     program: CSGProgram,
 ) !void {
-    try sim.gpu_sim.updateCSGProgram(sim.*, program);
+    if (program.instructions.items.len == 0) {
+        return;
+    }
+
+    sim.csg_invocations.items[0].bound_min = .{ 0, 0, 0 };
+    sim.csg_invocations.items[0].bound_max = .{
+        @intCast(sim.width),
+        @intCast(sim.height),
+        @intCast(sim.depth),
+    };
+
+    gl.NamedBufferData(
+        sim.csg_instruction_buffer,
+        @intCast(program.instructions.items.len * @sizeOf(CSGInstruction)),
+        program.instructions.items.ptr,
+        gl.DYNAMIC_DRAW,
+    );
+
+    if (program.instructions_box.items.len > 0) {
+        gl.NamedBufferData(
+            sim.csg_instructions_box_buffer,
+            @intCast(program.instructions_box.items.len * @sizeOf(CSGInstructionBox)),
+            program.instructions_box.items.ptr,
+            gl.DYNAMIC_DRAW,
+        );
+    }
+
+    if (program.instructions_sphere.items.len > 0) {
+        gl.NamedBufferData(
+            sim.csg_instructions_sphere_buffer,
+            @intCast(program.instructions_sphere.items.len * @sizeOf(CSGInstructionSphere)),
+            program.instructions_sphere.items.ptr,
+            gl.DYNAMIC_DRAW,
+        );
+    }
+
+    if (program.instructions_extrude_post.items.len > 0) {
+        gl.NamedBufferData(
+            sim.csg_instructions_extrude_post_buffer,
+            @intCast(program.instructions_extrude_post.items.len * @sizeOf(CSGInstructionExtrudePost)),
+            program.instructions_extrude_post.items.ptr,
+            gl.DYNAMIC_DRAW,
+        );
+    }
+
+    gl.NamedBufferData(
+        sim.csg_transform_buffer,
+        @intCast(program.transforms.items.len * @sizeOf(CSGRigidTransform)),
+        program.transforms.items.ptr,
+        gl.DYNAMIC_DRAW,
+    );
 }
 
 pub const ShaderUniforms = extern struct {

@@ -175,16 +175,6 @@ pub fn main(init: std.process.Init) !void {
         .bound_max = undefined,
     });
 
-    if (@import("builtin").os.tag != .macos) {
-        try imgui.impl.glfw.initForOpenGL(window, .{});
-    } else {
-        try imgui.impl.glfw.initForMetal(window, .{});
-    }
-    defer imgui.impl.glfw.shutdown();
-
-    if (@import("builtin").os.tag != .macos) try imgui.impl.opengl3.init(.{});
-    defer if (@import("builtin").os.tag != .macos) imgui.impl.opengl3.shutdown();
-
     imguiStyleSetup();
 
     imgui.loadIniSettingsFromMemory(@embedFile("assets/imgui.ini"));

@@ -65,6 +65,9 @@ pub const Context = struct {
             .{ .type = gl.FRAGMENT_SHADER, .binary = @embedFile("../shaders/Include/EnvMapFragment.spv") },
         });
 
+        try imgui.impl.opengl3.init(.{});
+        try imgui.impl.glfw.initForOpenGL(window, .{});
+
         return context;
     }
 
