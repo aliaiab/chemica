@@ -1,3 +1,3 @@
-# chemica_cpp
+# Chemica 
 
 A 3D voxel based chemistry simulator based on the powder toy
