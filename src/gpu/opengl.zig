@@ -61,8 +61,8 @@ pub const Context = struct {
         );
 
         context.env_map_shader = try loadShaderProgram(arena, &.{
-            .{ .type = gl.VERTEX_SHADER, .binary = @embedFile("../shaders/Include/EnvMapVertex.spv") },
-            .{ .type = gl.FRAGMENT_SHADER, .binary = @embedFile("../shaders/Include/EnvMapFragment.spv") },
+            .{ .type = gl.VERTEX_SHADER, .binary = @embedFile("EnvMapVertex.spv") },
+            .{ .type = gl.FRAGMENT_SHADER, .binary = @embedFile("EnvMapFragment.spv") },
         });
 
         try imgui.impl.opengl3.init(.{});
@@ -128,41 +128,44 @@ pub const Simulation = struct {
 
     scene_thumbnails: std.StringHashMapUnmanaged(?*Texture) = .empty,
 
-    pub fn init(sim: @import("../Simulation.zig"), arena: std.mem.Allocator) !Simulation {
+    pub fn init(
+        sim: @import("../Simulation.zig"),
+        arena: std.mem.Allocator,
+    ) !Simulation {
         var gpu_sim: Simulation = .{};
 
         gpu_sim.renderer_program = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.VERTEX_SHADER,
-                .binary = @embedFile("../shaders/Include/RendererVertex.spv"),
+                .binary = @embedFile("RendererVertex.spv"),
             },
             .{
                 .type = gl.FRAGMENT_SHADER,
-                .binary = @embedFile("../shaders/Include/RendererFragment.spv"),
+                .binary = @embedFile("RendererFragment.spv"),
             },
         });
         gpu_sim.simulation_shader = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("../shaders/Include/GrainSimulation.spv"),
+                .binary = @embedFile("GrainSimulation.spv"),
             },
         });
         gpu_sim.thermal_shader = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("../shaders/Include/ThermalCompute.spv"),
+                .binary = @embedFile("ThermalCompute.spv"),
             },
         });
         gpu_sim.grain_simulation_shader = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("../shaders/Include/GrainSimulation.spv"),
+                .binary = @embedFile("GrainSimulation.spv"),
             },
         });
         gpu_sim.fill_region_shader = try loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("../shaders/Include/FillRegion.spv"),
+                .binary = @embedFile("FillRegion.spv"),
             },
         });
 
@@ -569,7 +572,12 @@ pub const Simulation = struct {
         }
     }
 
-    pub fn render(sim: Simulation, shader_uniforms: ShaderUniforms, render_texture: ?*Texture) void {
+    pub fn render(
+        sim: Simulation,
+        context: Context,
+        shader_uniforms: ShaderUniforms,
+        render_texture: ?*Texture,
+    ) void {
         gl.NamedBufferSubData(
             sim.uniform_buffer,
             0,
@@ -631,6 +639,15 @@ pub const Simulation = struct {
 
             gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         }
+
+        gl.UseProgram(context.env_map_shader);
+        gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, sim.uniform_buffer);
+        gl.BindTexture(gl.TEXTURE_2D, context.env_map_texture);
+        gl.BindTextureUnit(2, context.env_map_texture);
+
+        gl.BindVertexArray(sim.vertex_array);
+        gl.Disable(gl.CULL_FACE);
+        gl.DrawArrays(gl.TRIANGLES, 0, 36);
 
         gl.UseProgram(sim.renderer_program);
         gl.BindVertexArray(sim.vertex_array);
@@ -697,7 +714,7 @@ pub const Simulation = struct {
         gl.Disable(gl.CULL_FACE);
         gl.DrawArrays(gl.TRIANGLES, 0, 36);
 
-        sim.render(thumbnail_result.value_ptr.*);
+        sim.render(context, thumbnail_result.value_ptr.*);
 
         sim.enable_simulation = is_enabled;
         return null;

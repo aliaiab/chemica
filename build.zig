@@ -131,7 +131,6 @@ fn compileShader(
     const source_basename = std.fs.path.stem(source);
 
     const output_path = std.mem.concat(b.allocator, u8, &.{
-        "src/shaders/Include/",
         source_basename,
         ".spv",
     }) catch @panic("");
@@ -150,10 +149,17 @@ fn compileShader(
             type_string,
             source,
             "-o",
-            output_path,
         },
     );
+    const output_file = b.addWriteFile(output_path, &.{});
+    const output_file_path = output_file.add(output_path, &.{});
+
+    compile_shader.addFileArg(output_file_path);
+
     compile_shader.step.addWatchInput(b.path(source)) catch @panic("oom");
+    exe_step.root_module.addImport(output_path, b.createModule(.{
+        .root_source_file = output_file_path,
+    }));
 
     if (target.result.os.tag == .macos) {
         const msl_output_path = std.mem.concat(b.allocator, u8, &.{

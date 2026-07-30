@@ -37,10 +37,10 @@ pub fn main(init: std.process.Init) !void {
     glfw.makeContextCurrent(window);
     glfw.swapInterval(0);
 
+    _ = imgui.createContext(.{});
+
     const gpu_context = try gpu.Context.init(arena, window);
     defer gpu_context.deinit();
-
-    _ = imgui.createContext(.{});
 
     //imgui.getStyle()._MainScale = content_scale;
     //imgui.cimgui.ImGuiStyle_ScaleAllSizes(imgui.getStyle(), content_scale);
@@ -350,24 +350,22 @@ pub fn main(init: std.process.Init) !void {
             simulation.camera = camera;
         }
 
-        if (@import("builtin").os.tag != .macos) {
-            //Thumbnail gen
-            {
-                if (thumbnail_gen_queue.pop()) |scene_path| {
-                    const scene_file = try std.Io.Dir.cwd().openFile(init.io, scene_path, .{});
-                    defer scene_file.close(init.io);
+        //Thumbnail gen
+        {
+            if (thumbnail_gen_queue.pop()) |scene_path| {
+                const scene_file = try std.Io.Dir.cwd().openFile(init.io, scene_path, .{});
+                defer scene_file.close(init.io);
 
-                    var scene: CSGTree = try .initFromFile(init.io, scene_file, gpa);
-                    defer scene.nodes.deinit(gpa);
+                var scene: CSGTree = try .initFromFile(init.io, scene_file, gpa);
+                defer scene.nodes.deinit(gpa);
 
-                    _ = try simulation.gpu_sim.renderSceneThumbnail(
-                        gpu_context,
-                        &simulation,
-                        &scene,
-                        scene_path,
-                        arena,
-                    );
-                }
+                _ = try simulation.gpu_sim.renderSceneThumbnail(
+                    gpu_context,
+                    &simulation,
+                    &scene,
+                    scene_path,
+                    arena,
+                );
             }
         }
 
@@ -389,20 +387,9 @@ pub fn main(init: std.process.Init) !void {
 
         try csg_tree.compile(arena, &csg_program);
 
-        if (@import("builtin").os.tag != .macos) {
-            try simulation.updateCSGProgram(csg_program);
+        try simulation.updateCSGProgram(csg_program);
 
-            simulation.update();
-
-            gl.UseProgram(gpu_context.env_map_shader);
-            gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, simulation.gpu_sim.uniform_buffer);
-            gl.BindTexture(gl.TEXTURE_2D, gpu_context.env_map_texture);
-            gl.BindTextureUnit(2, gpu_context.env_map_texture);
-
-            gl.BindVertexArray(simulation.gpu_sim.vertex_array);
-            gl.Disable(gl.CULL_FACE);
-            gl.DrawArrays(gl.TRIANGLES, 0, 36);
-        }
+        simulation.update();
 
         const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
 
@@ -411,9 +398,7 @@ pub fn main(init: std.process.Init) !void {
 
         enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
 
-        if (@import("builtin").os.tag != .macos) {
-            simulation.render(null);
-        }
+        simulation.render(gpu_context, null);
 
         if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Space)) {
             simulation.enable_simulation = !simulation.enable_simulation;
@@ -1680,7 +1665,6 @@ const imgui = @import("imgui.zig");
 const Simulation = @import("Simulation.zig");
 const zmath = @import("zmath");
 const glfw = @import("zglfw");
-const gl = @import("gl");
 const zigimg = @import("zigimg");
 const std = @import("std");
 const stb_image = @import("stb_image.zig");

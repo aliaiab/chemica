@@ -1231,9 +1231,10 @@ pub const impl = struct {
                 encoder.handle.value,
             );
         }
+
+        const mtl = @import("metal");
     };
 };
 
 pub const cimgui = @import("cimgui");
-const mtl = @import("metal");
 const std = @import("std");
