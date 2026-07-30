@@ -1156,6 +1156,17 @@ pub const impl = struct {
             }
         }
 
+        pub fn initForMetal(window: *@import("zglfw").Window, options: struct {
+            install_callbacks: bool = true,
+        }) InitError!void {
+            if (cimgui.cImGui_ImplGlfw_InitForOther(
+                @ptrCast(window),
+                options.install_callbacks,
+            ) == false) {
+                return InitError.InitFailed;
+            }
+        }
+
         pub fn shutdown() void {
             cimgui.cImGui_ImplGlfw_Shutdown();
         }
@@ -1193,7 +1204,34 @@ pub const impl = struct {
             cimgui.cImGui_ImplOpenGL3_RenderDrawData(@ptrCast(draw_data));
         }
     };
+
+    pub const metal = struct {
+        pub fn init(device: mtl.MetalDevice) !void {
+            if (!cimgui.cImGui_ImplMetal_Init(device.handle.value)) {
+                return error.InitFailed;
+            }
+
+            _ = cimgui.cImGui_ImplMetal_CreateDeviceObjects(device.handle.value);
+        }
+
+        pub fn newFrame(render_pass_descriptor: mtl.MetalRenderPassDescriptor) void {
+            cimgui.cImGui_ImplMetal_NewFrame(render_pass_descriptor.handle.value);
+        }
+
+        pub fn renderDrawData(
+            draw_data: *DrawData,
+            command_buffer: mtl.MetalCommandBuffer,
+            encoder: mtl.MetalRenderEncoder,
+        ) void {
+            cimgui.cImGui_ImplMetal_RenderDrawData(
+                draw_data,
+                command_buffer.handle.value,
+                encoder.handle.value,
+            );
+        }
+    };
 };
 
 pub const cimgui = @import("cimgui");
+const mtl = @import("metal");
 const std = @import("std");

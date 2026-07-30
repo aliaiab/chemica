@@ -4,3 +4,4 @@
 #include "dcimgui_internal.h"
 #include "backends/dcimgui_impl_glfw.h"
 #include "backends/dcimgui_impl_opengl3.h"
+#include "backends/dcimgui_impl_metal.h"

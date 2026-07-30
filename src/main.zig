@@ -12,14 +12,21 @@ pub fn main(init: std.process.Init) !void {
     try glfw.init();
     defer glfw.terminate();
 
-    glfw.windowHint(.context_version_major, 4);
-    glfw.windowHint(.context_version_minor, 6);
-    glfw.windowHint(.opengl_debug_context, true);
-    glfw.windowHint(.opengl_profile, .opengl_core_profile);
+    if (@import("builtin").os.tag != .macos) {
+        glfw.windowHint(.context_version_major, 4);
+        glfw.windowHint(.context_version_minor, 6);
+        glfw.windowHint(.opengl_debug_context, true);
+        glfw.windowHint(.opengl_profile, .opengl_core_profile);
+    } else {
+        glfw.windowHint(.client_api, .no_api);
+        glfw.windowHint(.cocoa_retina_framebuffer, true);
+    }
+
+    const content_scale = imgui.cimgui.cImGui_ImplGlfw_GetContentScaleForMonitor(@ptrCast(glfw.getPrimaryMonitor()));
 
     const window = try glfw.createWindow(
-        640,
-        480,
+        @intFromFloat(640 * content_scale),
+        @intFromFloat(480 * content_scale),
         "Chemica",
         null,
         null,
@@ -30,27 +37,54 @@ pub fn main(init: std.process.Init) !void {
     glfw.makeContextCurrent(window);
     glfw.swapInterval(0);
 
-    var gl_procs: gl.ProcTable = undefined;
+    if (@import("builtin").os.tag != .macos) {
+        var gl_procs: gl.ProcTable = undefined;
 
-    if (!gl_procs.init(glfw.getProcAddress)) return error.GLInitFailed;
+        if (!gl_procs.init(glfw.getProcAddress)) return error.GLInitFailed;
 
-    gl.makeProcTableCurrent(&gl_procs);
-    defer gl.makeProcTableCurrent(null);
+        gl.makeProcTableCurrent(&gl_procs);
+        defer gl.makeProcTableCurrent(null);
 
-    gl.Enable(gl.BLEND);
-    gl.Enable(gl.DEPTH_TEST);
-    gl.Enable(gl.CULL_FACE);
-    gl.CullFace(gl.BACK);
-    gl.FrontFace(gl.CCW);
-    gl.DepthMask(1);
-    gl.DepthFunc(gl.LESS);
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.Enable(gl.BLEND);
+        gl.Enable(gl.DEPTH_TEST);
+        gl.Enable(gl.CULL_FACE);
+        gl.CullFace(gl.BACK);
+        gl.FrontFace(gl.CCW);
+        gl.DepthMask(1);
+        gl.DepthFunc(gl.LESS);
+        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    }
+
+    _ = imgui.createContext(.{});
+
+    imgui.getStyle().FontScaleDpi = content_scale;
+    //imgui.getStyle()._MainScale = content_scale;
+    //imgui.cimgui.ImGuiStyle_ScaleAllSizes(imgui.getStyle(), content_scale);
+    //imgui.cimgui.ImGui_ScaleWindowsInViewport(@ptrCast(imgui.cimgui.ImGui_GetMainViewport()), 1 / content_scale);
 
     var simulation: Simulation = try .init(
         arena,
         @bitCast(window.getSize()),
     );
     defer simulation.deinit(arena);
+
+    const objc = @import("objc");
+    const CAMetalLayer = objc.getClass("CAMetalLayer").?;
+    const swapchain = CAMetalLayer.msgSend(objc.Object, objc.Sel.registerName("layer"), .{});
+
+    swapchain.setProperty("device", simulation.gpu_sim.device.handle.value);
+    swapchain.setProperty("opaque", true);
+
+    const ns_window: objc.Object = .{ .value = @ptrCast(@alignCast(glfw.getCocoaWindow(window))) };
+
+    const content_view = ns_window.getProperty(objc.Object, "contentView");
+
+    content_view.setProperty("layer", swapchain);
+    content_view.setProperty("wantsLayer", true);
+
+    if (@import("builtin").os.tag == .macos) {
+        try imgui.impl.metal.init(simulation.gpu_sim.device);
+    }
 
     var voxel_material_names: std.ArrayList([]const u8) = .empty;
 
@@ -175,13 +209,15 @@ pub fn main(init: std.process.Init) !void {
         .bound_max = undefined,
     });
 
-    _ = imgui.createContext(.{});
-
-    try imgui.impl.glfw.initForOpenGL(window, .{});
+    if (@import("builtin").os.tag != .macos) {
+        try imgui.impl.glfw.initForOpenGL(window, .{});
+    } else {
+        try imgui.impl.glfw.initForMetal(window, .{});
+    }
     defer imgui.impl.glfw.shutdown();
 
-    try imgui.impl.opengl3.init(.{});
-    defer imgui.impl.opengl3.shutdown();
+    if (@import("builtin").os.tag != .macos) try imgui.impl.opengl3.init(.{});
+    defer if (@import("builtin").os.tag != .macos) imgui.impl.opengl3.shutdown();
 
     imguiStyleSetup();
 
@@ -233,32 +269,35 @@ pub fn main(init: std.process.Init) !void {
     );
 
     var env_map_texture: u32 = 0;
+    var env_map_shader: u32 = 0;
 
-    gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&env_map_texture));
-    gl.TextureStorage2D(
-        env_map_texture,
-        1,
-        gl.RGB8,
-        env_map_width,
-        env_map_height,
-    );
-    gl.TextureSubImage2D(
-        env_map_texture,
-        0,
-        0,
-        0,
-        env_map_width,
-        env_map_height,
-        gl.RGB,
-        gl.UNSIGNED_BYTE,
-        env_map_data,
-    );
+    if (@import("builtin").os.tag != .macos) {
+        gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&env_map_texture));
+        gl.TextureStorage2D(
+            env_map_texture,
+            1,
+            gl.RGB8,
+            env_map_width,
+            env_map_height,
+        );
+        gl.TextureSubImage2D(
+            env_map_texture,
+            0,
+            0,
+            0,
+            env_map_width,
+            env_map_height,
+            gl.RGB,
+            gl.UNSIGNED_BYTE,
+            env_map_data,
+        );
 
-    const env_map_shader = try Simulation.loadShaderProgram(arena, &.{
-        .{ .type = gl.VERTEX_SHADER, .binary = @embedFile("shaders/Include/EnvMapVertex.spv") },
-        .{ .type = gl.FRAGMENT_SHADER, .binary = @embedFile("shaders/Include/EnvMapFragment.spv") },
-    });
-    defer gl.DeleteProgram(env_map_shader);
+        env_map_shader = try Simulation.loadShaderProgram(arena, &.{
+            .{ .type = gl.VERTEX_SHADER, .binary = @embedFile("shaders/Include/EnvMapVertex.spv") },
+            .{ .type = gl.FRAGMENT_SHADER, .binary = @embedFile("shaders/Include/EnvMapFragment.spv") },
+        });
+        defer gl.DeleteProgram(env_map_shader);
+    }
 
     _ = window.setScrollCallback(glfwScrollCallback);
     var mouse_scroll: f32 = 0;
@@ -337,18 +376,48 @@ pub fn main(init: std.process.Init) !void {
     while (!window.shouldClose()) {
         glfw.pollEvents();
 
-        gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
+        const surface = swapchain.msgSend(objc.Object, objc.Sel.registerName("nextDrawable"), .{});
 
-        gl.ClearColor(0, 0, 0, 1);
-        gl.ClearDepthf(1);
-        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        const metal = @import("metal");
+
+        const surface_tex_obj = surface.getProperty(objc.c.id, "texture");
+        var surface_tex: metal.MetalTexture = .{ .handle = .{ .value = surface_tex_obj } };
+
+        simulation.gpu_sim.render_pass = metal.MetalRenderPassDescriptor.init();
+        simulation.gpu_sim.render_pass.setClearColor(1, 0, 0, 0, 0);
+        simulation.gpu_sim.render_pass.setColorTexture(&surface_tex, 0);
+
+        simulation.gpu_sim.render_encoder = try simulation.gpu_sim.command_buffer.createRenderEncoder(
+            &simulation.gpu_sim.render_pass,
+        );
 
         imgui.impl.glfw.newFrame();
-        imgui.impl.opengl3.newFrame();
 
-        const framebuffer_size = window.getFramebufferSize();
+        imgui.getIO().DisplaySize.x *= 0.5;
+        imgui.getIO().DisplaySize.y *= 0.5;
+        imgui.getIO().MousePos.x *= 0.5;
+        imgui.getIO().MousePos.y *= 0.5;
+        imgui.getIO().MouseDelta.x *= 0.5;
+        imgui.getIO().MouseDelta.y *= 0.5;
 
-        gl.Viewport(0, 0, framebuffer_size[0], framebuffer_size[1]);
+        imgui.getIO().FontGlobalScale = 0.25;
+        imgui.getStyle().FontScaleDpi = 0.5;
+
+        if (@import("builtin").os.tag != .macos) {
+            gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
+
+            gl.ClearColor(0, 0, 0, 1);
+            gl.ClearDepthf(1);
+            gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            imgui.impl.opengl3.newFrame();
+
+            const framebuffer_size = window.getFramebufferSize();
+
+            gl.Viewport(0, 0, framebuffer_size[0], framebuffer_size[1]);
+        } else {
+            imgui.impl.metal.newFrame(simulation.gpu_sim.render_pass);
+        }
 
         //Camera Controls
         {
@@ -397,57 +466,59 @@ pub fn main(init: std.process.Init) !void {
             last_mouse_pos = cursor_pos;
         }
 
-        gl.BindTextureUnit(22, env_map_texture);
+        if (@import("builtin").os.tag != .macos) {
+            gl.BindTextureUnit(22, env_map_texture);
 
-        //Thumbnail gen
-        {
-            if (thumbnail_gen_queue.pop()) |scene_path| {
-                const scene_file = try std.Io.Dir.cwd().openFile(init.io, scene_path, .{});
-                defer scene_file.close(init.io);
+            //Thumbnail gen
+            {
+                if (thumbnail_gen_queue.pop()) |scene_path| {
+                    const scene_file = try std.Io.Dir.cwd().openFile(init.io, scene_path, .{});
+                    defer scene_file.close(init.io);
 
-                var scene: CSGTree = try .initFromFile(init.io, scene_file, gpa);
-                defer scene.nodes.deinit(gpa);
+                    var scene: CSGTree = try .initFromFile(init.io, scene_file, gpa);
+                    defer scene.nodes.deinit(gpa);
 
-                var scene_program: Simulation.CSGProgram = .{};
+                    var scene_program: Simulation.CSGProgram = .{};
 
-                try scene.compile(gpa, &scene_program);
-                simulation.csg_dirty = true;
+                    try scene.compile(gpa, &scene_program);
+                    simulation.csg_dirty = true;
 
-                try simulation.updateCSGProgram(scene_program);
+                    try simulation.updateCSGProgram(scene_program);
 
-                const is_enabled: bool = simulation.enable_simulation;
-                simulation.update();
+                    const is_enabled: bool = simulation.enable_simulation;
+                    simulation.update();
 
-                const thumbnail_result = try file_thumbnails.getOrPut(arena, std.fs.path.basename(scene_path));
+                    const thumbnail_result = try file_thumbnails.getOrPut(arena, std.fs.path.basename(scene_path));
 
-                gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(thumbnail_result.value_ptr));
-                gl.TextureStorage2D(thumbnail_result.value_ptr.*, 1, gl.RGBA8, 128, 128);
-                gl.Viewport(0, 0, 128, 128);
+                    gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(thumbnail_result.value_ptr));
+                    gl.TextureStorage2D(thumbnail_result.value_ptr.*, 1, gl.RGBA8, 128, 128);
+                    gl.Viewport(0, 0, 128, 128);
 
-                simulation.projection_matrix = @bitCast((zmath.perspectiveFovRhGl(
-                    camera.fov,
-                    @as(f32, @floatFromInt(128)) / @as(f32, @floatFromInt(128)),
-                    camera.near,
-                    camera.far,
-                )));
-                simulation.view_matrix = @bitCast((zmath.lookAtRh(
-                    .{ 128, 128, 128, 0 },
-                    .{ 0, 0, 0, 0 },
-                    .{ 0, 1, 0, 0 },
-                )));
+                    simulation.projection_matrix = @bitCast((zmath.perspectiveFovRhGl(
+                        camera.fov,
+                        @as(f32, @floatFromInt(128)) / @as(f32, @floatFromInt(128)),
+                        camera.near,
+                        camera.far,
+                    )));
+                    simulation.view_matrix = @bitCast((zmath.lookAtRh(
+                        .{ 128, 128, 128, 0 },
+                        .{ 0, 0, 0, 0 },
+                        .{ 0, 1, 0, 0 },
+                    )));
 
-                gl.UseProgram(env_map_shader);
-                gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, simulation.uniform_buffer);
-                gl.BindTexture(gl.TEXTURE_2D, env_map_texture);
-                gl.BindTextureUnit(2, env_map_texture);
+                    gl.UseProgram(env_map_shader);
+                    gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, simulation.uniform_buffer);
+                    gl.BindTexture(gl.TEXTURE_2D, env_map_texture);
+                    gl.BindTextureUnit(2, env_map_texture);
 
-                gl.BindVertexArray(simulation.vertex_array);
-                gl.Disable(gl.CULL_FACE);
-                gl.DrawArrays(gl.TRIANGLES, 0, 36);
+                    gl.BindVertexArray(simulation.vertex_array);
+                    gl.Disable(gl.CULL_FACE);
+                    gl.DrawArrays(gl.TRIANGLES, 0, 36);
 
-                simulation.render(thumbnail_result.value_ptr.*);
+                    simulation.render(thumbnail_result.value_ptr.*);
 
-                simulation.enable_simulation = is_enabled;
+                    simulation.enable_simulation = is_enabled;
+                }
             }
         }
 
@@ -469,18 +540,20 @@ pub fn main(init: std.process.Init) !void {
 
         try csg_tree.compile(arena, &csg_program);
 
-        try simulation.updateCSGProgram(csg_program);
+        if (@import("builtin").os.tag != .macos) {
+            try simulation.updateCSGProgram(csg_program);
 
-        simulation.update();
+            simulation.update();
 
-        gl.UseProgram(env_map_shader);
-        gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, simulation.uniform_buffer);
-        gl.BindTexture(gl.TEXTURE_2D, env_map_texture);
-        gl.BindTextureUnit(2, env_map_texture);
+            gl.UseProgram(env_map_shader);
+            gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, simulation.uniform_buffer);
+            gl.BindTexture(gl.TEXTURE_2D, env_map_texture);
+            gl.BindTextureUnit(2, env_map_texture);
 
-        gl.BindVertexArray(simulation.vertex_array);
-        gl.Disable(gl.CULL_FACE);
-        gl.DrawArrays(gl.TRIANGLES, 0, 36);
+            gl.BindVertexArray(simulation.vertex_array);
+            gl.Disable(gl.CULL_FACE);
+            gl.DrawArrays(gl.TRIANGLES, 0, 36);
+        }
 
         const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
 
@@ -489,7 +562,9 @@ pub fn main(init: std.process.Init) !void {
 
         enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
 
-        simulation.render(null);
+        if (@import("builtin").os.tag != .macos) {
+            simulation.render(null);
+        }
 
         if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Space)) {
             simulation.enable_simulation = !simulation.enable_simulation;
@@ -1249,7 +1324,27 @@ pub fn main(init: std.process.Init) !void {
 
         imgui.render();
 
-        imgui.impl.opengl3.renderDrawData(imgui.getDrawData());
+        if (@import("builtin").os.tag != .macos) {
+            imgui.impl.opengl3.renderDrawData(imgui.getDrawData());
+        } else {
+            imgui.impl.metal.renderDrawData(
+                imgui.getDrawData(),
+                simulation.gpu_sim.command_buffer,
+                simulation.gpu_sim.render_encoder,
+            );
+        }
+
+        simulation.gpu_sim.command_buffer.present(surface.value);
+
+        simulation.gpu_sim.render_encoder.end();
+
+        simulation.gpu_sim.command_buffer.commit();
+        simulation.gpu_sim.command_buffer.waitForCompletion();
+
+        simulation.gpu_sim.render_encoder.deinit();
+        simulation.gpu_sim.command_buffer.deinit();
+        simulation.gpu_sim.command_buffer = try simulation.gpu_sim.queue.createCommandBuffer();
+        simulation.gpu_sim.render_pass.deinit();
 
         glfw.swapBuffers(window);
     }

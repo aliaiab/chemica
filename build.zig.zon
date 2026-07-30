@@ -36,6 +36,14 @@
             .url = "git+https://github.com/openglonmetal/MGL.git#de0ded04ec7dc99182e27e555a17775523b26911",
             .hash = "N-V-__8AAIrO6wA_oY9CRnuHSR_kDCAOp4nlyCAb2Uzsdl4v",
         },
+        .metal_bindings = .{
+            .url = "git+https://github.com/francisqureshi/metal-bindings.git#3f6df72157ee9e1722abfc8f3044a62ad68bbb3a",
+            .hash = "metal_bindings-0.0.0-512c62jzAAA8FQgf4ZTmxC71AOOrkncehnh690GFtWnP",
+        },
+        .zig_objc = .{
+            .url = "git+https://github.com/mitchellh/zig-objc.git#c8de82ff80281215ad92900866dab7103a8efa8b",
+            .hash = "zig_objc-0.0.0-Ir_Sp9gsAQCPAJc0oF5xoWePHWP6Y6tCphDeyNUThJoi",
+        },
     },
     .paths = .{
         "build.zig",

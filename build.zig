@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .platforms = &[_]cimgui.Platform{.GLFW},
-        .renderers = &[_]cimgui.Renderer{.OpenGL3},
+        .renderers = &[_]cimgui.Renderer{ .OpenGL3, .Metal },
         .docking = true, // Default value: false
     });
 
@@ -44,6 +44,11 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("zigimg", zigimg.module("zigimg"));
     main_module.addImport("zmath", zmath.module("root"));
 
+    main_module.addImport("objc", b.dependency("zig_objc", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("objc"));
+
     const nfd = b.dependency("nfd", .{ .target = target, .optimize = optimize });
     const nfd_mod = nfd.module("nfd");
     main_module.addImport("nfd", nfd_mod);
@@ -54,6 +59,13 @@ pub fn build(b: *std.Build) !void {
     addIncludePathsToTranslateC(cimgui_translate_c, cimgui_lib);
     const c_module = cimgui_translate_c.createModule();
     c_module.linkLibrary(cimgui_lib);
+
+    const metal_dep = b.dependency("metal_bindings", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    main_module.addImport("metal", metal_dep.module("metal_bindings"));
 
     main_module.addImport("cimgui", c_module);
 
@@ -80,13 +92,13 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = optimize != .Debug,
     });
 
-    _ = compileShader(b, exe, .compute, "src/shaders/ThermalCompute.glsl");
-    _ = compileShader(b, exe, .vertex, "src/shaders/RendererVertex.glsl");
-    _ = compileShader(b, exe, .fragment, "src/shaders/RendererFragment.glsl");
-    _ = compileShader(b, exe, .compute, "src/shaders/FillRegion.glsl");
-    _ = compileShader(b, exe, .compute, "src/shaders/GrainSimulation.glsl");
-    _ = compileShader(b, exe, .fragment, "src/shaders/EnvMapFragment.glsl");
-    _ = compileShader(b, exe, .vertex, "src/shaders/EnvMapVertex.glsl");
+    _ = compileShader(b, target, exe, .compute, "src/shaders/ThermalCompute.glsl");
+    _ = compileShader(b, target, exe, .vertex, "src/shaders/RendererVertex.glsl");
+    _ = compileShader(b, target, exe, .fragment, "src/shaders/RendererFragment.glsl");
+    _ = compileShader(b, target, exe, .compute, "src/shaders/FillRegion.glsl");
+    _ = compileShader(b, target, exe, .compute, "src/shaders/GrainSimulation.glsl");
+    _ = compileShader(b, target, exe, .fragment, "src/shaders/EnvMapFragment.glsl");
+    _ = compileShader(b, target, exe, .vertex, "src/shaders/EnvMapVertex.glsl");
 
     exe.is_linking_libcpp = true;
 
@@ -95,6 +107,7 @@ pub fn build(b: *std.Build) !void {
 
 fn compileShader(
     b: *std.Build,
+    target: std.Build.ResolvedTarget,
     exe_step: *std.Build.Step.Compile,
     shader_type: enum {
         vertex,
@@ -129,6 +142,28 @@ fn compileShader(
         },
     );
     compile_shader.step.addWatchInput(b.path(source)) catch @panic("oom");
+
+    if (target.result.os.tag == .macos) {
+        const msl_output_path = std.mem.concat(b.allocator, u8, &.{
+            source_basename,
+            ".msl",
+        }) catch @panic("");
+
+        const msl_output_path_install = b.getInstallPath(.bin, msl_output_path);
+
+        const convert_to_msl = b.addSystemCommand(&.{
+            "spirv-cross",
+            output_path,
+            "--msl",
+            "--msl-version",
+            "20200",
+            "--output",
+            msl_output_path_install,
+        });
+
+        convert_to_msl.step.addWatchInput(b.path(output_path)) catch @panic("");
+        exe_step.step.dependOn(&convert_to_msl.step);
+    }
 
     exe_step.step.dependOn(&compile_shader.step);
 
