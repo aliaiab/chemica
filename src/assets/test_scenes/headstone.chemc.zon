@@ -40,8 +40,8 @@
         } },
         .data = .{ .box = .{ .bounds = .{
             11,
-            31,
-            16,
+            29,
+            19,
         } } },
         .material = 24,
         .name = "Box",

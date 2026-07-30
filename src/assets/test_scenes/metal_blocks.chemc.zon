@@ -7,14 +7,14 @@
     }, .capacity = 4 } },
     .{
         .transform = .{ .position = .{
+            100,
             64,
-            64,
-            64,
+            50,
         } },
         .data = .{ .box = .{ .bounds = .{
-            15,
+            19,
             10,
-            27,
+            41,
         } } },
         .material = 1,
         .name = "Box",
@@ -26,7 +26,7 @@
             64,
         } },
         .data = .{ .box = .{ .bounds = .{
-            5,
+            12,
             10,
             53,
         } } },
@@ -49,9 +49,9 @@
     },
     .{
         .transform = .{ .position = .{
-            64,
+            58,
             34,
-            64,
+            84,
         } },
         .data = .{ .box = .{ .bounds = .{
             15,

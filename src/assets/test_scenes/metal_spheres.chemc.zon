@@ -1,8 +1,8 @@
 .{ .nodes = .{ .items = .{
     .{ .children = .{ .items = .{
         1,
-        2,
         3,
+        4,
     }, .capacity = 3 } },
     .{
         .transform = .{ .position = .{
@@ -16,22 +16,32 @@
     },
     .{
         .transform = .{ .position = .{
-            64,
+            28,
             75,
-            86,
-        }, .uniform_scale = 1.8730235 },
+            52,
+        }, .uniform_scale = 0.0018730235 },
         .data = .{ .sphere = .{ .radius = 10 } },
         .material = 26,
         .name = "Sphere",
     },
     .{
         .transform = .{ .position = .{
-            62,
+            55,
             64,
-            48,
+            44,
         } },
         .data = .{ .sphere = .{ .radius = 10 } },
         .material = 1,
         .name = "Sphere",
     },
-}, .capacity = 4 } }
+    .{
+        .transform = .{ .position = .{
+            32,
+            64,
+            75,
+        } },
+        .data = .{ .sphere = .{ .radius = 10 } },
+        .material = 1,
+        .name = "Sphere",
+    },
+}, .capacity = 5 } }

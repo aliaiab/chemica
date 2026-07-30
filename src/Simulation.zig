@@ -459,7 +459,30 @@ pub fn update(sim: *Simulation) void {
     }
 }
 
-pub fn render(sim: *Simulation) void {
+pub fn render(sim: *Simulation, render_texture: ?u32) void {
+    const shader_uniforms: ShaderUniforms = .{
+        .size = .{ sim.width, sim.height, sim.depth },
+        .base_velocity = undefined,
+        .model = sim.model_matrix,
+        .view = sim.view_matrix,
+        .projection = sim.projection_matrix,
+        .root_transform = sim.csg_invocations.items[0].transform,
+        .csg_bounding_min = sim.csg_invocations.items[0].bound_min,
+        .csg_bounding_max = sim.csg_invocations.items[0].bound_max,
+        .substep_index = sim.timestep_index,
+        .window_size = sim.window_size,
+        .delta_time = 0,
+        .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
+        .renderer_view_type = sim.renderer_view_type,
+    };
+
+    gl.NamedBufferSubData(
+        sim.uniform_buffer,
+        0,
+        @sizeOf(ShaderUniforms),
+        &shader_uniforms,
+    );
+
     gl.BindBufferBase(
         gl.SHADER_STORAGE_BUFFER,
         0,
@@ -489,6 +512,32 @@ pub fn render(sim: *Simulation) void {
 
     gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
+    var framebuffer: u32 = 0;
+    var renderbuffer: u32 = 0;
+
+    if (render_texture) |texture| {
+        gl.CreateFramebuffers(1, @ptrCast(&framebuffer));
+
+        gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.FramebufferTexture2D(
+            gl.FRAMEBUFFER,
+            gl.COLOR_ATTACHMENT0,
+            gl.TEXTURE_2D,
+            texture,
+            0,
+        );
+
+        gl.CreateRenderbuffers(1, @ptrCast(&renderbuffer));
+
+        gl.BindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
+        gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8, 128, 128);
+        gl.BindRenderbuffer(gl.RENDERBUFFER, 0);
+
+        gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
+
+        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    }
+
     gl.UseProgram(sim.renderer_program);
     gl.BindVertexArray(sim.vertex_array);
     gl.CullFace(gl.FRONT);
@@ -496,6 +545,13 @@ pub fn render(sim: *Simulation) void {
     gl.Enable(gl.CULL_FACE);
 
     gl.DrawArrays(gl.TRIANGLES, 0, 36);
+
+    gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
+
+    if (render_texture) |_| {
+        gl.DeleteFramebuffers(1, @ptrCast(&framebuffer));
+        gl.DeleteRenderbuffers(1, @ptrCast(&renderbuffer));
+    }
 }
 
 pub fn updateCSGProgram(

@@ -1,0 +1,14 @@
+.{ .nodes = .{ .items = .{ .{ .children = .{ .items = .{1}, .capacity = 1 } }, .{
+    .transform = .{ .position = .{
+        63,
+        63,
+        66,
+    } },
+    .data = .{ .box = .{ .bounds = .{
+        10,
+        10,
+        10,
+    } } },
+    .material = 1,
+    .name = "Box",
+} }, .capacity = 2 } }

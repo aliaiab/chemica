@@ -298,6 +298,8 @@ pub fn main(init: std.process.Init) !void {
     var maybe_sim_file: ?std.Io.File = null;
     defer if (maybe_sim_file) |sim_file| sim_file.close(init.io);
 
+    var sim_file_path: []const u8 = "";
+
     defer if (maybe_sim_file) |sim_file| {
         csg_tree.saveToFile(init.io, sim_file) catch @panic("");
     };
@@ -306,8 +308,36 @@ pub fn main(init: std.process.Init) !void {
 
     const enthalpy_change_values = try arena.alloc(f32, 512);
 
+    const dir_to_browse = try std.Io.Dir.cwd().openDir(
+        init.io,
+        "src/assets/test_scenes",
+        .{ .iterate = true },
+    );
+
+    defer dir_to_browse.close(init.io);
+
+    var thumbnail_gen_queue: std.ArrayList([]const u8) = .empty;
+
+    //Array of opengl textures
+    var file_thumbnails: std.StringHashMapUnmanaged(u32) = .empty;
+
+    {
+        var iter = dir_to_browse.iterate();
+
+        while (try iter.next(init.io)) |entry| {
+            if (std.mem.containsAtLeast(u8, entry.name, 1, ".chemc.zon")) {
+                try thumbnail_gen_queue.append(arena, try dir_to_browse.realPathFileAlloc(init.io, entry.name, arena));
+            }
+        }
+    }
+
+    imgui.getIO().WantSaveIniSettings = false;
+    imgui.getIO().IniSavingRate = 0;
+
     while (!window.shouldClose()) {
         glfw.pollEvents();
+
+        gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
 
         gl.ClearColor(0, 0, 0, 1);
         gl.ClearDepthf(1);
@@ -367,6 +397,60 @@ pub fn main(init: std.process.Init) !void {
             last_mouse_pos = cursor_pos;
         }
 
+        gl.BindTextureUnit(22, env_map_texture);
+
+        //Thumbnail gen
+        {
+            if (thumbnail_gen_queue.pop()) |scene_path| {
+                const scene_file = try std.Io.Dir.cwd().openFile(init.io, scene_path, .{});
+                defer scene_file.close(init.io);
+
+                var scene: CSGTree = try .initFromFile(init.io, scene_file, gpa);
+                defer scene.nodes.deinit(gpa);
+
+                var scene_program: Simulation.CSGProgram = .{};
+
+                try scene.compile(gpa, &scene_program);
+                simulation.csg_dirty = true;
+
+                try simulation.updateCSGProgram(scene_program);
+
+                const is_enabled: bool = simulation.enable_simulation;
+                simulation.update();
+
+                const thumbnail_result = try file_thumbnails.getOrPut(arena, std.fs.path.basename(scene_path));
+
+                gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(thumbnail_result.value_ptr));
+                gl.TextureStorage2D(thumbnail_result.value_ptr.*, 1, gl.RGBA8, 128, 128);
+                gl.Viewport(0, 0, 128, 128);
+
+                simulation.projection_matrix = @bitCast((zmath.perspectiveFovRhGl(
+                    camera.fov,
+                    @as(f32, @floatFromInt(128)) / @as(f32, @floatFromInt(128)),
+                    camera.near,
+                    camera.far,
+                )));
+                simulation.view_matrix = @bitCast((zmath.lookAtRh(
+                    .{ 128, 128, 128, 0 },
+                    .{ 0, 0, 0, 0 },
+                    .{ 0, 1, 0, 0 },
+                )));
+
+                gl.UseProgram(env_map_shader);
+                gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, simulation.uniform_buffer);
+                gl.BindTexture(gl.TEXTURE_2D, env_map_texture);
+                gl.BindTextureUnit(2, env_map_texture);
+
+                gl.BindVertexArray(simulation.vertex_array);
+                gl.Disable(gl.CULL_FACE);
+                gl.DrawArrays(gl.TRIANGLES, 0, 36);
+
+                simulation.render(thumbnail_result.value_ptr.*);
+
+                simulation.enable_simulation = is_enabled;
+            }
+        }
+
         camera.projection = @bitCast((zmath.perspectiveFovRhGl(
             camera.fov,
             @as(f32, @floatFromInt(window.getSize()[0])) / @as(f32, @floatFromInt(window.getSize()[1])),
@@ -389,13 +473,6 @@ pub fn main(init: std.process.Init) !void {
 
         simulation.update();
 
-        const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
-
-        heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] = @floatFromInt(simulation.measured_heat);
-        heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] /= @floatFromInt(1);
-
-        enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
-
         gl.UseProgram(env_map_shader);
         gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, simulation.uniform_buffer);
         gl.BindTexture(gl.TEXTURE_2D, env_map_texture);
@@ -405,9 +482,14 @@ pub fn main(init: std.process.Init) !void {
         gl.Disable(gl.CULL_FACE);
         gl.DrawArrays(gl.TRIANGLES, 0, 36);
 
-        gl.BindTextureUnit(22, env_map_texture);
+        const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
 
-        simulation.render();
+        heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] = @floatFromInt(simulation.measured_heat);
+        heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] /= @floatFromInt(1);
+
+        enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
+
+        simulation.render(null);
 
         if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Space)) {
             simulation.enable_simulation = !simulation.enable_simulation;
@@ -569,12 +651,12 @@ pub fn main(init: std.process.Init) !void {
 
             var csg_editor_window_pos: [2]f32 = undefined;
 
+            const enable_nfd = true;
+
             if (imgui.begin("CSG Editor", .{})) {
                 csg_editor_window_pos = @bitCast(imgui.cimgui.ImGui_GetWindowPos());
 
                 if (true or imgui.beginMenuBar()) {
-                    const nfd = @import("nfd");
-
                     if (imgui.beginMenu("File", .{})) {
                         defer imgui.endMenu();
                         if (imgui.menuItem("New", .{})) {
@@ -587,46 +669,57 @@ pub fn main(init: std.process.Init) !void {
                             maybe_sim_file = null;
                         }
                         if (imgui.menuItem("Open", .{})) {
-                            const maybe_path = try nfd.openFileDialog("*.zon", ".");
+                            if (enable_nfd) {
+                                const nfd = @import("nfd");
+                                const maybe_path = try nfd.openFileDialog("*.zon", ".");
 
-                            if (maybe_path) |path| {
-                                csg_tree.nodes.deinit(arena);
-                                const file = try std.Io.Dir.cwd().openFile(init.io, path, .{
-                                    .mode = .read_write,
-                                });
+                                if (maybe_path) |path| {
+                                    csg_tree.nodes.deinit(arena);
+                                    const file = try std.Io.Dir.cwd().openFile(init.io, path, .{
+                                        .mode = .read_write,
+                                    });
 
-                                if (maybe_sim_file) |sim_file| {
-                                    sim_file.close(init.io);
+                                    if (maybe_sim_file) |sim_file| {
+                                        sim_file.close(init.io);
+                                    }
+
+                                    selected_node_handles.clearRetainingCapacity();
+                                    selected_node_parents.clearRetainingCapacity();
+
+                                    csg_program.instructions.clearRetainingCapacity();
+
+                                    csg_tree = try .initFromFile(init.io, file, arena);
+
+                                    sim_file_path = try std.Io.Dir.cwd().realPathFileAlloc(init.io, path, arena);
+                                    maybe_sim_file = file;
+                                    simulation.csg_dirty = true;
+                                    simulation.enable_simulation = false;
                                 }
-
-                                selected_node_handles.clearRetainingCapacity();
-                                selected_node_parents.clearRetainingCapacity();
-
-                                csg_program.instructions.clearRetainingCapacity();
-
-                                csg_tree = try .initFromFile(init.io, file, arena);
-                                maybe_sim_file = file;
-                                simulation.csg_dirty = true;
-                                simulation.enable_simulation = false;
                             }
                         }
                         if (imgui.menuItem("Save", .{ .shortcut = "Ctrl+S" })) {
                             if (maybe_sim_file) |sim_file| {
                                 try csg_tree.saveToFile(init.io, sim_file);
+
+                                try thumbnail_gen_queue.append(arena, sim_file_path);
                             }
                         }
                         if (imgui.menuItem("Save As...", .{})) {
-                            const maybe_path = try nfd.saveFileDialog("*.zon", "./src/assets/test_scenes");
+                            if (enable_nfd) {
+                                const nfd = @import("nfd");
+                                const maybe_path = try nfd.saveFileDialog("*.zon", "./src/assets/test_scenes");
 
-                            if (maybe_path) |path| {
-                                const file = try std.Io.Dir.cwd().createFile(init.io, path, .{});
+                                if (maybe_path) |path| {
+                                    const file = try std.Io.Dir.cwd().createFile(init.io, path, .{});
+                                    sim_file_path = try std.Io.Dir.cwd().realPathFileAlloc(init.io, path, arena);
 
-                                if (maybe_sim_file) |sim_file| {
-                                    sim_file.close(init.io);
+                                    if (maybe_sim_file) |sim_file| {
+                                        sim_file.close(init.io);
+                                    }
+                                    maybe_sim_file = file;
+
+                                    try csg_tree.saveToFile(init.io, file);
                                 }
-                                maybe_sim_file = file;
-
-                                try csg_tree.saveToFile(init.io, file);
                             }
                         }
                     }
@@ -834,6 +927,32 @@ pub fn main(init: std.process.Init) !void {
 
             if (imgui.begin("Renderer", .{})) {
                 _ = imgui.valueEdit("Mode", &simulation.renderer_view_type, .{});
+            }
+            imgui.end();
+
+            if (imgui.begin("File Browser", .{})) {
+                var dir_iter = dir_to_browse.iterate();
+
+                while (try dir_iter.next(init.io)) |entry| {
+                    if (std.mem.containsAtLeast(u8, entry.name, 1, ".chemc.zon")) {
+                        imgui.text("{s}", .{entry.name});
+                        if (imgui.imageButton(
+                            .fromFmt("{s}", .{entry.name}),
+                            file_thumbnails.get(entry.name) orelse 0,
+                            .{ 100, 100 },
+                            .{},
+                        )) {
+                            maybe_sim_file = try dir_to_browse.openFile(init.io, entry.name, .{ .mode = .read_write });
+                            sim_file_path = try dir_to_browse.realPathFileAlloc(init.io, entry.name, arena);
+
+                            csg_tree = try .initFromFile(init.io, maybe_sim_file.?, arena);
+                            selected_node_handles.clearRetainingCapacity();
+                            selected_node_parents.clearRetainingCapacity();
+                            simulation.csg_dirty = true;
+                            simulation.enable_simulation = false;
+                        }
+                    }
+                }
             }
             imgui.end();
 

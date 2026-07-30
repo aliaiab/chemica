@@ -366,21 +366,19 @@ pub fn image(
     user_texture_id: anytype,
     image_size: [2]f32,
     options: struct {
-        uv0: [2]f32 = .{ 0, 0 },
-        uv1: [2]f32 = .{ 1, 1 },
+        uv0: [2]f32 = .{ 0, 1 },
+        uv1: [2]f32 = .{ 1, 0 },
         tint_col: [4]f32 = .{ 1, 1, 1, 1 },
         border_col: [4]f32 = .{ 0, 0, 0, 0 },
     },
 ) void {
     const imgui_texture_id = userImageToImTextureID(user_texture_id);
 
-    return cimgui.ImGui_Image(
-        imgui_texture_id,
+    return cimgui.ImGui_ImageEx(
+        .{ ._TexID = imgui_texture_id },
         .{ .x = image_size[0], .y = image_size[1] },
         .{ .x = options.uv0[0], .y = options.uv0[1] },
         .{ .x = options.uv1[0], .y = options.uv1[1] },
-        .{ .x = options.tint_col[0], .y = options.tint_col[1], .z = options.tint_col[2], .w = options.tint_col[3] },
-        .{ .x = options.border_col[0], .y = options.border_col[1], .z = options.border_col[2], .w = options.border_col[3] },
     );
 }
 
@@ -390,8 +388,8 @@ pub fn imageButton(
     user_texture_id: anytype,
     image_size: [2]f32,
     options: struct {
-        uv0: [2]f32 = .{ 0, 0 },
-        uv1: [2]f32 = .{ 1, 1 },
+        uv0: [2]f32 = .{ 0, 1 },
+        uv1: [2]f32 = .{ 1, 0 },
         tint_col: [4]f32 = .{ 1, 1, 1, 1 },
         border_col: [4]f32 = .{ 0, 0, 0, 0 },
         flags: ButtonFlags = .{},
@@ -399,15 +397,18 @@ pub fn imageButton(
 ) bool {
     const imgui_texture_id = userImageToImTextureID(user_texture_id);
 
+    var str_id_buf: [128]u8 = undefined;
+
+    const str_id = std.fmt.bufPrintZ(&str_id_buf, "0x{x}", .{id.value}) catch @panic("");
+
     return cimgui.ImGui_ImageButtonEx(
-        @bitCast(id),
-        imgui_texture_id,
+        str_id.ptr,
+        .{ ._TexID = imgui_texture_id },
         .{ .x = image_size[0], .y = image_size[1] },
         .{ .x = options.uv0[0], .y = options.uv0[1] },
         .{ .x = options.uv1[0], .y = options.uv1[1] },
         .{ .x = options.border_col[0], .y = options.border_col[1], .z = options.border_col[2], .w = options.border_col[3] },
         .{ .x = options.tint_col[0], .y = options.tint_col[1], .z = options.tint_col[2], .w = options.tint_col[3] },
-        @bitCast(options.flags),
     );
 }
 
@@ -688,7 +689,7 @@ pub const Id = packed struct(u32) {
     value: u32,
 
     pub fn fromStr(string: []const u8) Id {
-        const value = cimgui.ImGui_GetID_StrStr(string.ptr, string.ptr + string.len);
+        const value = cimgui.ImGui_GetIDStr(string.ptr, string.ptr + string.len);
 
         return .{ .value = value };
     }
@@ -802,10 +803,11 @@ fn userImageToImTextureID(
 
             break :blk @bitCast(user_image);
         },
+        .int => user_image,
         else => @compileError("User image type not allowed! Must be a packed struct or enum"),
     };
 
-    const imgui_tex_id: cimgui.ImTextureID = @ptrFromInt(user_texture_integer);
+    const imgui_tex_id: cimgui.ImTextureID = (user_texture_integer);
 
     return imgui_tex_id;
 }
