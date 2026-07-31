@@ -6,7 +6,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (@import("builtin").os.tag == .linux and @import("builtin").mode == .Debug) {
         //We do this in debug mode so that we can do renderdoc captures
-        //try glfw.initHint(.platform, glfw.Platform.x11);
+        try glfw.initHint(.platform, glfw.Platform.x11);
     }
 
     try glfw.init();
@@ -39,7 +39,7 @@ pub fn main(init: std.process.Init) !void {
 
     _ = imgui.createContext(.{});
 
-    const gpu_context = try gpu.Context.init(arena, window);
+    var gpu_context = try gpu.Context.init(arena, window, init.io);
     defer gpu_context.deinit();
 
     //imgui.getStyle()._MainScale = content_scale;
@@ -47,6 +47,7 @@ pub fn main(init: std.process.Init) !void {
     //imgui.cimgui.ImGui_ScaleWindowsInViewport(@ptrCast(imgui.cimgui.ImGui_GetMainViewport()), 1 / content_scale);
 
     var simulation: Simulation = try .init(
+        &gpu_context,
         arena,
         @bitCast(window.getSize()),
     );
@@ -560,7 +561,7 @@ pub fn main(init: std.process.Init) !void {
 
             var csg_editor_window_pos: [2]f32 = undefined;
 
-            const enable_nfd = true;
+            const enable_nfd = false;
 
             if (imgui.begin("CSG Editor", .{})) {
                 csg_editor_window_pos = @bitCast(imgui.cimgui.ImGui_GetWindowPos());
@@ -888,8 +889,6 @@ pub fn main(init: std.process.Init) !void {
                 camera_rot = -zmath.normalize4(camera_rot);
                 camera_rot[3] = 0;
 
-                std.log.info("win_pos = {any}", .{csg_editor_window_pos});
-
                 if (imguizmo.view.rotate(
                     &camera.eye,
                     &camera_rot,
@@ -930,16 +929,12 @@ pub fn main(init: std.process.Init) !void {
                 const window_size_int = window.getSize();
                 const window_size: [2]f32 = .{ @floatFromInt(window_size_int[0]), @floatFromInt(window_size_int[1]) };
 
-                std.log.info("mouse_pos: {any}", .{mouse_pos});
-                std.log.info("window_size: {any}", .{window_size});
                 var ndc = @Vector(4, f32){
                     (2.0 * mouse_pos[0]) / window_size[0] - 1,
                     1.0 - 2.0 * (mouse_pos[1] / window_size[1]),
                     -1,
                     1,
                 };
-
-                std.log.info("ndc: {any}", .{ndc});
 
                 var ray_origin: @Vector(4, f32) = zmath.mul(
                     inv_proj_view,
@@ -962,7 +957,6 @@ pub fn main(init: std.process.Init) !void {
                     ray_end[1] /= ray_end[3];
                 }
 
-                std.log.info("ray_origin: {}", .{ray_origin});
                 //ray_origin = zmath.normalize3(ray_origin);
 
                 ray_origin[0] = camera.eye[0];
@@ -979,17 +973,12 @@ pub fn main(init: std.process.Init) !void {
                 //ray_direction[1] = -camera.view[2][1];
                 //ray_direction[2] = -camera.view[2][2];
 
-                std.log.info("ray_origin: {}", .{ray_origin});
-                std.log.info("ray_direction: {}", .{ray_direction});
-
                 const maybe_inst = csg_program.rayMarchSDF(
                     .{ ray_origin[0], ray_origin[1], ray_origin[2] },
                     .{ ray_direction[0], ray_direction[1], ray_direction[2] },
                 );
 
                 if (maybe_inst) |inst| {
-                    std.log.info("inst: {}", .{inst});
-
                     if (window.getMouseButton(.left) == .press and !imguizmo.ImGuizmo_IsUsing()) {
                         if (csg_program.instructions_to_nodes.get(inst)) |node| {
                             selected_node_handles.clearRetainingCapacity();
@@ -1470,8 +1459,6 @@ pub const CSGTree = struct {
         parent_handle: CSGTreeNodeHandle,
     ) !void {
         const node = tree.getNode(node_handle);
-
-        std.log.info("compile_node: {any}", .{node.*});
 
         if (node.unary_op != .identity and node_handle != .root) {
             try program.instructions.append(gpa, .{

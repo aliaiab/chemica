@@ -426,9 +426,10 @@ void main() {
         }
 
         in_temperature[index] = min(6000, 300 * (1 / transform_scale) + abs(field.signed_distance) * 600);
+        //in_temperature[index] = 1000;
         //in_temperature[index] = 0;
         //in_temperature[index] = max(0, 1500 + 1000 * transform_scale * sin(-field.signed_distance * 5));
-        //in_temperature[index] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
+        in_temperature[index] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
 
         if (false) {
             float u = argInTurns(transformed_point.x, transformed_point.z);
@@ -437,7 +438,7 @@ void main() {
 
             // float v = 1;
 
-            in_temperature[index] = 273 + 200 + 10000 * (u * v);
+            in_temperature[index] = 273 + 200 + 100 * (u * v);
             // in_temperature[index] = 273 + 200 + 1000 * sin(30 * u);
             // in_temperature[index] = 273;
         }
@@ -446,10 +447,10 @@ void main() {
         in_deviation_buffer[index] = int8_t(position_variation * 255);
     }
     else {
-        if (any(equal(position_int, csg_bounding_min)) || any(equal(position_int, csg_bounding_max))) {
-            // in_voxel_lattice[index] = 1;
-            // float position_variation = random.r;
-            // in_deviation_buffer[index] = int8_t(position_variation * 255);
+        if (false && (any(equal(position_int, csg_bounding_min)) || any(equal(position_int, csg_bounding_max)))) {
+            in_voxel_lattice[index] = uint16_t(1);
+            float position_variation = random.r;
+            in_deviation_buffer[index] = int8_t(position_variation * 255);
         }
         storeVoxel(position_int, 0);
     }

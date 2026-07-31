@@ -27,6 +27,7 @@ renderer_view_type: RendererViewType = .pbr,
 window_size: [2]u32,
 
 pub fn init(
+    context: *gpu.Context,
     arena: std.mem.Allocator,
     window_size: [2]u32,
 ) !Simulation {
@@ -37,7 +38,7 @@ pub fn init(
         .window_size = window_size,
     };
 
-    sim.gpu_sim = try .init(sim, arena);
+    sim.gpu_sim = try .init(context, sim, arena);
 
     return sim;
 }

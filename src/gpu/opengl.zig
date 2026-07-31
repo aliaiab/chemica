@@ -1,18 +1,114 @@
+fn watcherCallback(context: ?*anyopaque, path: [:0]const u8, event: watchers.Event) !void {
+    const watcher_context: *WatcherContext = @ptrCast(@alignCast(context.?));
+
+    switch (event) {
+        .modified => {
+            std.log.info("File was modified! {s}\n", .{path});
+
+            const shader_query = watcher_context.shaders.getPtr(std.fs.path.stem(path)) orelse return;
+
+            const file_path = try std.Io.Dir.cwd().readFileAlloc(
+                watcher_context.io,
+                path,
+                watcher_context.gpa,
+                .unlimited,
+            );
+
+            const actual_file_path = file_path[2 .. file_path.len - 1];
+
+            std.log.info("{s}\n", .{actual_file_path});
+            std.log.info("{any}\n", .{shader_query.*});
+
+            const file_data = try std.Io.Dir.cwd().readFileAlloc(
+                watcher_context.io,
+                actual_file_path,
+                watcher_context.gpa,
+                .unlimited,
+            );
+
+            watcher_context.*.programs.items[shader_query.program_index].sources[shader_query.source_index] = .{
+                .type = shader_query.type,
+                .source_path = try watcher_context.gpa.dupe(u8, actual_file_path),
+            };
+
+            try watcher_context.shader_compile_queue.append(watcher_context.gpa, .{
+                .binary = file_data,
+                .type = shader_query.type,
+                .shader_name = std.fs.path.basename(path),
+            });
+        },
+    }
+}
+
+fn watcherThread(watcher: *watchers.Watcher) !void {
+    try watcher.start(.{});
+}
+
+const watchers = @import("../watchers.zig");
+
+const WatcherContext = struct {
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    shaders: std.StringHashMapUnmanaged(ShaderModule) = .empty,
+    programs: std.ArrayList(ShaderProgram) = .empty,
+    shader_compile_queue: std.ArrayList(struct {
+        shader_name: []const u8,
+        binary: []const u8,
+        type: u32,
+    }) = .empty,
+};
+
+const ShaderModule = struct {
+    shader: u32,
+    type: u32,
+    program_index: u32,
+    source_index: u32,
+};
+
+const ShaderProgram = struct {
+    program: *u32,
+    sources: []ShaderSource,
+};
+
+const Shaders = struct {
+    env_map_shader: u32,
+};
+
 pub const Context = struct {
     window: *glfw.Window,
     env_map_texture: u32,
     env_map_shader: u32,
+    shaders_watcher: *watchers.Watcher,
+    io: std.Io,
+    watcher_context: *WatcherContext,
+    watcher_thread: std.Thread,
+    shaders: *Shaders,
 
-    pub fn init(arena: std.mem.Allocator, window: *glfw.Window) !Context {
+    pub fn init(
+        arena: std.mem.Allocator,
+        window: *glfw.Window,
+        io: std.Io,
+    ) !Context {
         var context: Context = undefined;
 
+        context.io = io;
         context.window = window;
+        context.shaders_watcher = try arena.create(watchers.Watcher);
+        context.watcher_context = try arena.create(WatcherContext);
+        context.watcher_context.* = .{
+            .io = io,
+            .gpa = arena,
+        };
+        context.shaders_watcher.* = try .init(io, arena);
+        context.shaders = try arena.create(Shaders);
 
         const Static = struct {
             pub var proc_table: gl.ProcTable = undefined;
         };
 
         if (!Static.proc_table.init(glfw.getProcAddress)) return error.GLInitFailed;
+
+        context.shaders_watcher.setCallback(watcherCallback, context.watcher_context);
 
         gl.makeProcTableCurrent(&Static.proc_table);
 
@@ -60,22 +156,25 @@ pub const Context = struct {
             env_map_data,
         );
 
-        context.env_map_shader = try loadShaderProgram(arena, &.{
-            .{ .type = gl.VERTEX_SHADER, .binary = @embedFile("EnvMapVertex.spv") },
-            .{ .type = gl.FRAGMENT_SHADER, .binary = @embedFile("EnvMapFragment.spv") },
-        });
+        try context.loadShaderProgram(arena, &.{
+            .{ .type = gl.VERTEX_SHADER, .source_path = "EnvMapVertex.spv" },
+            .{ .type = gl.FRAGMENT_SHADER, .source_path = "EnvMapFragment.spv" },
+        }, &context.env_map_shader);
 
         try imgui.impl.opengl3.init(.{});
         try imgui.impl.glfw.initForOpenGL(window, .{});
+
+        context.watcher_thread = try std.Thread.spawn(.{}, watcherThread, .{context.shaders_watcher});
 
         return context;
     }
 
     pub fn deinit(context: Context) void {
-        _ = context; // autofix
+        context.shaders_watcher.stop();
+        context.watcher_thread.join();
     }
 
-    pub fn beginFrame(context: Context) void {
+    pub fn beginFrame(context: *Context) void {
         gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
 
         gl.ClearColor(0, 0, 0, 1);
@@ -89,15 +188,206 @@ pub const Context = struct {
         gl.Viewport(0, 0, framebuffer_size[0], framebuffer_size[1]);
 
         gl.BindTextureUnit(22, context.env_map_texture);
+
+        while (context.watcher_context.shader_compile_queue.pop()) |entry| {
+            const shader_query = context.watcher_context.shaders.getPtr(entry.shader_name).?;
+
+            context.watcher_context.programs.items[shader_query.program_index].program.* = loadShaderProgramRuntime(
+                context,
+                context.watcher_context.gpa,
+                context.watcher_context.programs.items[shader_query.program_index].sources,
+            ) catch unreachable;
+        }
     }
 
     pub fn endFrame(context: Context) void {
         _ = context; // autofix
     }
+
+    pub fn loadShaderProgram(
+        context: *Context,
+        arena: std.mem.Allocator,
+        comptime sources: []const ShaderSource,
+        program: *u32,
+    ) !void {
+        if (@import("builtin").mode == .Debug) {
+            const actual_sources = try arena.dupe(ShaderSource, sources);
+
+            const program_index: u32 = @intCast(context.watcher_context.programs.items.len);
+
+            try context.watcher_context.programs.append(context.watcher_context.gpa, .{
+                .program = program,
+                .sources = actual_sources,
+            });
+
+            for (sources, actual_sources, 0..) |source, *output_source, i| {
+                const path_path = try std.fs.path.joinZ(arena, &.{ "zig-out/", std.fs.path.stem(source.source_path) });
+
+                const path = try std.Io.Dir.cwd().readFileAllocOptions(
+                    context.io,
+                    path_path,
+                    arena,
+                    .unlimited,
+                    .@"1",
+                    0,
+                );
+
+                try context.watcher_context.shaders.put(context.watcher_context.gpa, std.fs.path.stem(source.source_path), .{
+                    .program_index = program_index,
+                    .shader = 0,
+                    .type = source.type,
+                    .source_index = @intCast(i),
+                });
+
+                try context.shaders_watcher.addFile(path_path);
+
+                output_source.source_path = path[2 .. path.len - 1];
+            }
+
+            program.* = try loadShaderProgramRuntime(context, arena, actual_sources);
+            return;
+        }
+
+        program.* = gl.CreateProgram();
+
+        if (program.* == 0) return error.ProgramCreationFailed;
+
+        var shaders: [8]u32 = undefined;
+
+        const program_index: u32 = @intCast(context.watcher_context.programs.items.len);
+
+        try context.watcher_context.programs.append(context.watcher_context.gpa, .{
+            .program = program,
+            .sources = try arena.dupe(ShaderSource, sources),
+        });
+
+        for (context.watcher_context.programs.items[program_index].sources) |*source| {
+            const path_path = try std.fs.path.join(context.watcher_context.gpa, &.{
+                "zig-out/",
+                std.fs.path.stem(source.source_path),
+            });
+
+            const cache_path = try std.Io.Dir.cwd().readFileAlloc(
+                context.watcher_context.io,
+                path_path,
+                context.watcher_context.gpa,
+                .unlimited,
+            );
+
+            source.source_path = cache_path[2 .. cache_path.len - 1];
+        }
+
+        inline for (sources, 0..) |source, i| {
+            const binary = @embedFile(source.source_path);
+
+            shaders[i] = try loadShader(.{ .binary = binary, .type = source.type });
+
+            const path_file_path = try std.mem.joinZ(arena, &.{}, &.{ "zig-out/", std.fs.path.stem(source.source_path) });
+
+            try context.watcher_context.shaders.put(context.watcher_context.gpa, std.fs.path.stem(source.source_path), .{
+                .program_index = program_index,
+                .shader = shaders[i],
+                .type = source.type,
+                .source_index = i,
+            });
+
+            try context.shaders_watcher.addFile(path_file_path);
+
+            gl.AttachShader(program.*, shaders[i]);
+        }
+
+        gl.LinkProgram(program.*);
+
+        var link_status: i32 = 0;
+
+        gl.GetProgramiv(program.*, gl.LINK_STATUS, @ptrCast(&link_status));
+
+        if (link_status == 0) {
+            var info_log_length: i32 = 0;
+
+            gl.GetProgramiv(
+                program.*,
+                gl.INFO_LOG_LENGTH,
+                @ptrCast(&info_log_length),
+            );
+
+            const info_log = try arena.alloc(u8, @intCast(info_log_length));
+
+            std.log.err(
+                "[OpenGL]: Shader Program failed to link: {s}\n",
+                .{info_log},
+            );
+
+            return error.FailedToLink;
+        }
+
+        for (shaders) |shader| {
+            gl.DetachShader(program.*, shader);
+            gl.DeleteShader(shader);
+        }
+    }
+
+    pub fn loadShaderProgramRuntime(
+        context: *Context,
+        arena: std.mem.Allocator,
+        sources: []const ShaderSource,
+    ) !u32 {
+        const program = gl.CreateProgram();
+
+        if (program == 0) return error.ProgramCreationFailed;
+
+        var shaders: [8]u32 = undefined;
+
+        for (sources, 0..) |source, i| {
+            std.log.info("src_path: {s}\n", .{source.source_path});
+
+            const binary = try std.Io.Dir.cwd().readFileAlloc(
+                context.io,
+                source.source_path,
+                context.watcher_context.gpa,
+                .unlimited,
+            );
+
+            shaders[i] = try loadShader(.{ .binary = binary, .type = source.type });
+
+            gl.AttachShader(program, shaders[i]);
+        }
+
+        gl.LinkProgram(program);
+
+        var link_status: i32 = 0;
+
+        gl.GetProgramiv(program, gl.LINK_STATUS, @ptrCast(&link_status));
+
+        if (link_status == 0) {
+            var info_log_length: i32 = 0;
+
+            gl.GetProgramiv(
+                program,
+                gl.INFO_LOG_LENGTH,
+                @ptrCast(&info_log_length),
+            );
+
+            const info_log = try arena.alloc(u8, @intCast(info_log_length));
+
+            std.log.err(
+                "[OpenGL]: Shader Program failed to link: {s}\n",
+                .{info_log},
+            );
+
+            return error.FailedToLink;
+        }
+
+        for (shaders) |shader| {
+            gl.DetachShader(program, shader);
+            gl.DeleteShader(shader);
+        }
+
+        return program;
+    }
 };
 
 pub const Simulation = struct {
-    renderer_program: u32 = 0,
     vertex_array: u32 = 0,
     vertex_buffer: u32 = 0,
 
@@ -110,10 +400,7 @@ pub const Simulation = struct {
     voxel_materials_buffer: u32 = 0,
     voxel_materials_visual_buffer: u32 = 0,
 
-    simulation_shader: u32 = 0,
-    thermal_shader: u32 = 0,
-    grain_simulation_shader: u32 = 0,
-    fill_region_shader: u32 = 0,
+    shaders: *SimShaders,
 
     point_light_buffer: u32 = 0,
 
@@ -128,46 +415,59 @@ pub const Simulation = struct {
 
     scene_thumbnails: std.StringHashMapUnmanaged(?*Texture) = .empty,
 
+    const SimShaders = struct {
+        renderer_program: u32 = 0,
+        simulation_shader: u32 = 0,
+        thermal_shader: u32 = 0,
+        grain_simulation_shader: u32 = 0,
+        fill_region_shader: u32 = 0,
+
+        old_fill_region_shader: u32 = 0,
+    };
+
     pub fn init(
+        context: *Context,
         sim: @import("../Simulation.zig"),
         arena: std.mem.Allocator,
     ) !Simulation {
-        var gpu_sim: Simulation = .{};
+        var gpu_sim: Simulation = .{
+            .shaders = try arena.create(SimShaders),
+        };
 
-        gpu_sim.renderer_program = try loadShaderProgram(arena, &.{
+        try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.VERTEX_SHADER,
-                .binary = @embedFile("RendererVertex.spv"),
+                .source_path = "RendererVertex.spv",
             },
             .{
                 .type = gl.FRAGMENT_SHADER,
-                .binary = @embedFile("RendererFragment.spv"),
+                .source_path = "RendererFragment.spv",
             },
-        });
-        gpu_sim.simulation_shader = try loadShaderProgram(arena, &.{
+        }, &gpu_sim.shaders.renderer_program);
+        try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("GrainSimulation.spv"),
+                .source_path = "GrainSimulation.spv",
             },
-        });
-        gpu_sim.thermal_shader = try loadShaderProgram(arena, &.{
+        }, &gpu_sim.shaders.simulation_shader);
+        try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("ThermalCompute.spv"),
+                .source_path = "ThermalCompute.spv",
             },
-        });
-        gpu_sim.grain_simulation_shader = try loadShaderProgram(arena, &.{
+        }, &gpu_sim.shaders.thermal_shader);
+        try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("GrainSimulation.spv"),
+                .source_path = "GrainSimulation.spv",
             },
-        });
-        gpu_sim.fill_region_shader = try loadShaderProgram(arena, &.{
+        }, &gpu_sim.shaders.grain_simulation_shader);
+        try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .binary = @embedFile("FillRegion.spv"),
+                .source_path = "FillRegion.spv",
             },
-        });
+        }, &gpu_sim.shaders.fill_region_shader);
 
         gl.CreateVertexArrays(1, @ptrCast(&gpu_sim.vertex_array));
 
@@ -442,8 +742,12 @@ pub const Simulation = struct {
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 22, gpu_sim.point_light_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 32, gpu_sim.heat_measurement_buffer);
 
+        if (sim.gpu_sim.shaders.fill_region_shader != sim.gpu_sim.shaders.old_fill_region_shader) {
+            sim.csg_dirty = true;
+        }
+
         if (!sim.enable_simulation and sim.csg_dirty) {
-            gl.UseProgram(gpu_sim.fill_region_shader);
+            gl.UseProgram(gpu_sim.shaders.fill_region_shader);
 
             sim.csg_dirty = false;
 
@@ -493,7 +797,7 @@ pub const Simulation = struct {
 
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
 
-            gl.UseProgram(gpu_sim.thermal_shader);
+            gl.UseProgram(gpu_sim.shaders.thermal_shader);
             gl.DispatchCompute(
                 sim.width / 8,
                 sim.height / 8,
@@ -501,7 +805,7 @@ pub const Simulation = struct {
             );
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
 
-            gl.UseProgram(gpu_sim.grain_simulation_shader);
+            gl.UseProgram(gpu_sim.shaders.grain_simulation_shader);
             gl.BindBufferBase(
                 gl.SHADER_STORAGE_BUFFER,
                 2,
@@ -570,6 +874,8 @@ pub const Simulation = struct {
                 &sim.measured_heat,
             );
         }
+
+        gpu_sim.shaders.old_fill_region_shader = gpu_sim.shaders.fill_region_shader;
     }
 
     pub fn render(
@@ -649,7 +955,7 @@ pub const Simulation = struct {
         gl.Disable(gl.CULL_FACE);
         gl.DrawArrays(gl.TRIANGLES, 0, 36);
 
-        gl.UseProgram(sim.renderer_program);
+        gl.UseProgram(sim.shaders.renderer_program);
         gl.BindVertexArray(sim.vertex_array);
         gl.CullFace(gl.FRONT);
         defer gl.CullFace(gl.BACK);
@@ -723,59 +1029,13 @@ pub const Simulation = struct {
 
 pub const ShaderSource = struct {
     type: u32 = 0,
-    binary: []const u8,
+    source_path: []const u8,
 };
 
-pub fn loadShaderProgram(
-    arena: std.mem.Allocator,
-    sources: []const ShaderSource,
-) !u32 {
-    const program = gl.CreateProgram();
-
-    if (program == 0) return error.ProgramCreationFailed;
-
-    var shaders: [8]u32 = undefined;
-
-    for (sources, 0..) |source, i| {
-        shaders[i] = try loadShader(source);
-
-        gl.AttachShader(program, shaders[i]);
-    }
-
-    gl.LinkProgram(program);
-
-    var link_status: i32 = 0;
-
-    gl.GetProgramiv(program, gl.LINK_STATUS, @ptrCast(&link_status));
-
-    if (link_status == 0) {
-        var info_log_length: i32 = 0;
-
-        gl.GetProgramiv(
-            program,
-            gl.INFO_LOG_LENGTH,
-            @ptrCast(&info_log_length),
-        );
-
-        const info_log = try arena.alloc(u8, @intCast(info_log_length));
-
-        std.log.err(
-            "[OpenGL]: Shader Program failed to link: {s}\n",
-            .{info_log},
-        );
-
-        return error.FailedToLink;
-    }
-
-    for (shaders) |shader| {
-        gl.DetachShader(program, shader);
-        gl.DeleteShader(shader);
-    }
-
-    return program;
-}
-
-pub fn loadShader(source: ShaderSource) !u32 {
+pub fn loadShader(source: struct {
+    type: u32,
+    binary: []const u8,
+}) !u32 {
     const shader = gl.CreateShader(source.type);
 
     gl.ShaderBinary(

@@ -197,7 +197,7 @@ void main() {
             }
         }
     }
-    #if 0
+    #if 1
     for (int z = 0; z < 2; z++) {
         for (int y = 0; y < 2; y++) {
             for (int x = 0; x < 2; x++) {

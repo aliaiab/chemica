@@ -4,7 +4,9 @@
         2,
         3,
         4,
-    }, .capacity = 4 } },
+        5,
+        6,
+    }, .capacity = 6 } },
     .{
         .transform = .{ .position = .{
             100,
@@ -61,4 +63,32 @@
         .material = 38,
         .name = "Box",
     },
-}, .capacity = 5 } }
+    .{
+        .transform = .{ .position = .{
+            27,
+            88,
+            71,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            12,
+            10,
+            53,
+        } } },
+        .material = 26,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            102,
+            114,
+            54,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            15,
+            10,
+            27,
+        } } },
+        .material = 12,
+        .name = "Box",
+    },
+}, .capacity = 7 } }

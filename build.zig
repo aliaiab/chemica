@@ -59,9 +59,11 @@ pub fn build(b: *std.Build) !void {
         }).module("objc"));
     }
 
-    const nfd = b.dependency("nfd", .{ .target = target, .optimize = optimize });
-    const nfd_mod = nfd.module("nfd");
-    main_module.addImport("nfd", nfd_mod);
+    if (false) {
+        const nfd = b.dependency("nfd", .{ .target = target, .optimize = optimize });
+        const nfd_mod = nfd.module("nfd");
+        main_module.addImport("nfd", nfd_mod);
+    }
 
     main_module.link_libc = true;
 
@@ -104,13 +106,13 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = optimize != .Debug,
     });
 
-    _ = compileShader(b, target, exe, .compute, "src/shaders/ThermalCompute.glsl");
-    _ = compileShader(b, target, exe, .vertex, "src/shaders/RendererVertex.glsl");
-    _ = compileShader(b, target, exe, .fragment, "src/shaders/RendererFragment.glsl");
-    _ = compileShader(b, target, exe, .compute, "src/shaders/FillRegion.glsl");
-    _ = compileShader(b, target, exe, .compute, "src/shaders/GrainSimulation.glsl");
-    _ = compileShader(b, target, exe, .fragment, "src/shaders/EnvMapFragment.glsl");
-    _ = compileShader(b, target, exe, .vertex, "src/shaders/EnvMapVertex.glsl");
+    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/ThermalCompute.glsl");
+    _ = compileShader(b, target, optimize, exe, .vertex, "src/shaders/RendererVertex.glsl");
+    _ = compileShader(b, target, optimize, exe, .fragment, "src/shaders/RendererFragment.glsl");
+    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/FillRegion.glsl");
+    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/GrainSimulation.glsl");
+    _ = compileShader(b, target, optimize, exe, .fragment, "src/shaders/EnvMapFragment.glsl");
+    _ = compileShader(b, target, optimize, exe, .vertex, "src/shaders/EnvMapVertex.glsl");
 
     exe.is_linking_libcpp = true;
 
@@ -120,6 +122,7 @@ pub fn build(b: *std.Build) !void {
 fn compileShader(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
+    mode: std.builtin.OptimizeMode,
     exe_step: *std.Build.Step.Compile,
     shader_type: enum {
         vertex,
@@ -145,6 +148,7 @@ fn compileShader(
         &.{
             "glslangValidator",
             "-G",
+            "-g",
             "-S",
             type_string,
             source,
@@ -156,10 +160,24 @@ fn compileShader(
 
     compile_shader.addFileArg(output_file_path);
 
+    const get_path_step = b.addSystemCommand(&.{
+        "echo",
+    });
+
+    get_path_step.addFileArg(output_file_path);
+    const generated_file = get_path_step.captureStdOut(.{});
+
+    const install_path = b.addInstallFile(generated_file, source_basename);
+
     compile_shader.step.addWatchInput(b.path(source)) catch @panic("oom");
-    exe_step.root_module.addImport(output_path, b.createModule(.{
-        .root_source_file = output_file_path,
-    }));
+
+    if (mode != .Debug) {
+        exe_step.root_module.addImport(output_path, b.createModule(.{
+            .root_source_file = output_file_path,
+        }));
+    }
+
+    exe_step.step.dependOn(&install_path.step);
 
     if (target.result.os.tag == .macos) {
         const msl_output_path = std.mem.concat(b.allocator, u8, &.{
@@ -182,6 +200,9 @@ fn compileShader(
         convert_to_msl.step.addWatchInput(b.path(output_path)) catch @panic("");
         exe_step.step.dependOn(&convert_to_msl.step);
     }
+    b.getInstallStep().dependOn(&compile_shader.step);
+    b.getInstallStep().dependOn(&install_path.step);
+    b.default_step.dependOn(&install_path.step);
 
     exe_step.step.dependOn(&compile_shader.step);
 
