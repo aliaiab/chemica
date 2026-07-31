@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
-#include "Common.glsl"
+#include "common.glsl"
 
 const int KERNEL_SIZE = 8;
 

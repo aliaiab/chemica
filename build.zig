@@ -106,13 +106,13 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = optimize != .Debug,
     });
 
-    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/ThermalCompute.glsl");
-    _ = compileShader(b, target, optimize, exe, .vertex, "src/shaders/RendererVertex.glsl");
-    _ = compileShader(b, target, optimize, exe, .fragment, "src/shaders/RendererFragment.glsl");
-    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/FillRegion.glsl");
-    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/GrainSimulation.glsl");
-    _ = compileShader(b, target, optimize, exe, .fragment, "src/shaders/EnvMapFragment.glsl");
-    _ = compileShader(b, target, optimize, exe, .vertex, "src/shaders/EnvMapVertex.glsl");
+    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/thermal_compute.glsl");
+    _ = compileShader(b, target, optimize, exe, .vertex, "src/shaders/renderer_vertex.glsl");
+    _ = compileShader(b, target, optimize, exe, .fragment, "src/shaders/renderer_fragment.glsl");
+    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/fill_region.glsl");
+    _ = compileShader(b, target, optimize, exe, .compute, "src/shaders/grain_simulation.glsl");
+    _ = compileShader(b, target, optimize, exe, .fragment, "src/shaders/env_map_fragment.glsl");
+    _ = compileShader(b, target, optimize, exe, .vertex, "src/shaders/env_map_vertex.glsl");
 
     exe.is_linking_libcpp = true;
 

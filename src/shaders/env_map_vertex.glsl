@@ -4,7 +4,7 @@
 layout(location = 0) in vec3 inPos;
 layout(location = 0) out vec3 localPos;
 
-#include "Common.glsl"
+#include "common.glsl"
 
 vec3 vertex_positions[36] = vec3[36](
         vec3(-1.0, 1.0, -1.0),

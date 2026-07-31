@@ -1,7 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
-#include "Common.glsl"
+#include "common.glsl"
 
 const int KERNEL_SIZE = 8;
 

@@ -157,8 +157,8 @@ pub const Context = struct {
         );
 
         try context.loadShaderProgram(arena, &.{
-            .{ .type = gl.VERTEX_SHADER, .source_path = "EnvMapVertex.spv" },
-            .{ .type = gl.FRAGMENT_SHADER, .source_path = "EnvMapFragment.spv" },
+            .{ .type = gl.VERTEX_SHADER, .source_path = "env_map_vertex.spv" },
+            .{ .type = gl.FRAGMENT_SHADER, .source_path = "env_map_fragment.spv" },
         }, &context.env_map_shader);
 
         try imgui.impl.opengl3.init(.{});
@@ -437,35 +437,35 @@ pub const Simulation = struct {
         try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.VERTEX_SHADER,
-                .source_path = "RendererVertex.spv",
+                .source_path = "renderer_vertex.spv",
             },
             .{
                 .type = gl.FRAGMENT_SHADER,
-                .source_path = "RendererFragment.spv",
+                .source_path = "renderer_fragment.spv",
             },
         }, &gpu_sim.shaders.renderer_program);
         try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .source_path = "GrainSimulation.spv",
+                .source_path = "grain_simulation.spv",
             },
         }, &gpu_sim.shaders.simulation_shader);
         try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .source_path = "ThermalCompute.spv",
+                .source_path = "thermal_compute.spv",
             },
         }, &gpu_sim.shaders.thermal_shader);
         try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .source_path = "GrainSimulation.spv",
+                .source_path = "grain_simulation.spv",
             },
         }, &gpu_sim.shaders.grain_simulation_shader);
         try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,
-                .source_path = "FillRegion.spv",
+                .source_path = "fill_region.spv",
             },
         }, &gpu_sim.shaders.fill_region_shader);
 
