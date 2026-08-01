@@ -200,7 +200,7 @@ pub const CSGProgram = struct {
         transform: u32,
         instruction: u32,
     } {
-        var distance_stack: [16]f32 = undefined;
+        var distance_stack: [16]f32 = [1]f32{0} ** 16;
         var transform_stack: [16]u32 = undefined;
         var instruction_stack: [16]usize = [1]usize{std.math.maxInt(u32)} ** 16;
 

@@ -185,11 +185,22 @@ pub fn pushId(value: anytype) void {
             cimgui.ImGui_PushIDInt(cint);
         },
         .pointer => {
+            if (@typeInfo(std.meta.Child(T)) == .array) {
+                return pushId(value.*);
+            }
+
             switch (T) {
-                []const u8 => {
+                []const u8, [:0]const u8 => {
                     cimgui.ImGui_PushIDStr(value.ptr, value.ptr + value.len);
                 },
                 else => @compileError("type of value not supported for id creation!"),
+            }
+        },
+        .array => |arr| {
+            if (arr.child == u8) {
+                cimgui.ImGui_PushIDStr(&value, &value[0..value.len][value.len - 1]);
+            } else {
+                @compileError("type of value not supported for id creation!");
             }
         },
         else => @compileError("type of value not supported for id creation!"),
@@ -200,13 +211,15 @@ pub fn popId() void {
     cimgui.ImGui_PopID();
 }
 
+pub const BeginOptions = struct {
+    open: ?*bool = null,
+    flags: WindowFlags = .{},
+    size: ?[2]f32 = null,
+};
+
 pub fn begin(
     name: [:0]const u8,
-    options: struct {
-        open: ?*bool = null,
-        flags: WindowFlags = .{},
-        size: ?[2]f32 = null,
-    },
+    options: BeginOptions,
 ) bool {
     if (options.size) |size| {
         cimgui.ImGui_SetNextWindowSize(.{
@@ -217,8 +230,74 @@ pub fn begin(
     return cimgui.ImGui_Begin(name.ptr, options.open, @bitCast(options.flags));
 }
 
+pub fn beginFmt(
+    comptime format: [:0]const u8,
+    args: anytype,
+    options: BeginOptions,
+) bool {
+    if (options.size) |size| {
+        cimgui.ImGui_SetNextWindowSize(.{
+            .x = size[0],
+            .y = size[1],
+        }, 1);
+    }
+    var fmt_buffer: [std.fmt.count(format, args) + 1]u8 = undefined;
+
+    const name = std.fmt.bufPrintZ(&fmt_buffer, format, args) catch unreachable;
+
+    return cimgui.ImGui_Begin(name.ptr, options.open, @bitCast(options.flags));
+}
+
 pub fn end() void {
+    if (Static.spatial_conditons.pop()) |cond| {
+        if (!cond) {
+            return;
+        }
+    }
+
     return cimgui.ImGui_End();
+}
+
+const Static = struct {
+    pub var spatial_matrix: [4]@Vector(4, f32) = undefined;
+    pub var disable_window: bool = false;
+    pub var spatial_conditons: std.ArrayList(bool) = .empty;
+};
+
+pub fn setSpatialMatrix(matrix: [4]@Vector(4, f32)) void {
+    Static.spatial_matrix = matrix;
+}
+
+pub fn beginSpatial(name: [:0]const u8, options: BeginOptions, position: @Vector(3, f32)) bool {
+    const maybe_screen_pos = worldToScreenPos(
+        position,
+        Static.spatial_matrix,
+        cimgui.ImGui_GetMainViewport(),
+    );
+
+    if (maybe_screen_pos) |pos| {
+        if ((pos[0] > getIO().DisplaySize.x or pos[0] < 0) and (pos[1] > getIO().DisplaySize.y or pos[1] < 0)) {
+            Static.spatial_conditons.append(std.heap.c_allocator, false) catch unreachable;
+
+            return false;
+        }
+
+        cimgui.ImGui_SetNextWindowPos(.{ .x = pos[0], .y = pos[1] }, 1);
+        cimgui.ImGui_SetNextWindowBgAlpha(0.5);
+        defer cimgui.ImGui_BringWindowToDisplayBack(cimgui.ImGui_GetCurrentWindow());
+        var actual_options: BeginOptions = options;
+        actual_options.flags.no_resize = true;
+        actual_options.flags.no_saved_settings = true;
+
+        Static.spatial_conditons.append(std.heap.c_allocator, true) catch unreachable;
+
+        return begin(name, actual_options);
+    } else {
+        Static.spatial_conditons.append(std.heap.c_allocator, false) catch unreachable;
+
+        Static.disable_window = true;
+        return false;
+    }
 }
 
 pub fn setNextWindowBgAlpha(alpha: f32) void {
@@ -251,6 +330,10 @@ pub fn textUnformatted(string: []const u8) void {
 
 pub fn loadIniSettingsFromMemory(ini_data: []const u8) void {
     cimgui.ImGui_LoadIniSettingsFromMemory(ini_data.ptr, ini_data.len);
+}
+
+pub fn loadIniSettingsFromDisk(ini_filename: [:0]const u8) void {
+    cimgui.ImGui_LoadIniSettingsFromDisk(ini_filename.ptr);
 }
 
 pub fn saveIniSettingsToDisk(file_name: [:0]const u8) void {
@@ -1236,5 +1319,55 @@ pub const impl = struct {
     };
 };
 
+pub fn drawLine(
+    model_view_projection: [4]@Vector(4, f32),
+    viewport: *cimgui.ImGuiViewport,
+    line: [2]@Vector(3, f32),
+) void {
+    const p0 = worldToScreenPos(line[0], model_view_projection, viewport) orelse return;
+    const p1 = worldToScreenPos(line[1], model_view_projection, viewport) orelse return;
+
+    const draw_list = cimgui.ImGui_GetBackgroundDrawListEx(viewport);
+
+    cimgui.ImDrawList_AddLineEx(draw_list, .{ .x = p0[0], .y = p0[1] }, .{ .x = p1[0], .y = p1[1] }, 0xffffffff, 2);
+}
+
+///Returns null if world_pos doesn't map to a position on the screen (and should be clipped)
+pub fn worldToScreenPos(
+    world_pos: @Vector(3, f32),
+    matrix: [4]@Vector(4, f32),
+    viewport: *cimgui.ImGuiViewport,
+) ?@Vector(2, f32) {
+    var screen_ndc = zmath.mul(matrix, @Vector(4, f32){ world_pos[0], world_pos[1], world_pos[2], 1 });
+
+    //TODO: use a general line clipping algorithm
+    if (screen_ndc[2] < -screen_ndc[3] or screen_ndc[2] > screen_ndc[3]) {
+        return null;
+    }
+
+    screen_ndc[0] /= screen_ndc[3];
+    screen_ndc[1] /= screen_ndc[3];
+    screen_ndc[2] /= screen_ndc[3];
+
+    screen_ndc += @as(@Vector(4, f32), @splat(1));
+    screen_ndc *= @as(@Vector(4, f32), @splat(0.5));
+
+    var translation: @Vector(2, f32) = .{ screen_ndc[0], screen_ndc[1] };
+
+    translation[1] = 1 - translation[1];
+
+    const screen_width = viewport.Size.x;
+    const screen_height = viewport.Size.y;
+
+    translation[0] *= screen_width;
+    translation[1] *= screen_height;
+
+    translation[0] += viewport.Pos.x;
+    translation[1] += viewport.Pos.y;
+
+    return translation;
+}
+
 pub const cimgui = @import("cimgui");
 const std = @import("std");
+const zmath = @import("zmath");

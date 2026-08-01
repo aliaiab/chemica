@@ -6,89 +6,119 @@
         4,
         5,
         6,
-    }, .capacity = 6 } },
+        7,
+        8,
+    }, .capacity = 8 } },
     .{
         .transform = .{ .position = .{
-            100,
+            95,
             64,
-            50,
+            91,
         } },
         .data = .{ .box = .{ .bounds = .{
-            19,
             10,
-            41,
-        } } },
-        .material = 1,
-        .name = "Box",
-    },
-    .{
-        .transform = .{ .position = .{
-            64,
-            88,
-            64,
-        } },
-        .data = .{ .box = .{ .bounds = .{
-            12,
-            10,
-            53,
-        } } },
-        .material = 26,
-        .name = "Box",
-    },
-    .{
-        .transform = .{ .position = .{
-            64,
-            114,
-            64,
-        } },
-        .data = .{ .box = .{ .bounds = .{
-            15,
-            10,
-            27,
+            14,
+            28,
         } } },
         .material = 12,
         .name = "Box",
     },
     .{
         .transform = .{ .position = .{
-            58,
-            34,
-            84,
+            43,
+            64,
+            102,
         } },
         .data = .{ .box = .{ .bounds = .{
-            15,
             10,
-            27,
+            13,
+            21,
+        } } },
+        .material = 2,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            81,
+            84,
+            42,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            10,
+            10,
         } } },
         .material = 38,
         .name = "Box",
     },
     .{
         .transform = .{ .position = .{
-            27,
-            88,
-            71,
+            107,
+            76,
+            39,
         } },
         .data = .{ .box = .{ .bounds = .{
-            12,
             10,
-            53,
+            25,
+            9,
         } } },
         .material = 26,
         .name = "Box",
     },
     .{
         .transform = .{ .position = .{
-            102,
-            114,
-            54,
+            49,
+            84,
+            65,
         } },
         .data = .{ .box = .{ .bounds = .{
-            15,
             10,
-            27,
+            10,
+            10,
+        } } },
+        .material = 1,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            49,
+            111,
+            56,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            14,
+            28,
         } } },
         .material = 12,
         .name = "Box",
     },
-}, .capacity = 7 } }
+    .{
+        .transform = .{ .position = .{
+            106,
+            76,
+            70,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            25,
+            9,
+        } } },
+        .material = 26,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            74,
+            64,
+            93,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            14,
+            28,
+        } } },
+        .material = 12,
+        .name = "Box",
+    },
+}, .capacity = 9 } }

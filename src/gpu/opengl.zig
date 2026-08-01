@@ -444,12 +444,7 @@ pub const Simulation = struct {
                 .source_path = "renderer_fragment.spv",
             },
         }, &gpu_sim.shaders.renderer_program);
-        try context.loadShaderProgram(arena, &.{
-            .{
-                .type = gl.COMPUTE_SHADER,
-                .source_path = "grain_simulation.spv",
-            },
-        }, &gpu_sim.shaders.simulation_shader);
+
         try context.loadShaderProgram(arena, &.{
             .{
                 .type = gl.COMPUTE_SHADER,

@@ -1,0 +1,65 @@
+.{ .nodes = .{ .items = .{
+    .{ .children = .{ .items = .{4}, .capacity = 1 }, .child_op = .identity },
+    .{
+        .transform = .{ .position = .{
+            9,
+            0,
+            26,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            10,
+            10,
+        } } },
+        .material = 1,
+        .name = "Box",
+        .unary_op = .triangle,
+        .child_op = .identity,
+    },
+    .{
+        .transform = .{ .position = .{
+            -23,
+            0,
+            -6,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            10,
+            10,
+        } } },
+        .material = 1,
+        .name = "Box",
+        .unary_op = .triangle,
+        .child_op = .identity,
+    },
+    .{
+        .transform = .{ .position = .{
+            14,
+            0,
+            -20,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            10,
+            10,
+        } } },
+        .material = 1,
+        .name = "Box",
+        .unary_op = .triangle,
+        .child_op = .identity,
+    },
+    .{
+        .transform = .{ .position = .{
+            65,
+            64,
+            61,
+        } },
+        .children = .{ .items = .{
+            1,
+            2,
+            3,
+        }, .capacity = 3 },
+        .name = "Union",
+        .child_op = .identity,
+    },
+}, .capacity = 5 } }

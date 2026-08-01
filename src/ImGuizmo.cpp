@@ -2725,12 +2725,12 @@ namespace IMGUIZMO_NAMESPACE
          float rotation_sin;
          float rotation_cos;
 
-         #if !__APPLE__
+#if !__APPLE__
          sincosf(-rotation_angle * (1.0 / 2.0f), &rotation_sin, &rotation_cos);
-         #else 
+#else
          rotation_sin = sin(-rotation_angle * (1.0 / 2.0f));
          rotation_cos = cos(-rotation_angle * (1.0 / 2.0f));
-         #endif
+#endif
 
          vec_t quat_vector_part = vec_t{rotation_sin, rotation_sin, rotation_sin, rotation_sin} * rotationAxisLocalSpace;
 

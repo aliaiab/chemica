@@ -59,7 +59,7 @@ pub fn build(b: *std.Build) !void {
         }).module("objc"));
     }
 
-    if (false) {
+    if (true) {
         const nfd = b.dependency("nfd", .{ .target = target, .optimize = optimize });
         const nfd_mod = nfd.module("nfd");
         main_module.addImport("nfd", nfd_mod);

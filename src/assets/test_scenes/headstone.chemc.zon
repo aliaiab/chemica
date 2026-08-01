@@ -1,17 +1,13 @@
 .{ .nodes = .{ .items = .{
-    .{ .children = .{ .items = .{
-        1,
-        2,
-        3,
-    }, .capacity = 3 } },
+    .{ .children = .{ .items = .{9}, .capacity = 1 } },
     .{
         .transform = .{ .position = .{
-            64,
-            64,
-            64,
+            -0.66666603,
+            -12,
+            0,
         } },
         .data = .{ .box = .{ .bounds = .{
-            20,
+            22,
             13,
             28,
         } } },
@@ -20,9 +16,9 @@
     },
     .{
         .transform = .{ .position = .{
-            64,
-            71,
-            64,
+            0.33333397,
+            0,
+            0,
         } },
         .data = .{ .box = .{ .bounds = .{
             17,
@@ -34,16 +30,155 @@
     },
     .{
         .transform = .{ .position = .{
-            64,
-            83,
-            64,
+            0.33333397,
+            12,
+            0,
         } },
         .data = .{ .box = .{ .bounds = .{
-            11,
-            29,
+            10,
+            31,
             19,
         } } },
         .material = 24,
         .name = "Box",
     },
-}, .capacity = 4 } }
+    .{
+        .transform = .{ .position = .{
+            0.33333588,
+            0,
+            0,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            17,
+            13,
+            22,
+        } } },
+        .material = 1,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            0.33333588,
+            12,
+            0,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            31,
+            19,
+        } } },
+        .material = 24,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            -0.6666641,
+            -12,
+            0,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            22,
+            13,
+            28,
+        } } },
+        .material = 1,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            99,
+            45,
+            82,
+        } },
+        .children = .{ .items = .{
+            2,
+            3,
+            1,
+        }, .capacity = 3 },
+        .name = "Union",
+    },
+    .{
+        .transform = .{ .position = .{
+            51,
+            45,
+            73,
+        } },
+        .children = .{ .items = .{
+            5,
+            6,
+            4,
+        }, .capacity = 3 },
+        .name = "Union",
+    },
+    .{
+        .transform = .{ .position = .{
+            70.666664,
+            74,
+            94,
+        } },
+        .children = .{ .items = .{
+            8,
+            7,
+            10,
+        }, .capacity = 3 },
+        .name = "Union",
+    },
+    .{
+        .transform = .{ .position = .{
+            51,
+            45,
+            73,
+        } },
+        .children = .{ .items = .{
+            11,
+            12,
+            13,
+            11,
+            12,
+            13,
+        }, .capacity = 6 },
+        .name = "Union",
+    },
+    .{
+        .transform = .{ .position = .{
+            0.33333588,
+            12,
+            0,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            10,
+            31,
+            19,
+        } } },
+        .material = 24,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            -0.6666641,
+            -12,
+            0,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            22,
+            13,
+            28,
+        } } },
+        .material = 1,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            0.33333588,
+            0,
+            0,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            17,
+            13,
+            22,
+        } } },
+        .material = 1,
+        .name = "Box",
+    },
+}, .capacity = 14 } }
