@@ -8,12 +8,13 @@
         6,
         7,
         8,
-    }, .capacity = 8 } },
+        9,
+    }, .capacity = 9 } },
     .{
         .transform = .{ .position = .{
-            95,
+            82,
             64,
-            91,
+            67,
         } },
         .data = .{ .box = .{ .bounds = .{
             10,
@@ -25,9 +26,9 @@
     },
     .{
         .transform = .{ .position = .{
-            43,
+            54,
             64,
-            102,
+            91,
         } },
         .data = .{ .box = .{ .bounds = .{
             10,
@@ -81,13 +82,13 @@
     },
     .{
         .transform = .{ .position = .{
-            49,
-            111,
-            56,
+            42,
+            101,
+            82,
         } },
         .data = .{ .box = .{ .bounds = .{
             10,
-            14,
+            16,
             28,
         } } },
         .material = 12,
@@ -109,16 +110,30 @@
     },
     .{
         .transform = .{ .position = .{
-            74,
-            64,
+            99,
             93,
+            90,
         } },
         .data = .{ .box = .{ .bounds = .{
-            10,
+            9,
             14,
             28,
         } } },
         .material = 12,
         .name = "Box",
     },
-}, .capacity = 9 } }
+    .{
+        .transform = .{ .position = .{
+            99,
+            52,
+            90,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            9,
+            14,
+            28,
+        } } },
+        .material = 12,
+        .name = "Box",
+    },
+}, .capacity = 10 } }

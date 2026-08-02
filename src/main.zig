@@ -6,7 +6,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (@import("builtin").os.tag == .linux and @import("builtin").mode == .Debug) {
         //We do this in debug mode so that we can do renderdoc captures
-        //try glfw.initHint(.platform, glfw.Platform.x11);
+        try glfw.initHint(.platform, glfw.Platform.x11);
     }
 
     try glfw.init();
@@ -602,7 +602,7 @@ pub fn main(init: std.process.Init) !void {
 
             var csg_editor_window_pos: [2]f32 = undefined;
 
-            const enable_nfd = true;
+            const enable_nfd = false;
 
             if (imgui.begin("CSG Editor", .{})) {
                 csg_editor_window_pos = @bitCast(imgui.cimgui.ImGui_GetWindowPos());

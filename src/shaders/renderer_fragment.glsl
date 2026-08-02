@@ -192,7 +192,7 @@ float raycastChunks(
     float res = -1;
     vec3 mm = vec3(0);
 
-    uvec3 size_in_chunks = uSize / CHUNK_SIZE;
+    uvec3 size_in_chunks = uvec3(chunk_grid_size) / CHUNK_SIZE;
 
     for (int i = 0; i < size_in_chunks.x + size_in_chunks.y + size_in_chunks.z; i++) {
         uvec3 position = uvec3(pos + 0.5);
@@ -292,7 +292,8 @@ float raycastVoxelsOld(
     in vec3 rd,
     out vec3 oVos,
     out vec3 oDir,
-    out uint voxel_index
+    out uint voxel_material,
+    out ivec3 voxel_heap_pos
 ) {
     vec3 pos = floor(ro);
     vec3 ri = length(rd) / rd;
@@ -308,28 +309,25 @@ float raycastVoxelsOld(
 
         if (!isInBoundsInclusive(ivec3(position))) {
             res = -1;
-            voxel_index = 0;
+            voxel_material = 0;
             break;
         }
 
         uint index = position.x + uSize.x * position.y + uSize.x * uSize.y * position.z;
-        uint type = uVoxelMaterials[index];
-
-        /*
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        if (position.y > index % (uSize.x * uSize.z)) {
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            res = -1;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            voxel_index = 0;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            break;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        */
+        uint type = 0;
 
         if (false) {
+            voxel_heap_pos = voxelWorldPosToHeapPos(ivec3(position));
+
             type = loadVoxelMaterial(ivec3(position));
+        }
+        else {
+            type = uVoxelMaterials[index];
         }
 
         if (type != medium_material) {
             res = 1.0;
-            voxel_index = index;
+            voxel_material = type;
             break;
         }
 
@@ -358,10 +356,11 @@ float raycast(
     in vec3 rd,
     out vec3 oVos,
     out vec3 oDir,
-    out uint voxel_index
+    out uint voxel_material,
+    out ivec3 voxel_heap_pos
 ) {
     if (true) {
-        return raycastVoxelsOld(medium_material, ro, rd, oVos, oDir, voxel_index);
+        return raycastVoxelsOld(medium_material, ro, rd, oVos, oDir, voxel_material, voxel_heap_pos);
     }
 
     vec3 ray_origin = ro;
@@ -373,8 +372,8 @@ float raycast(
         float chunk_t = raycastChunks(ray_origin, rd, ray_origin, chunk_dir, chunk_index);
 
         if (chunk_t > 0) {
-            ray_origin += chunk_t * rd;
-            float voxel_t = raycastVoxels(chunk_index, medium_material, ray_origin, rd, oVos, oDir, voxel_index);
+            ray_origin += rd * chunk_t;
+            float voxel_t = raycastVoxels(chunk_index, medium_material, ray_origin, rd, oVos, oDir, voxel_material);
 
             if (voxel_t > 0) {
                 return voxel_t;
@@ -400,7 +399,8 @@ vec3 computeLightRadiance(
 
     for (int i = 0; i < 10; i++) {
         vec3 def_dir;
-        uint voxel_index;
+        uint voxel_material;
+        ivec3 voxel_heap_pos;
 
         float light_occlusion = raycast(
                 medium_material,
@@ -408,12 +408,13 @@ vec3 computeLightRadiance(
                 ray_direction,
                 ray_origin,
                 def_dir,
-                voxel_index
+                voxel_material,
+                voxel_heap_pos
             );
 
         if (light_occlusion > 0) {
-            vec4 albedo = unpackUnorm4x8(voxel_materials_visual[uVoxelMaterials[voxel_index]].albedo);
-            medium_material = voxel_index;
+            vec4 albedo = unpackUnorm4x8(voxel_materials_visual[voxel_material].albedo);
+            medium_material = voxel_material;
 
             if (albedo.a < 1.0) {
                 out_radiance.rgb *= albedo.rgb * (1 - albedo.a);
@@ -465,7 +466,8 @@ vec4 computeVoxelLight(
     vec3 out_ray_direction,
     float ray_cast_t,
     //TODO: just sample this on the fly
-    uint voxel_index,
+    uint voxel_material,
+    ivec3 voxel_heap_pos,
     uint medium_material
 ) {
     vec3 normal = -out_ray_direction * sign(ray_direction);
@@ -490,6 +492,7 @@ vec4 computeVoxelLight(
     }
     ivec3 trangent_1 = ivec3(cross(vec3(tangent_0), normal));
 
+    #if 0
     {
         vec3 vos = pos;
         vec3 dir = sign(ray_direction);
@@ -539,17 +542,18 @@ vec4 computeVoxelLight(
         ambient_occlusion = calcOcc(uv, va, vb, vc, vd);
         ambient_occlusion = 1;
     }
+    #endif
 
-    float voxel_deviation = float(out_deviation_buffer[voxel_index]) / 255;
+    float voxel_deviation = float(loadVoxelDeviation(voxel_heap_pos).r) / 255;
 
     float position_variation = (voxel_deviation) * 0.1;
-    vec4 raw_color = unpackUnorm4x8(voxel_materials_visual[uVoxelMaterials[voxel_index]].albedo);
+    vec4 raw_color = unpackUnorm4x8(voxel_materials_visual[voxel_material].albedo);
     raw_color.rgb = pow(raw_color.rgb, vec3(2.2));
 
     vec4 albedo_vec4 = vec4(0.5 * (raw_color.rgb + raw_color.rgb * position_variation), raw_color.a) + vec4(0);
     vec3 albedo = albedo_vec4.xyz;
 
-    uint roughness_metalness_packed = voxel_materials_visual[uVoxelMaterials[voxel_index]].roughness_metalness;
+    uint roughness_metalness_packed = voxel_materials_visual[voxel_material].roughness_metalness;
     vec4 roughness_metalness = unpackUnorm4x8(roughness_metalness_packed);
     float roughness = roughness_metalness.r + position_variation * 1;
     float metallic = roughness_metalness.g + position_variation * 1;
@@ -559,7 +563,9 @@ vec4 computeVoxelLight(
 
     vec3 out_radiance = vec3(0);
 
-    out_radiance += spectrum(uVoxelTemperatures[voxel_index]);
+    float voxel_temperature = loadVoxelTemperature(voxel_heap_pos);
+
+    out_radiance += spectrum(voxel_temperature);
 
     for (int i = 0; i < point_lights.length(); i++) {
         PointLight point_light = point_lights[i];
@@ -638,7 +644,7 @@ vec4 computeVoxelLight(
         }
         case RENDERER_MODE_MATERIAL:
         {
-            uint material = uVoxelMaterials[voxel_index];
+            uint material = voxel_material;
             final_radiance = vec3(float(material % 2), float(material % 3), float(material % 4));
             break;
         }
@@ -654,7 +660,7 @@ vec4 computeVoxelLight(
         }
         case RENDERER_MODE_TEMPERATURE:
         {
-            final_radiance = getTemperatureVisColour(uVoxelTemperatures[voxel_index]);
+            final_radiance = getTemperatureVisColour(voxel_temperature);
             break;
         }
         default:
@@ -696,7 +702,6 @@ void main()
 {
     vec3 vos;
     vec3 dir;
-    uint voxel_index;
 
     vec3 eye = vIn.eye;
     vec3 end_pos = vIn.position;
@@ -730,6 +735,9 @@ void main()
     vec3 hit_position = vec3(0);
     float refractive_index = 1;
 
+    uint voxel_material;
+    ivec3 voxel_heap_pos;
+
     for (int i = 0; i < 10; i++) {
         float ray_cast_t = raycast(
                 medium_material,
@@ -737,7 +745,8 @@ void main()
                 ray_direction,
                 vos,
                 dir,
-                voxel_index
+                voxel_material,
+                voxel_heap_pos
             );
 
         if (ray_cast_t > 0) {
@@ -752,7 +761,8 @@ void main()
                     vos,
                     dir,
                     ray_cast_t,
-                    voxel_index,
+                    voxel_material,
+                    voxel_heap_pos,
                     medium_material
                 );
 
@@ -764,7 +774,7 @@ void main()
 
             vec3 reflected_dir = reflect(ray_direction, normal);
 
-            float reflectivity = voxel_materials_visual[uVoxelMaterials[voxel_index]].reflectivity;
+            float reflectivity = voxel_materials_visual[voxel_material].reflectivity;
 
             if (reflectivity > 0) {
                 float t = raycast(
@@ -773,7 +783,8 @@ void main()
                         normalize(reflected_dir),
                         vos,
                         dir,
-                        voxel_index
+                        voxel_material,
+                        voxel_heap_pos
                     );
 
                 //sky colour
@@ -789,7 +800,8 @@ void main()
                             vos,
                             dir,
                             t,
-                            voxel_index,
+                            voxel_material,
+                            voxel_heap_pos,
                             medium_material
                         );
                 }
@@ -799,7 +811,7 @@ void main()
 
             total_radiance += voxel_radiance * (1 - total_radiance.a);
 
-            medium_material = uVoxelMaterials[voxel_index];
+            medium_material = voxel_material;
             ray_origin = pos;
 
             if (voxel_radiance.a >= 1) {

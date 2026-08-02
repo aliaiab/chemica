@@ -120,6 +120,7 @@ pub const Context = struct {
         gl.DepthMask(1);
         gl.DepthFunc(gl.LESS);
         gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.DebugMessageCallback(debugCallback, null);
 
         var env_map_width: c_int = 0;
         var env_map_height: c_int = 0;
@@ -379,11 +380,34 @@ pub const Context = struct {
         }
 
         for (shaders) |shader| {
-            gl.DetachShader(program, shader);
-            gl.DeleteShader(shader);
+            _ = shader; // autofix
+            //gl.DetachShader(program, shader);
+            //gl.DeleteShader(shader);
         }
 
         return program;
+    }
+
+    fn debugCallback(
+        source: u32,
+        @"type": u32,
+        id: u32,
+        severity: u32,
+        length: i32,
+        message: [*:0]const u8,
+        userParam: ?*const anyopaque,
+    ) callconv(.c) void {
+        _ = source; // autofix
+        _ = id; // autofix
+        _ = length; // autofix
+        _ = userParam; // autofix
+        if (severity == gl.DEBUG_SEVERITY_HIGH or severity == gl.DEBUG_SEVERITY_MEDIUM) {
+            std.debug.print("[OpenGL]: {s}\n", .{message});
+
+            if (@"type" != gl.DEBUG_TYPE_PERFORMANCE) {
+                @panic("");
+            }
+        }
     }
 };
 
@@ -412,6 +436,21 @@ pub const Simulation = struct {
     csg_instructions_extrude_post_buffer: u32 = 0,
     csg_transform_buffer: u32 = 0,
     csg_composite_material_buffer: u32 = 0,
+
+    voxel_allocator_bins_buffer: u32 = 0,
+    voxel_pallete_memory_buffer: u32 = 0,
+    voxel_pallete_counters_buffer: u32 = 0,
+    voxel_bit_buffer_memory_buffer: u32 = 0,
+    voxel_temperature_memory_buffer: u32 = 0,
+    voxel_allocator_buffer: u32 = 0,
+    voxel_chunks_buffer: u32 = 0,
+
+    voxel_bit_buffer_memory_texture: u32 = 0,
+    voxel_chunk_allocations_texture: u32 = 0,
+    voxel_chunk_positions_texture: u32 = 0,
+
+    voxel_heap_bit_buffer: u32 = 0,
+    voxel_positions_buffer: u32 = 0,
 
     scene_thumbnails: std.StringHashMapUnmanaged(?*Texture) = .empty,
 
@@ -484,13 +523,147 @@ pub const Simulation = struct {
         gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_materials_visual_buffer));
         gl.CreateBuffers(1, @ptrCast(&gpu_sim.point_light_buffer));
 
-        // gl.CreateBuffers(1, &voxel_allocator_bins_buffer);
-        // gl.CreateBuffers(1, &voxel_pallete_memory_buffer);
-        // gl.CreateBuffers(1, &voxel_pallete_counters_buffer);
-        // gl.CreateBuffers(1, &voxel_bit_buffer_memory_buffer);
-        // gl.CreateBuffers(1, &voxel_temperature_memory_buffer);
-        // gl.CreateBuffers(1, &voxel_allocator_buffer);
-        // gl.CreateBuffers(1, &voxel_chunks_buffer);
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_allocator_bins_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_pallete_memory_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_pallete_counters_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_temperature_memory_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_allocator_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_chunks_buffer));
+
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_heap_bit_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_positions_buffer));
+
+        gl.NamedBufferStorage(
+            gpu_sim.voxel_heap_bit_buffer,
+            @sizeOf(u32) * 16 * 16 * 16 * 16 * 16 * 16,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.voxel_positions_buffer,
+            @sizeOf(u32) * 16 * 16 * 16,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateTextures(gl.TEXTURE_3D, 1, @ptrCast(&gpu_sim.voxel_bit_buffer_memory_texture));
+        gl.CreateTextures(gl.TEXTURE_3D, 1, @ptrCast(&gpu_sim.voxel_chunk_allocations_texture));
+        gl.CreateTextures(gl.TEXTURE_3D, 1, @ptrCast(&gpu_sim.voxel_chunk_positions_texture));
+
+        const brick_map_width = 16;
+
+        gl.TextureStorage3D(
+            gpu_sim.voxel_bit_buffer_memory_texture,
+            1,
+            gl.R32UI,
+            16 * brick_map_width,
+            16 * brick_map_width,
+            16 * brick_map_width,
+        );
+
+        gl.TextureStorage3D(
+            gpu_sim.voxel_chunk_allocations_texture,
+            1,
+            gl.R32UI,
+            brick_map_width,
+            brick_map_width,
+            brick_map_width,
+        );
+
+        gl.TextureStorage3D(
+            gpu_sim.voxel_chunk_positions_texture,
+            1,
+            gl.R32UI,
+            brick_map_width,
+            brick_map_width,
+            brick_map_width,
+        );
+
+        const VoxelAllocatorBins = extern struct {
+            voxel_allocator_bin: [15]i32 = [1]i32{-1} ** 15,
+            allocators_bump: u32 = 0,
+            voxel_temperature_bump: u32 = 0,
+            voxel_pallete_bump: u32 = 0,
+            voxel_pallete_counters_bump: u32 = 0,
+            voxel_bit_buffer_bump: u32 = 0,
+            input_chunk_grid: u32 = 0,
+            padding: [3]u32 = undefined,
+            chunk_grid_size: [3]u32 = undefined,
+            allocation_lock: u32 = 0,
+        };
+
+        const VoxelChunkAllocator = extern struct {
+            next_allocator: i32,
+            pallete_memory_start: u32,
+            pallete_counters_start: u32,
+            bit_buffer_start: u32,
+            temperature_buffer_start: u32,
+            deviation_buffer_start: u32,
+            memory_allocated_bits: u32,
+        };
+
+        const voxel_allocator_bins: VoxelAllocatorBins = .{
+            .chunk_grid_size = .{ 64, 64, 64 },
+        };
+
+        gl.NamedBufferStorage(
+            gpu_sim.voxel_allocator_bins_buffer,
+            @sizeOf(VoxelAllocatorBins),
+            &voxel_allocator_bins,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.voxel_allocator_buffer,
+            @sizeOf(VoxelChunkAllocator) * 128,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.voxel_pallete_memory_buffer,
+            @sizeOf(u16) * 64 * 64 * 64 * 8,
+            null,
+            0,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.voxel_pallete_counters_buffer,
+            @sizeOf(u32) * 64 * 64 * 64,
+            null,
+            0,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.voxel_temperature_memory_buffer,
+            @sizeOf(f32) * 16 * 64 * 64 * 64,
+            null,
+            0,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.voxel_chunks_buffer,
+            @sizeOf(u64) * 64 * 64 * 64,
+            null,
+            0,
+        );
+
+        const VoxelChunksAllocation = extern struct {
+            allocation: u32,
+            bit_count: u32,
+        };
+
+        gl.ClearNamedBufferData(
+            gpu_sim.voxel_chunks_buffer,
+            gl.RG32UI,
+            gl.RG,
+            gl.UNSIGNED_INT,
+            &VoxelChunksAllocation{
+                .allocation = std.math.maxInt(u32),
+                .bit_count = 0,
+            },
+        );
 
         gl.VertexArrayVertexBuffer(
             gpu_sim.vertex_array,
@@ -612,21 +785,21 @@ pub const Simulation = struct {
             gpu_sim.voxel_materials_buffer,
             @intCast(@sizeOf(VoxelMaterial) * sim.voxel_materials.items.len),
             sim.voxel_materials.items.ptr,
-            gl.DYNAMIC_STORAGE_BIT,
+            gl.DYNAMIC_READ,
         );
 
         gl.NamedBufferData(
             gpu_sim.voxel_materials_visual_buffer,
             @intCast(@sizeOf(VoxelMaterialVisual) * sim.voxel_materials_visual.items.len),
             sim.voxel_materials_visual.items.ptr,
-            gl.DYNAMIC_STORAGE_BIT,
+            gl.DYNAMIC_READ,
         );
 
         gl.NamedBufferData(
             gpu_sim.uniform_buffer,
             @sizeOf(ShaderUniforms),
             null,
-            gl.DYNAMIC_DRAW,
+            gl.DYNAMIC_READ,
         );
 
         return gpu_sim;
@@ -737,6 +910,45 @@ pub const Simulation = struct {
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 22, gpu_sim.point_light_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 32, gpu_sim.heat_measurement_buffer);
 
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 24, gpu_sim.voxel_pallete_memory_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 31, gpu_sim.voxel_pallete_counters_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 26, gpu_sim.voxel_temperature_memory_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 27, gpu_sim.voxel_allocator_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 28, gpu_sim.voxel_allocator_bins_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 29, gpu_sim.voxel_chunks_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 35, gpu_sim.voxel_heap_bit_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 36, gpu_sim.voxel_positions_buffer);
+
+        std.debug.assert(gl.IsTexture(gpu_sim.voxel_bit_buffer_memory_texture) != 0);
+
+        gl.BindImageTexture(
+            0,
+            gpu_sim.voxel_bit_buffer_memory_texture,
+            0,
+            0,
+            0,
+            gl.READ_WRITE,
+            gl.R32UI,
+        );
+        gl.BindImageTexture(
+            1,
+            gpu_sim.voxel_chunk_allocations_texture,
+            0,
+            0,
+            0,
+            gl.READ_WRITE,
+            gl.R32UI,
+        );
+        gl.BindImageTexture(
+            2,
+            gpu_sim.voxel_chunk_positions_texture,
+            0,
+            0,
+            0,
+            gl.READ_WRITE,
+            gl.R32UI,
+        );
+
         if (sim.gpu_sim.shaders.fill_region_shader != sim.gpu_sim.shaders.old_fill_region_shader) {
             sim.csg_dirty = true;
         }
@@ -779,6 +991,7 @@ pub const Simulation = struct {
             );
         }
 
+        gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT);
         gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
 
         if (sim.enable_simulation) {
@@ -835,6 +1048,7 @@ pub const Simulation = struct {
                 sim.depth / 8,
             );
 
+            gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT);
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
 
             gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, 0);
@@ -913,6 +1127,17 @@ pub const Simulation = struct {
             sim.point_light_buffer,
         );
 
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 24, sim.voxel_pallete_memory_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 31, sim.voxel_pallete_counters_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 25, sim.voxel_bit_buffer_memory_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 26, sim.voxel_temperature_memory_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 27, sim.voxel_allocator_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 28, sim.voxel_allocator_bins_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 29, sim.voxel_chunks_buffer);
+
+        gl.BindTextureUnit(10, sim.voxel_bit_buffer_memory_texture);
+        gl.BindTextureUnit(11, sim.voxel_chunk_positions_texture);
+
         gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
         var framebuffer: u32 = 0;
@@ -951,6 +1176,7 @@ pub const Simulation = struct {
         gl.DrawArrays(gl.TRIANGLES, 0, 36);
 
         gl.UseProgram(sim.shaders.renderer_program);
+
         gl.BindVertexArray(sim.vertex_array);
         gl.CullFace(gl.FRONT);
         defer gl.CullFace(gl.BACK);
