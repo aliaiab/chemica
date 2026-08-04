@@ -224,10 +224,7 @@ pub fn main(init: std.process.Init) !void {
     csg_tree = try .initFromZonMemory(@embedFile("assets/test_scenes/metal_spheres.chemc.zon"), arena);
 
     var selected_node_handles: std.ArrayList(CSGTreeNodeHandle) = .empty;
-    var node_parents: std.ArrayList(CSGTreeNodeHandle) = .empty;
-    var selected_node_parents: std.ArrayList(std.ArrayList(CSGTreeNodeHandle)) = .empty;
     var copied_node_handles: std.ArrayList(CSGTreeNodeHandle) = .empty;
-    var copied_node_parents: std.ArrayList(std.ArrayList(CSGTreeNodeHandle)) = .empty;
 
     var csg_program: Simulation.CSGProgram = .{};
 
@@ -319,6 +316,8 @@ pub fn main(init: std.process.Init) !void {
 
     imgui.getIO().WantSaveIniSettings = false;
     imgui.getIO().IniSavingRate = 0;
+
+    var render_sdf_raymarched: bool = false;
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
@@ -440,7 +439,13 @@ pub fn main(init: std.process.Init) !void {
 
         enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
 
-        simulation.render(gpu_context, null);
+        simulation.render(
+            gpu_context,
+            null,
+            .{
+                .render_sdf_raymarched = render_sdf_raymarched,
+            },
+        );
 
         if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Space)) {
             simulation.enable_simulation = !simulation.enable_simulation;
@@ -467,9 +472,6 @@ pub fn main(init: std.process.Init) !void {
                     );
 
                     _ = selected_node_handles.swapRemove(i);
-                    if (selected_node_parents.items.len != 0) {
-                        _ = selected_node_parents.swapRemove(i);
-                    }
 
                     simulation.csg_dirty = true;
                 }
@@ -576,7 +578,6 @@ pub fn main(init: std.process.Init) !void {
                     try csg_tree.moveNode(
                         arena,
                         selected_node_handle,
-                        .root,
                         union_node_handle,
                     );
                 }
@@ -613,7 +614,6 @@ pub fn main(init: std.process.Init) !void {
                         if (imgui.menuItem("New", .{})) {
                             csg_tree.nodes.deinit(arena);
                             selected_node_handles.clearRetainingCapacity();
-                            selected_node_parents.clearRetainingCapacity();
                             csg_tree = try .init(arena);
                             csg_program.instructions.clearRetainingCapacity();
                             simulation.csg_dirty = true;
@@ -635,7 +635,6 @@ pub fn main(init: std.process.Init) !void {
                                     }
 
                                     selected_node_handles.clearRetainingCapacity();
-                                    selected_node_parents.clearRetainingCapacity();
 
                                     csg_program.instructions.clearRetainingCapacity();
 
@@ -772,7 +771,6 @@ pub fn main(init: std.process.Init) !void {
                         simulation.csg_dirty = true;
 
                         try selected_node_handles.append(arena, node_handle);
-                        try selected_node_parents.append(arena, .empty);
                     }
 
                     if (imgui.selectable("Sphere")) {
@@ -795,7 +793,6 @@ pub fn main(init: std.process.Init) !void {
                         simulation.csg_dirty = true;
 
                         try selected_node_handles.append(arena, node_handle);
-                        try selected_node_parents.append(arena, .empty);
                     }
 
                     imgui.endPopup();
@@ -803,23 +800,18 @@ pub fn main(init: std.process.Init) !void {
 
                 const root_node = csg_tree.getNode(.root);
 
-                node_parents.clearRetainingCapacity();
-
                 for (root_node.children.items) |child| {
                     const selected = try imGuiCSGTreeNode(
                         csg_tree,
                         arena,
                         .root,
                         child,
-                        &node_parents,
                         &selected_node_handles,
-                        &selected_node_parents,
                         &csg_reparent_commands,
                     );
 
                     if (selected) {
                         try selected_node_handles.append(arena, child);
-                        try selected_node_parents.append(arena, .empty);
                     }
                 }
 
@@ -878,6 +870,7 @@ pub fn main(init: std.process.Init) !void {
 
             if (imgui.begin("Renderer", .{})) {
                 _ = imgui.valueEdit("Mode", &simulation.renderer_view_type, .{});
+                _ = imgui.checkbox("Render Continous SDF", &render_sdf_raymarched);
 
                 imgui.text("Performance Stats", .{});
 
@@ -937,9 +930,7 @@ pub fn main(init: std.process.Init) !void {
 
                             csg_tree = try .initFromFile(init.io, maybe_sim_file.?, arena);
                             selected_node_handles.clearRetainingCapacity();
-                            selected_node_parents.clearRetainingCapacity();
                             simulation.csg_dirty = true;
-                            simulation.enable_simulation = false;
                         }
                     }
                 }
@@ -961,7 +952,6 @@ pub fn main(init: std.process.Init) !void {
                         //TODO: make a deep copy
                         csg_tree = sample_scene;
                         selected_node_handles.clearRetainingCapacity();
-                        selected_node_parents.clearRetainingCapacity();
                         simulation.csg_dirty = true;
                         simulation.enable_simulation = false;
                     }
@@ -1010,12 +1000,11 @@ pub fn main(init: std.process.Init) !void {
 
             if (window.getKey(.left_control) != .release and window.getKey(.c) == .press) {
                 copied_node_handles = try selected_node_handles.clone(arena);
-                copied_node_parents = try selected_node_parents.clone(arena);
             }
 
             if (imgui.isKeyDown(imgui.cimgui.ImGuiKey_LeftCtrl) and imgui.isKeyPressed(imgui.cimgui.ImGuiKey_V)) {
-                for (copied_node_handles.items, copied_node_parents.items) |copied_node, parents| {
-                    _ = try csg_tree.copyNode(arena, copied_node, if (parents.items.len == 0) .root else parents.getLast());
+                for (copied_node_handles.items) |copied_node| {
+                    _ = try csg_tree.copyNode(arena, copied_node, csg_tree.getNode(copied_node).parent);
                     simulation.csg_dirty = true;
                 }
             }
@@ -1094,13 +1083,11 @@ pub fn main(init: std.process.Init) !void {
                         if (csg_program.instructions_to_nodes.get(inst)) |node| {
                             if (!imgui.cimgui.ImGui_IsKeyDown(imgui.cimgui.ImGuiKey_LeftShift)) {
                                 selected_node_handles.clearRetainingCapacity();
-                                selected_node_parents.clearRetainingCapacity();
                             }
                             try selected_node_handles.append(
                                 arena,
                                 node,
                             );
-                            try selected_node_parents.append(arena, .empty);
                         }
                         std.log.info("ray hit: inst {}", .{inst});
                     }
@@ -1301,9 +1288,7 @@ fn imGuiCSGTreeNode(
     gpa: std.mem.Allocator,
     parent_handle: CSGTreeNodeHandle,
     node_handle: CSGTreeNodeHandle,
-    parents: *std.ArrayList(CSGTreeNodeHandle),
     selected_nodes: *std.ArrayList(CSGTreeNodeHandle),
-    selected_node_parents: *std.ArrayList(std.ArrayList(CSGTreeNodeHandle)),
     reparent_commands: *std.ArrayList(CSGReparentCommand),
 ) !bool {
     imgui.pushId(node_handle);
@@ -1334,7 +1319,6 @@ fn imGuiCSGTreeNode(
                 } else {
                     selected = true;
                     selected_nodes.clearRetainingCapacity();
-                    selected_node_parents.clearRetainingCapacity();
                 }
             }
         }
@@ -1363,30 +1347,19 @@ fn imGuiCSGTreeNode(
             }
         }
 
-        if (node.children.items.len != 0) {
-            try parents.append(gpa, node_handle);
-        }
-
         for (node.children.items) |child| {
             const child_selected = try imGuiCSGTreeNode(
                 tree,
                 gpa,
                 node_handle,
                 child,
-                parents,
                 selected_nodes,
-                selected_node_parents,
                 reparent_commands,
             );
 
             if (child_selected) {
                 try selected_nodes.append(gpa, child);
-                try selected_node_parents.append(gpa, try parents.clone(gpa));
             }
-        }
-
-        if (node.children.items.len != 0) {
-            _ = parents.pop();
         }
     }
 
@@ -1553,9 +1526,9 @@ pub const CSGTree = struct {
         self: *@This(),
         gpa: std.mem.Allocator,
         handle: CSGTreeNodeHandle,
-        previous_parent: CSGTreeNodeHandle,
         new_parent: CSGTreeNodeHandle,
     ) !void {
+        const previous_parent = self.getNode(handle).parent;
         const previous_parent_node = self.getNode(previous_parent);
         const new_parent_node = self.getNode(new_parent);
 

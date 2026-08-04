@@ -282,6 +282,10 @@ pub fn beginSpatial(name: [:0]const u8, options: BeginOptions, position: @Vector
 
             return false;
         }
+        if (std.math.isNan(pos[0]) or std.math.isNan(pos[1])) {
+            Static.spatial_conditons.append(std.heap.c_allocator, false) catch unreachable;
+            return false;
+        }
 
         cimgui.ImGui_SetNextWindowPos(.{ .x = pos[0], .y = pos[1] }, 1);
         cimgui.ImGui_SetNextWindowBgAlpha(0.5);

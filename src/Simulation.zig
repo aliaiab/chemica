@@ -69,7 +69,14 @@ pub fn update(sim: *Simulation) void {
     sim.gpu_sim.update(sim, shader_uniforms);
 }
 
-pub fn render(sim: *Simulation, context: gpu.Context, render_texture: ?*Texture) void {
+pub fn render(
+    sim: *Simulation,
+    context: gpu.Context,
+    render_texture: ?*Texture,
+    options: struct {
+        render_sdf_raymarched: bool = false,
+    },
+) void {
     const shader_uniforms: ShaderUniforms = .{
         .size = .{ sim.width, sim.height, sim.depth },
         .base_velocity = undefined,
@@ -86,7 +93,12 @@ pub fn render(sim: *Simulation, context: gpu.Context, render_texture: ?*Texture)
         .renderer_view_type = sim.renderer_view_type,
     };
 
-    sim.gpu_sim.render(context, shader_uniforms, render_texture);
+    sim.gpu_sim.render(
+        context,
+        shader_uniforms,
+        render_texture,
+        .{ .render_sdf_raymarched = options.render_sdf_raymarched },
+    );
 }
 
 pub fn updateCSGProgram(

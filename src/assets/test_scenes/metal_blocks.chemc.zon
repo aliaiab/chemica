@@ -179,11 +179,20 @@
         .child_op = .binary_op_difference,
     },
     .{
-        .transform = .{ .position = .{
-            1,
-            0,
-            -2,
-        }, .uniform_scale = 2.8190553 },
+        .transform = .{
+            .position = .{
+                10,
+                -4,
+                -7,
+            },
+            .uniform_scale = 0.00000000000000000012344679,
+            .rotation = .{
+                0,
+                -0.18994753,
+                0,
+                1,
+            },
+        },
         .data = .{ .sphere = .{ .radius = 10 } },
         .material = 1,
         .parent = 15,

@@ -170,6 +170,7 @@ pub fn build(b: *std.Build) !void {
     _ = compileShader(b, glsl_compiler, target, optimize, exe, .vertex, "src/shaders/gizmo_shader_vertex.glsl");
     _ = compileShader(b, glsl_compiler, target, optimize, exe, .fragment, "src/shaders/gizmo_shader_fragment.glsl");
     _ = compileShader(b, glsl_compiler, target, optimize, exe, .fragment, "src/shaders/depth_prepass_fragment.glsl");
+    _ = compileShader(b, glsl_compiler, target, optimize, exe, .fragment, "src/shaders/sdf_renderer_fragment.glsl");
 
     exe.is_linking_libcpp = true;
 

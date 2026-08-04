@@ -3,8 +3,6 @@ fn watcherCallback(context: ?*anyopaque, path: [:0]const u8, event: watchers.Eve
 
     switch (event) {
         .modified => {
-            std.log.info("File was modified! {s}\n", .{path});
-
             const shader_query = watcher_context.shaders.getPtr(std.fs.path.stem(path)) orelse return;
 
             const file_path = try std.Io.Dir.cwd().readFileAlloc(
@@ -15,9 +13,6 @@ fn watcherCallback(context: ?*anyopaque, path: [:0]const u8, event: watchers.Eve
             );
 
             const actual_file_path = file_path[2 .. file_path.len - 1];
-
-            std.log.info("{s}\n", .{actual_file_path});
-            std.log.info("{any}\n", .{shader_query.*});
 
             const file_data = try std.Io.Dir.cwd().readFileAlloc(
                 watcher_context.io,
@@ -474,6 +469,7 @@ pub const Simulation = struct {
         gizmo_shader: u32 = 0,
         depth_prepass_shader: u32 = 0,
         bounds_depth_prepass_shader: u32 = 0,
+        raymarched_sdf_shader: u32 = 0,
 
         old_fill_region_shader: u32 = 0,
     };
@@ -554,6 +550,17 @@ pub const Simulation = struct {
                 .source_path = "depth_prepass_fragment.spv",
             },
         }, &gpu_sim.shaders.bounds_depth_prepass_shader);
+
+        try context.loadShaderProgram(arena, &.{
+            .{
+                .type = gl.VERTEX_SHADER,
+                .source_path = "renderer_vertex.spv",
+            },
+            .{
+                .type = gl.FRAGMENT_SHADER,
+                .source_path = "sdf_renderer_fragment.spv",
+            },
+        }, &gpu_sim.shaders.raymarched_sdf_shader);
 
         gl.CreateVertexArrays(1, @ptrCast(&gpu_sim.vertex_array));
 
@@ -1253,6 +1260,9 @@ pub const Simulation = struct {
         context: Context,
         shader_uniforms: ShaderUniforms,
         render_texture: ?*Texture,
+        options: struct {
+            render_sdf_raymarched: bool = false,
+        },
     ) void {
         gl.NamedBufferSubData(
             sim.uniform_buffer,
@@ -1348,15 +1358,6 @@ pub const Simulation = struct {
         gl.StencilMask(0);
         gl.DrawArrays(gl.TRIANGLES, 0, 36);
 
-        gl.UseProgram(sim.shaders.bounds_depth_prepass_shader);
-        gl.Enable(gl.DEPTH_TEST);
-        gl.DepthFunc(gl.ALWAYS);
-        gl.CullFace(gl.BACK);
-        gl.DepthMask(1);
-        gl.BindVertexArray(sim.vertex_array);
-
-        gl.DrawArrays(gl.TRIANGLES, 0, 36);
-
         gl.BindVertexArray(sim.simulation_vertex_array);
         gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, sim.simulation_draws_buffer);
         gl.Disable(gl.DEPTH_TEST);
@@ -1367,7 +1368,7 @@ pub const Simulation = struct {
         gl.CullFace(gl.FRONT);
         gl.Enable(gl.CULL_FACE);
         gl.Enable(gl.DEPTH_TEST);
-        gl.DepthMask(1);
+        gl.DepthMask(0);
         gl.DepthFunc(gl.ALWAYS);
 
         gl.StencilMask(0xff);
@@ -1387,9 +1388,12 @@ pub const Simulation = struct {
 
         gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL);
 
-        gl.UseProgram(sim.shaders.renderer_program);
+        if (options.render_sdf_raymarched) {
+            gl.UseProgram(sim.shaders.raymarched_sdf_shader);
+        } else {
+            gl.UseProgram(sim.shaders.renderer_program);
+        }
 
-        //gl.BindVertexArray(sim.simulation_vertex_array);
         gl.BindVertexArray(sim.vertex_array);
         defer gl.CullFace(gl.BACK);
 
@@ -1397,9 +1401,9 @@ pub const Simulation = struct {
         gl.Enable(gl.CULL_FACE);
         gl.StencilFunc(gl.EQUAL, 1, 0xff);
         gl.StencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-        gl.DepthFunc(gl.NOTEQUAL);
-        gl.Disable(gl.DEPTH_TEST);
-        gl.DepthMask(0);
+        gl.DepthFunc(gl.LESS);
+        gl.Enable(gl.DEPTH_TEST);
+        gl.DepthMask(1);
         gl.StencilMask(0);
 
         const Static = struct {
@@ -1416,7 +1420,6 @@ pub const Simulation = struct {
         }
 
         gl.DrawArrays(gl.TRIANGLES, 0, 36);
-        //gl.MultiDrawArraysIndirect(gl.TRIANGLES, 0, 1, @sizeOf(u32) * 4);
 
         gl.Disable(gl.STENCIL_TEST);
 
@@ -1455,7 +1458,13 @@ pub const Simulation = struct {
 
         thumbnail_result.value_ptr.* = @ptrFromInt(texture_handle);
 
-        gl.TextureStorage2D(texture_handle, 1, gl.RGBA8, 128, 128);
+        gl.TextureStorage2D(
+            texture_handle,
+            1,
+            gl.RGBA8,
+            128,
+            128,
+        );
         gl.Viewport(0, 0, 128, 128);
 
         sim.projection_matrix = @bitCast((zmath.perspectiveFovRhGl(
@@ -1470,16 +1479,9 @@ pub const Simulation = struct {
             .{ 0, 1, 0, 0 },
         )));
 
-        gl.UseProgram(context.env_map_shader);
-        gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, gpu_sim.uniform_buffer);
-        gl.BindTexture(gl.TEXTURE_2D, context.env_map_texture);
-        gl.BindTextureUnit(2, context.env_map_texture);
+        sim.render(context, thumbnail_result.value_ptr.*, .{});
 
-        gl.BindVertexArray(gpu_sim.vertex_array);
-        gl.Disable(gl.CULL_FACE);
-        gl.DrawArrays(gl.TRIANGLES, 0, 36);
-
-        sim.render(context, thumbnail_result.value_ptr.*);
+        gl.Viewport(0, 0, context.window.getSize()[0], context.window.getSize()[1]);
 
         sim.enable_simulation = is_enabled;
         return null;
