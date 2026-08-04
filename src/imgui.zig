@@ -241,6 +241,7 @@ pub fn beginFmt(
             .y = size[1],
         }, 1);
     }
+
     var fmt_buffer: [std.fmt.count(format, args) + 1]u8 = undefined;
 
     const name = std.fmt.bufPrintZ(&fmt_buffer, format, args) catch unreachable;
@@ -311,6 +312,88 @@ pub fn sameLine(
     },
 ) void {
     return cimgui.ImGui_SameLineEx(options.offset_from_start_x, options.spacing);
+}
+
+pub const StyleColor = enum(i32) {
+    Text = 0,
+    TextDisabled = 1,
+    WindowBg = 2,
+    ChildBg = 3,
+    PopupBg = 4,
+    Border = 5,
+    BorderShadow = 6,
+    FrameBg = 7,
+    FrameBgHovered = 8,
+    FrameBgActive = 9,
+    TitleBg = 10,
+    TitleBgActive = 11,
+    TitleBgCollapsed = 12,
+    MenuBarBg = 13,
+    ScrollbarBg = 14,
+    ScrollbarGrab = 15,
+    ScrollbarGrabHovered = 16,
+    ScrollbarGrabActive = 17,
+    CheckMark = 18,
+    CheckboxSelectedBg = 19,
+    SliderGrab = 20,
+    SliderGrabActive = 21,
+    Button = 22,
+    ButtonHovered = 23,
+    ButtonActive = 24,
+    Header = 25,
+    HeaderHovered = 26,
+    HeaderActive = 27,
+    Separator = 28,
+    SeparatorHovered = 29,
+    SeparatorActive = 30,
+    ResizeGrip = 31,
+    ResizeGripHovered = 32,
+    ResizeGripActive = 33,
+    InputTextCursor = 34,
+    TabHovered = 35,
+    Tab = 36,
+    TabSelected = 37,
+    TabSelectedOverline = 38,
+    TabDimmed = 39,
+    TabDimmedSelected = 40,
+    TabDimmedSelectedOverline = 41,
+    DockingPreview = 42,
+    DockingEmptyBg = 43,
+    PlotLines = 44,
+    PlotLinesHovered = 45,
+    PlotHistogram = 46,
+    PlotHistogramHovered = 47,
+    TableHeaderBg = 48,
+    TableBorderStrong = 49,
+    TableBorderLight = 50,
+    TableRowBg = 51,
+    TableRowBgAlt = 52,
+    TextLink = 53,
+    TextSelectedBg = 54,
+    TreeLines = 55,
+    DragDropTarget = 56,
+    DragDropTargetBg = 57,
+    UnsavedMarker = 58,
+    NavCursor = 59,
+    NavWindowingHighlight = 60,
+    NavWindowingDimBg = 61,
+    ModalWindowDimBg = 62,
+
+    pub const TabActive: StyleColor = @enumFromInt(37);
+    pub const TabUnfocused: StyleColor = @enumFromInt(39);
+    pub const TabUnfocusedActive: StyleColor = @enumFromInt(40);
+    pub const NavHighlight: StyleColor = @enumFromInt(59);
+};
+
+pub fn pushStyleColor(index: StyleColor, color: [4]f32) void {
+    cimgui.ImGui_PushStyleColorImVec4(
+        @intFromEnum(index),
+        .{ .x = color[0], .y = color[1], .z = color[2], .w = color[3] },
+    );
+}
+
+pub fn popStyleColor() void {
+    cimgui.ImGui_PopStyleColor();
 }
 
 pub fn text(

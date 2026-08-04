@@ -86,9 +86,9 @@
     },
     .{
         .transform = .{ .position = .{
-            99,
-            45,
-            82,
+            111,
+            88,
+            79,
         } },
         .children = .{ .items = .{
             2,
@@ -99,9 +99,9 @@
     },
     .{
         .transform = .{ .position = .{
-            51,
-            45,
-            73,
+            20,
+            44,
+            42,
         } },
         .children = .{ .items = .{
             5,

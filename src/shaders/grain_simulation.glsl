@@ -190,6 +190,7 @@ void main() {
                 ivec3 global_pos = p + local_pos;
 
                 grid[i] = int(global_pos.x + global_pos.y * uSize.x + global_pos.z * uSize.x * uSize.y);
+                grid[i] = int(mortonEncode(global_pos));
 
                 if (!isInBounds(global_pos)) {
                     grid[i] = -1;
@@ -297,7 +298,9 @@ void main() {
     }
     #endif
 
-    out_voxel_lattice[index] = in_voxel_lattice[grid[local_index]];
-    out_temperature[index] = in_temperature[grid[local_index]];
-    out_deviation_buffer[index] = in_deviation_buffer[grid[local_index]];
+    uint out_index = mortonEncode(ivec3(gl_GlobalInvocationID));
+
+    out_voxel_lattice[out_index] = in_voxel_lattice[grid[local_index]];
+    out_temperature[out_index] = in_temperature[grid[local_index]];
+    out_deviation_buffer[out_index] = in_deviation_buffer[grid[local_index]];
 }

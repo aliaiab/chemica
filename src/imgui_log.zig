@@ -72,13 +72,12 @@ pub fn viewer(name: [:0]const u8) void {
                 .debug => "debug",
             };
 
-            const level_color: imgui.cimgui.ImVec4 = switch (message.level) {
-                .err => .{ .x = 1, .y = 0, .z = 0, .w = 1 },
-                .warn => .{ .x = 1, .y = 1, .z = 0, .w = 1 },
-                .info => .{ .x = 0, .y = 0, .z = 1, .w = 1 },
-                .debug => .{ .x = 0, .y = 1, .z = 0, .w = 1 },
+            const level_color: [4]f32 = switch (message.level) {
+                .err => .{ 1, 0, 0, 1 },
+                .warn => .{ 1, 1, 0, 1 },
+                .info => .{ 0, 0, 1, 1 },
+                .debug => .{ 0, 1, 0, 1 },
             };
-            _ = level_color; // autofix
 
             imgui.separator(.{});
 
@@ -88,13 +87,13 @@ pub fn viewer(name: [:0]const u8) void {
                 imgui.sameLine();
             }
 
-            //imgui.igPushStyleColor_Vec4(imgui.ImGuiCol_Text, level_color);
+            imgui.pushStyleColor(.Text, level_color);
 
             imgui.text("[{s}]", .{level_text});
 
             imgui.sameLine(.{});
 
-            //imgui.igPopStyleColor(1);
+            imgui.popStyleColor();
 
             if (message.scope != null) {
                 //imgui.igPushStyleColor_Vec4(imgui.ImGuiCol_Text, .{ .x = 0.5, .y = 0.5, .z = 0.5, .w = 1 });

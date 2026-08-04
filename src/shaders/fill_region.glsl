@@ -384,10 +384,12 @@ void main() {
 
     if (position_int % CHUNK_SIZE == vec3(0)) {
         if (voxel_chunks_allocation[chunk_index].allocation == 0xffffffff) {
-            //voxel_chunks_allocation[chunk_index].allocation = voxelChunkAlloc(1);
+            voxel_chunks_allocation[chunk_index].allocation = voxelChunkAlloc(1);
         }
         fill_finished_semaphore = 0;
     }
+
+    while (voxel_chunks_allocation[chunk_index].allocation == 0xffffffff) {}
 
     vec3 position = vec3(position_int) + 0.5;
 
@@ -416,7 +418,7 @@ void main() {
             }
         }
 
-        in_voxel_lattice[index] = uint16_t(field.material);
+        in_voxel_lattice[mortonEncode(position_int)] = uint16_t(field.material);
 
         if (true) {
             voxel_chunks_allocation[chunk_index].bit_count = 1;
@@ -439,17 +441,31 @@ void main() {
                 voxel_chunk_positions_buffer[voxelChunkPosToChunkIndex(ivec3(chunk_pos))] = heap_index;
                 #endif
             }
+            else {
+                uint chunk_alloc = voxel_chunks_allocation[chunk_index].allocation;
+                ivec3 heap_pos = voxelChunkAllocationHeapPosition(chunk_alloc);
+                uint heap_index = voxelChunkHeapIndexFromHeapPosition(heap_pos);
+
+                imageStore(voxel_chunk_allocations_image, chunk_pos, uvec4(chunk_alloc));
+
+                #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_3D_TEXTURE
+                imageStore(voxel_chunk_positions_image, chunk_pos, uvec4(heap_index));
+                #else
+                voxel_chunk_positions_buffer[voxelChunkPosToChunkIndex(ivec3(chunk_pos))] = heap_index;
+                #endif
+            }
+            barrier();
 
             while (voxel_chunks_allocation[chunk_index].allocation == 0xffffffff) {}
 
             storeVoxel(position_int, field.material);
         }
 
-        in_temperature[index] = min(6000, 300 * (1 / transform_scale) + abs(field.signed_distance) * 600);
+        //in_temperature[index] = min(6000, 300 * (1 / transform_scale) + abs(field.signed_distance) * 600);
         //in_temperature[index] = 1000;
         //in_temperature[index] = 0;
         //in_temperature[index] = max(0, 1500 + 1000 * transform_scale * sin(-field.signed_distance * 5));
-        in_temperature[index] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
+        in_temperature[mortonEncode(position_int)] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
 
         if (false) {
             float u = argInTurns(transformed_point.x, transformed_point.z);
@@ -464,7 +480,7 @@ void main() {
         }
 
         float position_variation = random.r;
-        in_deviation_buffer[index] = int8_t(position_variation * 255);
+        in_deviation_buffer[mortonEncode(position_int)] = int8_t(position_variation * 255);
     }
     else {
         if (false && (any(equal(position_int, csg_bounding_min)) || any(equal(position_int, csg_bounding_max)))) {
@@ -472,6 +488,7 @@ void main() {
             float position_variation = random.r;
             in_deviation_buffer[index] = int8_t(position_variation * 255);
         }
+        barrier();
         storeVoxel(position_int, 0);
     }
 }

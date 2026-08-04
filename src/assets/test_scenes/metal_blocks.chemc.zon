@@ -1,15 +1,17 @@
 .{ .nodes = .{ .items = .{
     .{ .children = .{ .items = .{
         1,
-        2,
+        11,
         3,
         4,
         5,
         6,
         7,
-        8,
+        12,
         9,
-    }, .capacity = 9 } },
+        10,
+        15,
+    }, .capacity = 11 } },
     .{
         .transform = .{ .position = .{
             82,
@@ -26,16 +28,17 @@
     },
     .{
         .transform = .{ .position = .{
-            54,
-            64,
-            91,
+            9,
+            31.5,
+            -9.5,
         } },
         .data = .{ .box = .{ .bounds = .{
             10,
-            13,
-            21,
+            10,
+            20,
         } } },
         .material = 2,
+        .parent = 12,
         .name = "Box",
     },
     .{
@@ -63,7 +66,7 @@
             25,
             9,
         } } },
-        .material = 26,
+        .material = 22,
         .name = "Box",
     },
     .{
@@ -82,9 +85,9 @@
     },
     .{
         .transform = .{ .position = .{
-            42,
+            16,
             101,
-            82,
+            91,
         } },
         .data = .{ .box = .{ .bounds = .{
             10,
@@ -110,9 +113,24 @@
     },
     .{
         .transform = .{ .position = .{
-            99,
-            93,
-            90,
+            6,
+            24.5,
+            -2.5,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            16,
+            13,
+            25,
+        } } },
+        .material = 12,
+        .parent = 12,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            100,
+            52,
+            70,
         } },
         .data = .{ .box = .{ .bounds = .{
             9,
@@ -125,8 +143,8 @@
     .{
         .transform = .{ .position = .{
             99,
-            52,
-            90,
+            99,
+            97,
         } },
         .data = .{ .box = .{ .bounds = .{
             9,
@@ -136,4 +154,64 @@
         .material = 12,
         .name = "Box",
     },
-}, .capacity = 10 } }
+    .{
+        .transform = .{ .position = .{
+            66,
+            99,
+            86,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            19,
+            17,
+            28,
+        } } },
+        .material = 12,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            60,
+            83.5,
+            88.5,
+        } },
+        .children = .{ .items = .{ 8, 2 }, .capacity = 2 },
+        .name = "Difference",
+        .child_op = .binary_op_difference,
+    },
+    .{
+        .transform = .{ .position = .{
+            1,
+            0,
+            -2,
+        }, .uniform_scale = 2.8190553 },
+        .data = .{ .sphere = .{ .radius = 10 } },
+        .material = 1,
+        .parent = 15,
+        .name = "Sphere",
+    },
+    .{
+        .transform = .{ .position = .{
+            -1,
+            0,
+            2,
+        } },
+        .data = .{ .box = .{ .bounds = .{
+            26,
+            10,
+            17,
+        } } },
+        .material = 1,
+        .parent = 15,
+        .name = "Box",
+    },
+    .{
+        .transform = .{ .position = .{
+            38,
+            64,
+            105,
+        } },
+        .children = .{ .items = .{ 14, 13 }, .capacity = 2 },
+        .name = "Intersection",
+        .child_op = .binary_op_intersection,
+    },
+}, .capacity = 16 } }

@@ -3,26 +3,6 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
-#include "common.glsl"
-#include "pbr.glsl"
-
-layout(location = 0) in Out
-{
-    vec3 position;
-    vec3 eye;
-} vIn;
-
-layout(location = 0) out vec4 aColor;
-
-layout(std430, binding = 0) restrict readonly buffer Materials
-{
-    VoxelMaterial uMaterials[];
-};
-
-layout(std430, binding = 23) restrict readonly buffer VoxelMaterialsVisual {
-    VoxelMaterialVisual voxel_materials_visual[];
-};
-
 layout(std430, binding = 1) restrict readonly buffer VoxelMaterials
 {
     uint16_t uVoxelMaterials[];
@@ -35,6 +15,29 @@ layout(std430, binding = 2) restrict readonly buffer VoxelTemperature
 
 layout(std430, binding = 21) restrict buffer OutDeviationBuffer {
     int8_t out_deviation_buffer[];
+};
+
+#define DISABLE_CHUNKING
+#include "common.glsl"
+#include "pbr.glsl"
+
+layout(location = 0) in Out
+{
+    vec3 position;
+    vec3 eye;
+} vIn;
+
+layout(early_fragment_tests) in;
+
+layout(location = 0) out vec4 aColor;
+
+layout(std430, binding = 0) restrict readonly buffer Materials
+{
+    VoxelMaterial uMaterials[];
+};
+
+layout(std430, binding = 23) restrict readonly buffer VoxelMaterialsVisual {
+    VoxelMaterialVisual voxel_materials_visual[];
 };
 
 layout(binding = 22) uniform sampler2D environment_fetchVoxel;
@@ -286,10 +289,18 @@ float raycastVoxels(
     return t * res;
 }
 
+int ray_iter_count = 0;
+
+layout(binding = 43) restrict coherent buffer OutBounds {
+    ivec3 sim_bounds_min;
+    ivec3 sim_bounds_max;
+};
+
 float raycastVoxelsOld(
     in uint medium_material,
     in vec3 ro,
     in vec3 rd,
+    in float ray_end_t,
     out vec3 oVos,
     out vec3 oDir,
     out uint voxel_material,
@@ -300,14 +311,23 @@ float raycastVoxelsOld(
     vec3 rs = sign(rd);
     vec3 delta_dis = abs(length(rd) / rd);
     vec3 dis = (pos - ro + 0.5 + rs * 0.5) * ri;
+    vec3 ray_end = ro + rd * ray_end_t;
 
     float res = -1;
     vec3 mm = vec3(0);
 
-    for (int i = 0; i < uSize.x + uSize.y + uSize.z; i++) {
-        uvec3 position = uvec3(pos + 0.5);
+    uvec3 rendered_sim_size = (sim_bounds_max - sim_bounds_min) * CHUNK_SIZE;
+    uint max_steps = rendered_sim_size.x + rendered_sim_size.y + rendered_sim_size.z;
 
-        if (!isInBoundsInclusive(ivec3(position))) {
+    for (int i = 0; i < max_steps; i++) {
+        uvec3 position = uvec3(pos + 0.5);
+        ray_iter_count += 1;
+
+        bool is_in_bounds = all(greaterThanEqual(position, sim_bounds_min * CHUNK_SIZE)) && all(lessThanEqual(position, csg_bounding_max * CHUNK_SIZE));
+        bool is_in_entire_bounds = isInBoundsInclusive(ivec3(position));
+        is_in_bounds = is_in_bounds && is_in_entire_bounds;
+
+        if (!is_in_bounds) {
             res = -1;
             voxel_material = 0;
             break;
@@ -316,13 +336,13 @@ float raycastVoxelsOld(
         uint index = position.x + uSize.x * position.y + uSize.x * uSize.y * position.z;
         uint type = 0;
 
-        if (false) {
+        if (true) {
             voxel_heap_pos = voxelWorldPosToHeapPos(ivec3(position));
 
             type = loadVoxelMaterial(ivec3(position));
         }
         else {
-            type = uVoxelMaterials[index];
+            type = uVoxelMaterials[mortonEncode(ivec3(position))];
         }
 
         if (type != medium_material) {
@@ -354,13 +374,14 @@ float raycast(
     in uint medium_material,
     in vec3 ro,
     in vec3 rd,
+    in float ray_end_t,
     out vec3 oVos,
     out vec3 oDir,
     out uint voxel_material,
     out ivec3 voxel_heap_pos
 ) {
     if (true) {
-        return raycastVoxelsOld(medium_material, ro, rd, oVos, oDir, voxel_material, voxel_heap_pos);
+        return raycastVoxelsOld(medium_material, ro, rd, ray_end_t, oVos, oDir, voxel_material, voxel_heap_pos);
     }
 
     vec3 ray_origin = ro;
@@ -391,6 +412,7 @@ vec3 computeLightRadiance(
     PointLight light,
     vec3 ray_origin,
     vec3 ray_direction,
+    float ray_end_t,
     uint medium_material
 ) {
     vec3 pos = ray_origin;
@@ -406,6 +428,7 @@ vec3 computeLightRadiance(
                 medium_material,
                 pos + 0.5,
                 ray_direction,
+                -1,
                 ray_origin,
                 def_dir,
                 voxel_material,
@@ -578,6 +601,7 @@ vec4 computeVoxelLight(
                 point_light,
                 pos,
                 dir_to_light,
+                -1,
                 medium_material
             );
 
@@ -698,6 +722,21 @@ vec2 intersectAABB(vec3 rayOrigin, vec3 rayDir, vec3 boxMin, vec3 boxMax) {
     return vec2(tNear, tFar);
 };
 
+layout(binding = 44) restrict writeonly buffer RayStatistics {
+    uint total_primary_rays;
+    uint total_primary_ray_hits;
+    uint total_primary_ray_steps;
+    uint max_primary_ray_steps;
+    uint min_primary_ray_steps;
+    uint total_secondary_rays;
+    uint total_secondary_ray_hits;
+    uint total_secondary_ray_steps;
+    uint max_secondary_ray_steps;
+    uint min_secondary_ray_steps;
+} ray_stats;
+
+layout(depth_greater) out float gl_FragDepth;
+
 void main()
 {
     vec3 vos;
@@ -706,8 +745,8 @@ void main()
     vec3 eye = vIn.eye;
     vec3 end_pos = vIn.position;
 
-    if (true) {
-        //eye = vec3(inverse(uProjection * uView * uModel) * vec4(gl_FragCoord.x, gl_FragCoord.y, 0, 1));
+    if (false) {
+        eye = vec3(inverse(uProjection * uView * uModel) * vec4(gl_FragCoord.x, gl_FragCoord.y, 0, 1));
     }
 
     vec3 ray_origin = eye;
@@ -715,19 +754,20 @@ void main()
 
     vec3 ray_direction = normalize(ray_end - ray_origin);
 
-    vec2 box_intersection = intersection(ray_origin, ray_direction, vec3(0), uSize);
+    float ray_end_t = length(ray_end - ray_origin);
+
+    vec2 box_intersection = intersection(ray_origin, ray_direction, sim_bounds_min * CHUNK_SIZE, sim_bounds_max * CHUNK_SIZE);
 
     uint medium_material = 0;
 
-    if (!isInBoundsInclusive(ivec3(ray_origin))) {
+    bool is_in_bounds = all(greaterThanEqual(ray_origin, sim_bounds_min * CHUNK_SIZE)) && all(lessThanEqual(ray_origin, sim_bounds_max * CHUNK_SIZE));
+
+    if (!is_in_bounds) {
         ray_origin += ray_direction * box_intersection.x;
-        if (any(bvec3(uvec3(ray_origin).x >= uSize.x - 1, uvec3(ray_origin).y >= uSize.y - 1, uvec3(ray_origin).z >= uSize.z - 1))) {
-            ray_origin += ray_direction * 3;
-        }
     }
     else {
         uint start_index = uvec3(ray_origin).x + uSize.x * uvec3(ray_origin).y + uSize.x * uSize.y * uvec3(ray_origin).z;
-        medium_material = uVoxelMaterials[start_index];
+        medium_material = loadVoxelMaterial(ivec3(ray_origin));
     }
 
     vec4 total_radiance = vec4(0);
@@ -738,16 +778,21 @@ void main()
     uint voxel_material;
     ivec3 voxel_heap_pos;
 
+    uint primary_ray_step_count = 0;
+
     for (int i = 0; i < 10; i++) {
         float ray_cast_t = raycast(
                 medium_material,
                 ray_origin,
                 ray_direction,
+                ray_end_t,
                 vos,
                 dir,
                 voxel_material,
                 voxel_heap_pos
             );
+
+        primary_ray_step_count += ray_iter_count;
 
         if (ray_cast_t > 0) {
             vec3 normal = -dir * sign(ray_direction);
@@ -781,6 +826,7 @@ void main()
                         medium_material,
                         pos,
                         normalize(reflected_dir),
+                        -1,
                         vos,
                         dir,
                         voxel_material,
@@ -824,15 +870,53 @@ void main()
             }
         }
         else {
-            vec2 env_fetchVoxel_uv = SampleSphericalfetchVoxel(normalize(ray_direction));
-            total_radiance += texture(environment_fetchVoxel, env_fetchVoxel_uv);
             break;
         }
     }
 
+    ray_iter_count = int(primary_ray_step_count);
+
+    bool visualize_ray_iter_count = renderer_mode == RENDERER_MODE_RAY_STEPS;
+
+    atomicAdd(ray_stats.total_primary_rays, 1);
+    atomicAdd(ray_stats.total_primary_ray_steps, primary_ray_step_count);
+    atomicMax(ray_stats.max_primary_ray_steps, primary_ray_step_count);
+    atomicMin(ray_stats.min_primary_ray_steps, primary_ray_step_count);
+
     if (hit) {
+        atomicAdd(ray_stats.total_primary_ray_hits, 1);
+    }
+    else if (!visualize_ray_iter_count) {
+        discard;
+    }
+
+    if (hit || visualize_ray_iter_count) {
         aColor.xyz = total_radiance.xyz / (total_radiance.xyz + vec3(1));
         aColor.xyz = pow(aColor.xyz, vec3(1.0 / 2.2));
+        //aColor.xyz = vec3(ray_iter_count) / 1000.0;
+
+        if (visualize_ray_iter_count) {
+            if (ray_iter_count < 500) {
+                aColor.xyz = vec3(1, 0, 1);
+            }
+
+            if (ray_iter_count < 400) {
+                aColor.xyz = vec3(0.8, 0.3, 0);
+            }
+
+            if (ray_iter_count < 200) {
+                aColor.xyz = vec3(0.5, 0.2, 0);
+            }
+
+            if (ray_iter_count < 100) {
+                aColor.xyz = vec3(0.3, 0.5, 0);
+            }
+
+            if (ray_iter_count < 10) {
+                aColor.xyz = vec3(0, 0.1, 0);
+            }
+        }
+
         aColor.a = 1;
 
         vec4 clip_pos = uProjection * uView * uModel * vec4(hit_position, 1);

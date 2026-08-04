@@ -44,6 +44,10 @@
             .url = "git+https://github.com/mitchellh/zig-objc.git#c8de82ff80281215ad92900866dab7103a8efa8b",
             .hash = "zig_objc-0.0.0-Ir_Sp9gsAQCPAJc0oF5xoWePHWP6Y6tCphDeyNUThJoi",
         },
+        .glslang_zig = .{
+            .url = "git+https://github.com/aliaiab/glslang-zig#d45a39fa3ebd00d2cd3cdf549072a28bbb467ff9",
+            .hash = "glslang_zig-0.0.0-V29wTx4xAADgsmkiOehRI8jTot_FQcoLiSO7B2TYQyKY",
+        },
     },
     .paths = .{
         "build.zig",

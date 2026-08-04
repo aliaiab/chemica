@@ -163,6 +163,7 @@ layout(std140, binding = 0) uniform Uniforms
 #define RENDERER_MODE_MATERIAL 6
 #define RENDERER_MODE_DEVIATION 7
 #define RENDERER_MODE_TEMPERATURE 8
+#define RENDERER_MODE_RAY_STEPS 9
 
 bool isInBounds(ivec3 position) {
     return all(greaterThanEqual(position, ivec3(0))) && all(lessThan(position, uSize));
@@ -263,11 +264,12 @@ void voxelChunkFree(ChunkAllocation allocation) {
 #define VOXEL_HEAP_MODE_3D_TEXTURE 1
 
 #define VOXEL_HEAP_MODE VOXEL_HEAP_MODE_3D_TEXTURE
+#define USE_CHUNKING 1
 
-uniform layout(binding = 0, r32ui) restrict uimage3D voxel_bit_buffer_texture;
+uniform layout(binding = 0, r16ui) restrict uimage3D voxel_bit_buffer_texture;
 uniform layout(binding = 1, r32ui) restrict uimage3D voxel_chunk_allocations_image;
 //Stores positions as linearized indicies into the flat space of the voxel bit buffer image
-uniform layout(binding = 2, r32ui) restrict uimage3D voxel_chunk_positions_image;
+uniform layout(binding = 2, r16ui) restrict uimage3D voxel_chunk_positions_image;
 
 uniform layout(binding = 3, r32ui) restrict uimage3D voxel_temperature_image;
 uniform layout(binding = 4, r8ui) restrict uimage3D voxel_deviation_image;
@@ -280,7 +282,7 @@ uniform layout(binding = 13) isampler3D voxel_deviation_sampler;
 #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
 layout(std430, binding = 35) restrict buffer VoxelHeapBitBuffer
 {
-    uint voxel_heap_bit_buffer[];
+    uint16_t voxel_heap_bit_buffer[];
 };
 
 layout(std430, binding = 36) restrict buffer VoxelChunkPositionsBuffer
@@ -342,6 +344,10 @@ uint voxelHeapIndexFromHeapPosition(ivec3 heap_position) {
 ivec3 voxelChunkHeapPositionFromHeapIndex(uint heap_index) {
     int voxel_count_length = imageSize(voxel_bit_buffer_texture).x / CHUNK_SIZE;
 
+    #if !USE_CHUNKING
+    return mortonDecode(heap_index);
+    #endif
+
     #if !USE_MORTON_ORDER
     uint x = heap_index / (voxel_count_length * voxel_count_length);
     uint y = (heap_index / voxel_count_length) & (voxel_count_length - 1);
@@ -365,7 +371,7 @@ ivec3 voxelChunkAllocationHeapPosition(ChunkAllocation allocation) {
     return voxelChunkHeapPositionFromHeapIndex(heap_index);
 }
 
-#define NULL_HEAP_INDEX 0xffffffff
+#define NULL_HEAP_INDEX 0xffff
 #define NULL_HEAP_POS ivec3(2147483647)
 
 uint voxelChunkPosToChunkIndex(ivec3 chunk_pos) {
@@ -376,6 +382,10 @@ uint voxelChunkPosToChunkIndex(ivec3 chunk_pos) {
 ivec3 voxelWorldPosToHeapPos(ivec3 voxel_world_pos) {
     uvec3 chunk_pos = voxel_world_pos / CHUNK_SIZE;
     uvec3 chunk_offset = voxel_world_pos - chunk_pos * CHUNK_SIZE;
+
+    #ifdef DISABLE_CHUNKING
+    return voxel_world_pos;
+    #endif
 
     #if (VOXEL_HEAP_MODE != VOXEL_HEAP_MODE_SSBO)
     uint heap_index = texelFetch(voxel_chunk_positions_sampler, ivec3(chunk_pos), 0).r;
@@ -395,6 +405,10 @@ uint loadVoxelMaterialHeapPos(ivec3 heap_pos) {
     if (heap_pos == NULL_HEAP_POS) {
         return 0;
     }
+
+    #ifdef DISABLE_CHUNKING
+    return uVoxelMaterials[voxelHeapIndexFromHeapPosition(heap_pos)];
+    #endif
 
     #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
     return voxel_heap_bit_buffer[voxelHeapIndexFromHeapPosition(heap_pos)];
@@ -416,6 +430,10 @@ float loadVoxelTemperatureHeapPos(ivec3 heap_pos) {
         return 0;
     }
 
+    #ifdef DISABLE_CHUNKING
+    return uVoxelTemperatures[mortonEncode(heap_pos)];
+    #endif
+
     #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
     return 0;
     #else
@@ -435,6 +453,10 @@ int loadVoxelDeviationHeapPos(ivec3 heap_pos) {
     if (heap_pos == NULL_HEAP_POS) {
         return 0;
     }
+
+    #ifdef DISABLE_CHUNKING
+    return out_deviation_buffer[mortonEncode(heap_pos)];
+    #endif
 
     #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
     return 0;

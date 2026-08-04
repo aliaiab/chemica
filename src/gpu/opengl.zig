@@ -178,9 +178,12 @@ pub const Context = struct {
     pub fn beginFrame(context: *Context) void {
         gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
 
+        gl.StencilMask(0xff);
         gl.ClearColor(0, 0, 0, 1);
         gl.ClearDepthf(1);
-        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.ClearStencil(0);
+        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+        gl.StencilMask(0);
 
         imgui.impl.opengl3.newFrame();
 
@@ -415,9 +418,16 @@ pub const Simulation = struct {
     vertex_array: u32 = 0,
     vertex_buffer: u32 = 0,
 
+    simulation_vertex_array: u32 = 0,
+    simulation_vertex_buffer: u32 = 0,
+    simulation_draws_buffer: u32 = 0,
+    simulation_bounds_buffer: u32 = 0,
+
     simulation_material_buffers: [2]u32 = .{ 0, 0 },
     simulation_deviation_buffers: [2]u32 = .{ 0, 0 },
     simulation_temperature_buffers: [2]u32 = .{ 0, 0 },
+
+    ray_stats_buffer: u32 = 0,
 
     heat_measurement_buffer: u32 = 0,
 
@@ -460,6 +470,10 @@ pub const Simulation = struct {
         thermal_shader: u32 = 0,
         grain_simulation_shader: u32 = 0,
         fill_region_shader: u32 = 0,
+        generate_chunk_draws: u32 = 0,
+        gizmo_shader: u32 = 0,
+        depth_prepass_shader: u32 = 0,
+        bounds_depth_prepass_shader: u32 = 0,
 
         old_fill_region_shader: u32 = 0,
     };
@@ -502,6 +516,44 @@ pub const Simulation = struct {
                 .source_path = "fill_region.spv",
             },
         }, &gpu_sim.shaders.fill_region_shader);
+        try context.loadShaderProgram(arena, &.{
+            .{
+                .type = gl.COMPUTE_SHADER,
+                .source_path = "generate_chunk_draws.spv",
+            },
+        }, &gpu_sim.shaders.generate_chunk_draws);
+        try context.loadShaderProgram(arena, &.{
+            .{
+                .type = gl.VERTEX_SHADER,
+                .source_path = "gizmo_shader_vertex.spv",
+            },
+            .{
+                .type = gl.FRAGMENT_SHADER,
+                .source_path = "gizmo_shader_fragment.spv",
+            },
+        }, &gpu_sim.shaders.gizmo_shader);
+
+        try context.loadShaderProgram(arena, &.{
+            .{
+                .type = gl.VERTEX_SHADER,
+                .source_path = "gizmo_shader_vertex.spv",
+            },
+            .{
+                .type = gl.FRAGMENT_SHADER,
+                .source_path = "depth_prepass_fragment.spv",
+            },
+        }, &gpu_sim.shaders.depth_prepass_shader);
+
+        try context.loadShaderProgram(arena, &.{
+            .{
+                .type = gl.VERTEX_SHADER,
+                .source_path = "renderer_vertex.spv",
+            },
+            .{
+                .type = gl.FRAGMENT_SHADER,
+                .source_path = "depth_prepass_fragment.spv",
+            },
+        }, &gpu_sim.shaders.bounds_depth_prepass_shader);
 
         gl.CreateVertexArrays(1, @ptrCast(&gpu_sim.vertex_array));
 
@@ -532,6 +584,64 @@ pub const Simulation = struct {
 
         gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_heap_bit_buffer));
         gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_positions_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.simulation_vertex_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.simulation_draws_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.simulation_bounds_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.ray_stats_buffer));
+
+        gl.NamedBufferStorage(
+            gpu_sim.ray_stats_buffer,
+            @sizeOf(RayStats),
+            &RayStats{},
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.simulation_bounds_buffer,
+            @sizeOf([4]u32) * 2,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.simulation_vertex_buffer,
+            @sizeOf([4]f32) * 10_000,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.NamedBufferStorage(
+            gpu_sim.simulation_draws_buffer,
+            @sizeOf(extern struct {
+                count: u32,
+                instance_count: u32,
+                first: u32,
+                base_instance: u32,
+            }) * 128,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateVertexArrays(1, @ptrCast(&gpu_sim.simulation_vertex_array));
+
+        gl.VertexArrayVertexBuffer(
+            gpu_sim.simulation_vertex_array,
+            0,
+            gpu_sim.simulation_vertex_buffer,
+            0,
+            @sizeOf([4]f32),
+        );
+
+        gl.EnableVertexArrayAttrib(gpu_sim.simulation_vertex_array, 0);
+        gl.VertexArrayAttribFormat(
+            gpu_sim.simulation_vertex_array,
+            0,
+            4,
+            gl.FLOAT,
+            gl.FALSE,
+            0,
+        );
+        gl.VertexArrayAttribBinding(gpu_sim.simulation_vertex_array, 0, 0);
 
         gl.NamedBufferStorage(
             gpu_sim.voxel_heap_bit_buffer,
@@ -556,7 +666,7 @@ pub const Simulation = struct {
         gl.TextureStorage3D(
             gpu_sim.voxel_bit_buffer_memory_texture,
             1,
-            gl.R32UI,
+            gl.R16UI,
             16 * brick_map_width,
             16 * brick_map_width,
             16 * brick_map_width,
@@ -574,11 +684,30 @@ pub const Simulation = struct {
         gl.TextureStorage3D(
             gpu_sim.voxel_chunk_positions_texture,
             1,
-            gl.R32UI,
+            gl.R16UI,
             brick_map_width,
             brick_map_width,
             brick_map_width,
         );
+
+        const null_chunk_pos: u32 = std.math.maxInt(u32);
+
+        gl.ClearTexImage(
+            gpu_sim.voxel_chunk_positions_texture,
+            0,
+            gl.RED_INTEGER,
+            gl.UNSIGNED_INT,
+            &null_chunk_pos,
+        );
+
+        gl.TextureParameteri(gpu_sim.voxel_bit_buffer_memory_texture, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.TextureParameteri(gpu_sim.voxel_bit_buffer_memory_texture, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+        gl.TextureParameteri(gpu_sim.voxel_chunk_allocations_texture, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.TextureParameteri(gpu_sim.voxel_chunk_allocations_texture, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+        gl.TextureParameteri(gpu_sim.voxel_chunk_positions_texture, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.TextureParameteri(gpu_sim.voxel_chunk_positions_texture, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 
         const VoxelAllocatorBins = extern struct {
             voxel_allocator_bin: [15]i32 = [1]i32{-1} ** 15,
@@ -866,6 +995,8 @@ pub const Simulation = struct {
     }
 
     pub fn update(gpu_sim: *Simulation, sim: *@import("../Simulation.zig"), shader_uniforms: ShaderUniforms) void {
+        gl.GetNamedBufferSubData(gpu_sim.ray_stats_buffer, 0, @sizeOf(RayStats), &sim.ray_stats);
+
         gl.NamedBufferData(
             gpu_sim.voxel_materials_buffer,
             @intCast(@sizeOf(VoxelMaterial) * sim.voxel_materials.items.len),
@@ -919,6 +1050,10 @@ pub const Simulation = struct {
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 35, gpu_sim.voxel_heap_bit_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 36, gpu_sim.voxel_positions_buffer);
 
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 41, gpu_sim.simulation_vertex_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 42, gpu_sim.simulation_draws_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 43, gpu_sim.simulation_bounds_buffer);
+
         std.debug.assert(gl.IsTexture(gpu_sim.voxel_bit_buffer_memory_texture) != 0);
 
         gl.BindImageTexture(
@@ -928,7 +1063,7 @@ pub const Simulation = struct {
             0,
             0,
             gl.READ_WRITE,
-            gl.R32UI,
+            gl.R16UI,
         );
         gl.BindImageTexture(
             1,
@@ -946,7 +1081,7 @@ pub const Simulation = struct {
             0,
             0,
             gl.READ_WRITE,
-            gl.R32UI,
+            gl.R16UI,
         );
 
         if (sim.gpu_sim.shaders.fill_region_shader != sim.gpu_sim.shaders.old_fill_region_shader) {
@@ -982,6 +1117,16 @@ pub const Simulation = struct {
                 gl.RED,
                 gl.BYTE,
                 &deviation_clear,
+            );
+
+            const null_chunk_pos: u32 = std.math.maxInt(u32);
+
+            gl.ClearTexImage(
+                gpu_sim.voxel_chunk_positions_texture,
+                0,
+                gl.RED_INTEGER,
+                gl.UNSIGNED_INT,
+                &null_chunk_pos,
             );
 
             gl.DispatchCompute(
@@ -1057,6 +1202,22 @@ pub const Simulation = struct {
             gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, 0);
             gl.BindBufferBase(gl.UNIFORM_BUFFER, 0, 0);
         }
+
+        gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+
+        gl.BindTextureUnit(10, gpu_sim.voxel_bit_buffer_memory_texture);
+        gl.BindTextureUnit(11, gpu_sim.voxel_chunk_positions_texture);
+
+        gl.UseProgram(gpu_sim.shaders.generate_chunk_draws);
+
+        const chunk_size = 16;
+
+        gl.DispatchCompute(
+            (sim.width / chunk_size) / 8,
+            (sim.height / chunk_size) / 8,
+            (sim.depth / chunk_size) / 8,
+        );
 
         if (sim.enable_simulation) {
             std.mem.swap(
@@ -1137,8 +1298,18 @@ pub const Simulation = struct {
 
         gl.BindTextureUnit(10, sim.voxel_bit_buffer_memory_texture);
         gl.BindTextureUnit(11, sim.voxel_chunk_positions_texture);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 44, sim.ray_stats_buffer);
+
+        gl.NamedBufferSubData(
+            sim.ray_stats_buffer,
+            0,
+            @sizeOf(RayStats),
+            &RayStats{},
+        );
 
         gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        gl.MemoryBarrier(gl.VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+        gl.MemoryBarrier(gl.COMMAND_BARRIER_BIT);
 
         var framebuffer: u32 = 0;
         var renderbuffer: u32 = 0;
@@ -1173,18 +1344,85 @@ pub const Simulation = struct {
 
         gl.BindVertexArray(sim.vertex_array);
         gl.Disable(gl.CULL_FACE);
+        gl.Disable(gl.STENCIL_TEST);
+        gl.StencilMask(0);
         gl.DrawArrays(gl.TRIANGLES, 0, 36);
+
+        gl.UseProgram(sim.shaders.bounds_depth_prepass_shader);
+        gl.Enable(gl.DEPTH_TEST);
+        gl.DepthFunc(gl.ALWAYS);
+        gl.CullFace(gl.BACK);
+        gl.DepthMask(1);
+        gl.BindVertexArray(sim.vertex_array);
+
+        gl.DrawArrays(gl.TRIANGLES, 0, 36);
+
+        gl.BindVertexArray(sim.simulation_vertex_array);
+        gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, sim.simulation_draws_buffer);
+        gl.Disable(gl.DEPTH_TEST);
+
+        gl.UseProgram(sim.shaders.depth_prepass_shader);
+
+        gl.Enable(gl.STENCIL_TEST);
+        gl.CullFace(gl.FRONT);
+        gl.Enable(gl.CULL_FACE);
+        gl.Enable(gl.DEPTH_TEST);
+        gl.DepthMask(1);
+        gl.DepthFunc(gl.ALWAYS);
+
+        gl.StencilMask(0xff);
+
+        gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+        gl.StencilFunc(gl.ALWAYS, 1, 0); // all fragments should pass the stencil test
+
+        gl.MultiDrawArraysIndirect(gl.TRIANGLES, 0, 1, @sizeOf(u32) * 4);
+
+        gl.UseProgram(sim.shaders.gizmo_shader);
+        gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE);
+        gl.CullFace(gl.FRONT);
+
+        gl.BindVertexArray(sim.simulation_vertex_array);
+
+        gl.MultiDrawArraysIndirect(gl.TRIANGLES, 0, 1, @sizeOf(u32) * 4);
+
+        gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL);
 
         gl.UseProgram(sim.shaders.renderer_program);
 
+        //gl.BindVertexArray(sim.simulation_vertex_array);
         gl.BindVertexArray(sim.vertex_array);
-        gl.CullFace(gl.FRONT);
         defer gl.CullFace(gl.BACK);
+
+        gl.CullFace(gl.FRONT);
         gl.Enable(gl.CULL_FACE);
+        gl.StencilFunc(gl.EQUAL, 1, 0xff);
+        gl.StencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+        gl.DepthFunc(gl.NOTEQUAL);
+        gl.Disable(gl.DEPTH_TEST);
+        gl.DepthMask(0);
+        gl.StencilMask(0);
+
+        const Static = struct {
+            pub var stencil_mask_0: bool = false;
+        };
+
+        if (context.window.getKey(.s) == .press) {
+            Static.stencil_mask_0 = !Static.stencil_mask_0;
+        }
+
+        if (Static.stencil_mask_0) {
+            gl.Disable(gl.STENCIL_TEST);
+            gl.Disable(gl.DEPTH_TEST);
+        }
 
         gl.DrawArrays(gl.TRIANGLES, 0, 36);
+        //gl.MultiDrawArraysIndirect(gl.TRIANGLES, 0, 1, @sizeOf(u32) * 4);
+
+        gl.Disable(gl.STENCIL_TEST);
 
         gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
+
+        gl.Disable(gl.DEPTH_TEST);
 
         if (render_texture) |_| {
             gl.DeleteFramebuffers(1, @ptrCast(&framebuffer));
@@ -1290,6 +1528,7 @@ pub fn loadShader(source: struct {
     return shader;
 }
 
+const RayStats = @import("../Simulation.zig").RayStats;
 const ShaderUniforms = @import("../Simulation.zig").ShaderUniforms;
 const VoxelMaterial = @import("../Simulation.zig").VoxelMaterial;
 const VoxelMaterialVisual = @import("../Simulation.zig").VoxelMaterialVisual;

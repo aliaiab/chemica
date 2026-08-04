@@ -5,7 +5,8 @@
         4,
         6,
         7,
-    }, .capacity = 5 } },
+        8,
+    }, .capacity = 6 } },
     .{
         .transform = .{ .position = .{
             19,
@@ -67,9 +68,9 @@
     },
     .{
         .transform = .{ .position = .{
-            91,
-            25,
-            58,
+            54,
+            86,
+            86,
         }, .uniform_scale = 1.8793931 },
         .data = .{ .sphere = .{ .radius = 10 } },
         .material = 12,
@@ -85,4 +86,14 @@
         .material = 12,
         .name = "Sphere",
     },
-}, .capacity = 8 } }
+    .{
+        .transform = .{ .position = .{
+            94,
+            25,
+            86,
+        }, .uniform_scale = 1.8793931 },
+        .data = .{ .sphere = .{ .radius = 10 } },
+        .material = 12,
+        .name = "Sphere",
+    },
+}, .capacity = 9 } }

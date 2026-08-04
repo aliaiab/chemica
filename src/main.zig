@@ -878,6 +878,45 @@ pub fn main(init: std.process.Init) !void {
 
             if (imgui.begin("Renderer", .{})) {
                 _ = imgui.valueEdit("Mode", &simulation.renderer_view_type, .{});
+
+                imgui.text("Performance Stats", .{});
+
+                imgui.separator(.{});
+
+                const total_primary_rays: f32 = @floatFromInt(simulation.ray_stats.total_primary_rays);
+                const total_primary_ray_steps: f32 = @floatFromInt(simulation.ray_stats.total_primary_ray_steps);
+                const total_primary_ray_hits: f32 = @floatFromInt(simulation.ray_stats.total_primary_ray_hits);
+
+                var mean_steps_per_ray = total_primary_ray_steps / total_primary_rays;
+
+                if (std.math.isNan(mean_steps_per_ray)) {
+                    mean_steps_per_ray = 1;
+                }
+
+                var fmt_buf: [1024]u8 = undefined;
+
+                var fba_instance = std.heap.FixedBufferAllocator.init(&fmt_buf);
+                const fba = fba_instance.allocator();
+
+                imgui.text("Primary Rays {s}", .{try formatNumberWithUnits(fba, total_primary_rays)});
+                imgui.text("Primary Ray Hits {s}", .{try formatNumberWithUnits(fba, total_primary_ray_hits)});
+                imgui.text("Primary Ray Misses {s}", .{try formatNumberWithUnits(fba, total_primary_rays - total_primary_ray_hits)});
+                imgui.text("Primary Ray Steps {s}", .{try formatNumberWithUnits(fba, total_primary_ray_steps)});
+                imgui.text("Primary Ray Steps (Max) {s}", .{try formatNumberWithUnits(fba, @floatFromInt(simulation.ray_stats.max_primary_ray_steps))});
+                imgui.text("Primary Ray Steps (Min) {s}", .{try formatNumberWithUnits(fba, @floatFromInt(simulation.ray_stats.min_primary_ray_steps))});
+
+                imgui.text("Mean Ray Steps Per Primary Ray", .{});
+
+                const colors: [3][4]f32 = .{
+                    .{ 0, 1, 0, 1 },
+                    .{ 0.5, 0.4, 0, 1 },
+                    .{ 0.9, 0.1, 0, 1 },
+                };
+
+                imgui.sameLine(.{});
+                imgui.pushStyleColor(.Text, colors[@intFromFloat(@floor(@log10(mean_steps_per_ray)))]);
+                imgui.text("{d:.2}", .{mean_steps_per_ray});
+                imgui.popStyleColor();
             }
             imgui.end();
 
@@ -1011,7 +1050,7 @@ pub fn main(init: std.process.Init) !void {
 
                 imgui.setSpatialMatrix(proj_view);
 
-                try imGuiCSGTreeNodeGizmos(csg_tree, .root);
+                //try imGuiCSGTreeNodeGizmos(csg_tree, .root);
 
                 if (imgui.beginSpatial("Spatial Log", .{}, .{ 1, @floatCast(@sin(glfw.getTime()) * 100), 1 })) {
                     imgui.text("Bum", .{});
@@ -1760,6 +1799,24 @@ export const font_data = @embedFile("assets/JetBrainsMono_regular.ttf");
 export const font_data_size: u32 = font_data.len;
 
 extern fn imguiStyleSetup() void;
+
+pub fn formatNumberWithUnits(allocator: std.mem.Allocator, x: f32) ![]const u8 {
+    var unit: []const u8 = "";
+
+    var value: f32 = x;
+
+    if (x > 1000 and x < 1000_000) {
+        value /= 1000;
+        unit = "K";
+    }
+
+    if (x > 1000_000) {
+        value /= 1000_000;
+        unit = "M";
+    }
+
+    return try std.fmt.allocPrint(allocator, "{:.2}{s}", .{ value, unit });
+}
 
 const imgui = @import("imgui.zig");
 const Simulation = @import("Simulation.zig");
