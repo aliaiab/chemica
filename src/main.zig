@@ -170,12 +170,6 @@ pub fn main(init: std.process.Init) !void {
         ptr.* = name.ptr;
     }
 
-    try simulation.csg_invocations.append(arena, .{
-        .transform = .identity,
-        .bound_min = undefined,
-        .bound_max = undefined,
-    });
-
     imguiStyleSetup();
 
     if (@import("builtin").mode == .Debug) {
@@ -183,6 +177,8 @@ pub fn main(init: std.process.Init) !void {
     } else {
         imgui.loadIniSettingsFromMemory(@embedFile("assets/imgui.ini"));
     }
+
+    std.debug.print("Sus\n", .{});
 
     defer blk: {
         std.Io.Dir.cwd().access(init.io, "src/assets/", .{}) catch |e| {
@@ -221,7 +217,9 @@ pub fn main(init: std.process.Init) !void {
 
     var csg_tree: CSGTree = try .init(arena);
 
-    csg_tree = try .initFromZonMemory(@embedFile("assets/test_scenes/metal_spheres.chemc.zon"), arena);
+    std.debug.print("Sus\n", .{});
+
+    //csg_tree = try .initFromZonMemory(@embedFile("assets/test_scenes/metal_spheres.chemc.zon"), arena);
 
     var selected_node_handles: std.ArrayList(CSGTreeNodeHandle) = .empty;
     var copied_node_handles: std.ArrayList(CSGTreeNodeHandle) = .empty;
@@ -297,21 +295,23 @@ pub fn main(init: std.process.Init) !void {
 
     var enable_transform_gizmo: bool = false;
 
-    for (sample_scenes_zon, sample_scenes_zon_paths) |sample_scene_zon, path| {
-        const sample_scene = try sample_scenes.addOne(arena);
-        sample_scene.* = try .initFromZonMemory(sample_scene_zon, arena);
+    if (false) {
+        for (sample_scenes_zon, sample_scenes_zon_paths) |sample_scene_zon, path| {
+            const sample_scene = try sample_scenes.addOne(arena);
+            sample_scene.* = try .initFromZonMemory(sample_scene_zon, arena);
 
-        simulation.camera = camera;
+            simulation.camera = camera;
 
-        const thumbnail = try simulation.gpu_sim.renderSceneThumbnail(
-            gpu_context,
-            &simulation,
-            sample_scene,
-            path,
-            arena,
-        );
+            const thumbnail = try simulation.gpu_sim.renderSceneThumbnail(
+                gpu_context,
+                &simulation,
+                sample_scene,
+                path,
+                arena,
+            );
 
-        try sample_scenes_thumbnails.append(arena, thumbnail);
+            try sample_scenes_thumbnails.append(arena, thumbnail);
+        }
     }
 
     imgui.getIO().WantSaveIniSettings = false;
@@ -504,51 +504,47 @@ pub fn main(init: std.process.Init) !void {
                 var pressed: bool = false;
 
                 var name: [:0]const u8 = "";
-                var unary_op: Simulation.CSGInstructionOp = .identity;
-                var child_op: Simulation.CSGInstructionOp = .binary_op_union;
+                var op: CSGTreeNode.Data = .@"union";
 
                 if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_E)) {
                     pressed = true;
                     name = "Extrude";
-                    unary_op = .unary_op_extrude_pre;
+                    op = .extrude;
                 }
 
                 if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_R) and imgui.isKeyDown(imgui.cimgui.ImGuiKey_LeftCtrl)) {
                     pressed = true;
                     name = "Revolve";
-                    unary_op = .unary_op_revolve;
+                    op = .revolve;
                 }
 
                 if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_U)) {
                     pressed = true;
 
-                    child_op = .binary_op_union;
+                    op = .@"union";
                     name = "Union";
 
                     if (imgui.isKeyDown(imgui.cimgui.ImGuiKey_S)) {
-                        child_op = .binary_op_smooth_union;
                         name = "Smooth Union";
                     }
                 }
                 if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_I)) {
                     pressed = true;
 
-                    child_op = .binary_op_intersection;
+                    op = .intersection;
                     name = "Intersection";
 
                     if (imgui.isKeyDown(imgui.cimgui.ImGuiKey_S)) {
-                        child_op = .binary_op_smooth_intersection;
                         name = "Smooth Intersection";
                     }
                 }
                 if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_D)) {
                     pressed = true;
 
-                    child_op = .binary_op_difference;
+                    op = .difference;
                     name = "Difference";
 
                     if (imgui.isKeyDown(imgui.cimgui.ImGuiKey_S)) {
-                        child_op = .binary_op_smooth_difference;
                         name = "Smooth Difference";
                     }
                 }
@@ -559,14 +555,8 @@ pub fn main(init: std.process.Init) !void {
 
                 const union_node = csg_tree.getNode(union_node_handle);
                 union_node.* = .{};
-
-                union_node.unary_op = unary_op;
-                union_node.child_op = child_op;
+                union_node.data = op;
                 union_node.name = name;
-
-                if (union_node.unary_op == .unary_op_extrude_pre) {
-                    union_node.data = .{ .extrude = .{ .h = 10 } };
-                }
 
                 var midpoint: @Vector(3, f32) = @splat(0);
 
@@ -615,7 +605,7 @@ pub fn main(init: std.process.Init) !void {
                             csg_tree.nodes.deinit(arena);
                             selected_node_handles.clearRetainingCapacity();
                             csg_tree = try .init(arena);
-                            csg_program.instructions.clearRetainingCapacity();
+                            csg_program.clear();
                             simulation.csg_dirty = true;
                             maybe_sim_file = null;
                         }
@@ -635,8 +625,7 @@ pub fn main(init: std.process.Init) !void {
                                     }
 
                                     selected_node_handles.clearRetainingCapacity();
-
-                                    csg_program.instructions.clearRetainingCapacity();
+                                    csg_program.clear();
 
                                     csg_tree = try .initFromFile(init.io, file, arena);
 
@@ -705,6 +694,27 @@ pub fn main(init: std.process.Init) !void {
 
                     //selected_node.transform.rotation = zmath.normalize4(selected_node.transform.rotation);
 
+                    simulation.csg_dirty |= imgui.dragFloat(
+                        "Rounding",
+                        "{}",
+                        &selected_node.modifiers.rounding.rounding,
+                        .{},
+                    );
+
+                    simulation.csg_dirty |= imgui.dragFloat(
+                        "Extrusion",
+                        "{}",
+                        &selected_node.modifiers.extrusion,
+                        .{},
+                    );
+
+                    simulation.csg_dirty |= imgui.dragFloat(
+                        "Revolution",
+                        "{}",
+                        &selected_node.modifiers.revolution,
+                        .{},
+                    );
+
                     if (selected_node.material != .air) {
                         var material: usize = @intFromEnum(selected_node.material);
 
@@ -734,15 +744,6 @@ pub fn main(init: std.process.Init) !void {
 
                         selected_node.material = @enumFromInt(material);
                     }
-
-                    if (selected_node.data == .extrude) {
-                        simulation.csg_dirty |= imgui.dragFloat(
-                            "Extrusion",
-                            "{}",
-                            &selected_node.data.extrude.h,
-                            .{},
-                        );
-                    }
                 }
 
                 if (imgui.button("Add Node", .{})) {
@@ -750,49 +751,28 @@ pub fn main(init: std.process.Init) !void {
                 }
 
                 if (imgui.beginPopup("node_type_popup")) {
-                    if (imgui.selectable("Box")) {
-                        const node_handle = try csg_tree.addNode(arena, .root);
+                    inline for (comptime std.meta.fields(CSGTreeNode.Data), comptime std.meta.tags(std.meta.Tag(CSGTreeNode.Data))) |field, tag| {
+                        if (imgui.selectable(field.name)) {
+                            const node_handle = try csg_tree.addNode(arena, .root);
 
-                        const node = csg_tree.getNode(node_handle);
+                            const node = csg_tree.getNode(node_handle);
 
-                        node.* = .{};
-                        node.data = .{
-                            .box = .{ .bounds = .{ 10, 10, 10 } },
-                        };
-                        node.transform = .identity;
-                        node.transform.position = .{
-                            @floatFromInt(simulation.width / 2),
-                            @floatFromInt(simulation.height / 2),
-                            @floatFromInt(simulation.depth / 2),
-                        };
-                        node.material = @enumFromInt(1);
+                            node.* = .{};
+                            node.data = .editorDefault(tag);
+                            node.transform = .identity;
+                            node.transform.position = .{
+                                @floatFromInt(simulation.width / 2),
+                                @floatFromInt(simulation.height / 2),
+                                @floatFromInt(simulation.depth / 2),
+                            };
+                            node.material = @enumFromInt(1);
 
-                        node.name = "Box";
-                        simulation.csg_dirty = true;
+                            node.name = field.name;
+                            simulation.csg_dirty = true;
 
-                        try selected_node_handles.append(arena, node_handle);
-                    }
-
-                    if (imgui.selectable("Sphere")) {
-                        const node_handle = try csg_tree.addNode(arena, .root);
-
-                        const node = csg_tree.getNode(node_handle);
-
-                        node.* = .{};
-                        node.data = .{
-                            .sphere = .{ .radius = 10 },
-                        };
-                        node.transform = .identity;
-                        node.transform.position = .{
-                            @floatFromInt(simulation.width / 2),
-                            @floatFromInt(simulation.height / 2),
-                            @floatFromInt(simulation.depth / 2),
-                        };
-                        node.material = @enumFromInt(1);
-                        node.name = "Sphere";
-                        simulation.csg_dirty = true;
-
-                        try selected_node_handles.append(arena, node_handle);
+                            selected_node_handles.clearRetainingCapacity();
+                            try selected_node_handles.append(arena, node_handle);
+                        }
                     }
 
                     imgui.endPopup();
@@ -940,20 +920,22 @@ pub fn main(init: std.process.Init) !void {
 
                 imgui.pushId("samples");
 
-                for (sample_scenes_thumbnails.items, sample_scenes.items, sample_scenes_zon_paths) |thumbnail, sample_scene, path| {
-                    const name = std.fs.path.basename(path);
-                    imgui.text("{s}", .{name});
-                    if (imgui.imageButton(
-                        .fromFmt("{s}", .{name}),
-                        thumbnail,
-                        .{ 100, 100 },
-                        .{},
-                    )) {
-                        //TODO: make a deep copy
-                        csg_tree = sample_scene;
-                        selected_node_handles.clearRetainingCapacity();
-                        simulation.csg_dirty = true;
-                        simulation.enable_simulation = false;
+                if (sample_scenes_thumbnails.items.len != 0) {
+                    for (sample_scenes_thumbnails.items, sample_scenes.items, sample_scenes_zon_paths) |thumbnail, sample_scene, path| {
+                        const name = std.fs.path.basename(path);
+                        imgui.text("{s}", .{name});
+                        if (imgui.imageButton(
+                            .fromFmt("{s}", .{name}),
+                            thumbnail,
+                            .{ 100, 100 },
+                            .{},
+                        )) {
+                            //TODO: make a deep copy
+                            csg_tree = sample_scene;
+                            selected_node_handles.clearRetainingCapacity();
+                            simulation.csg_dirty = true;
+                            simulation.enable_simulation = false;
+                        }
                     }
                 }
 
@@ -1080,7 +1062,7 @@ pub fn main(init: std.process.Init) !void {
                     );
 
                     if (maybe_inst) |inst| {
-                        if (csg_program.instructions_to_nodes.get(inst)) |node| {
+                        if (csg_program.elements_to_nodes.get(inst)) |node| {
                             if (!imgui.cimgui.ImGui_IsKeyDown(imgui.cimgui.ImGuiKey_LeftShift)) {
                                 selected_node_handles.clearRetainingCapacity();
                             }
@@ -1109,25 +1091,42 @@ pub fn main(init: std.process.Init) !void {
 
                 matrix = zmath.mul(zmath.matFromQuat(rotation), matrix);
 
-                if (selected_node.data == .box) {
-                    local_bounds[0][0] = -@as(f32, @floatFromInt(std.math.sign(selected_node.data.box.bounds[0]))) * resultant_transform.uniform_scale;
-                    local_bounds[0][1] = -@as(f32, @floatFromInt(std.math.sign(selected_node.data.box.bounds[1]))) * resultant_transform.uniform_scale;
-                    local_bounds[0][2] = -@as(f32, @floatFromInt(std.math.sign(selected_node.data.box.bounds[2]))) * resultant_transform.uniform_scale;
+                switch (selected_node.data) {
+                    .box => {
+                        local_bounds[0][0] = -@as(f32, @floatFromInt(std.math.sign(selected_node.data.box.bounds[0]))) * resultant_transform.uniform_scale;
+                        local_bounds[0][1] = -@as(f32, @floatFromInt(std.math.sign(selected_node.data.box.bounds[1]))) * resultant_transform.uniform_scale;
+                        local_bounds[0][2] = -@as(f32, @floatFromInt(std.math.sign(selected_node.data.box.bounds[2]))) * resultant_transform.uniform_scale;
 
-                    local_bounds[1][0] = -local_bounds[0][0] * resultant_transform.uniform_scale;
-                    local_bounds[1][1] = -local_bounds[0][1] * resultant_transform.uniform_scale;
-                    local_bounds[1][2] = -local_bounds[0][2] * resultant_transform.uniform_scale;
-                    matrix = zmath.mul(matrix, zmath.scaling(
-                        selected_node.data.box.bounds[0],
-                        selected_node.data.box.bounds[1],
-                        selected_node.data.box.bounds[2],
-                    ));
-                } else {
-                    matrix = zmath.mul(matrix, zmath.scaling(
-                        resultant_transform.uniform_scale,
-                        resultant_transform.uniform_scale,
-                        resultant_transform.uniform_scale,
-                    ));
+                        local_bounds[1][0] = -local_bounds[0][0] * resultant_transform.uniform_scale;
+                        local_bounds[1][1] = -local_bounds[0][1] * resultant_transform.uniform_scale;
+                        local_bounds[1][2] = -local_bounds[0][2] * resultant_transform.uniform_scale;
+                        matrix = zmath.mul(matrix, zmath.scaling(
+                            selected_node.data.box.bounds[0],
+                            selected_node.data.box.bounds[1],
+                            selected_node.data.box.bounds[2],
+                        ));
+                    },
+                    .cylinder => |cylinder| {
+                        local_bounds[0][0] = -@as(f32, cylinder.radius) * resultant_transform.uniform_scale;
+                        local_bounds[0][1] = -@as(f32, cylinder.extrusion_height) * resultant_transform.uniform_scale;
+                        local_bounds[0][2] = -@as(f32, cylinder.radius) * resultant_transform.uniform_scale;
+
+                        local_bounds[1][0] = -local_bounds[0][0];
+                        local_bounds[1][1] = -local_bounds[0][1];
+                        local_bounds[1][2] = -local_bounds[0][2];
+                        matrix = zmath.mul(matrix, zmath.scaling(
+                            cylinder.radius,
+                            cylinder.extrusion_height,
+                            cylinder.radius,
+                        ));
+                    },
+                    else => {
+                        matrix = zmath.mul(matrix, zmath.scaling(
+                            resultant_transform.uniform_scale,
+                            resultant_transform.uniform_scale,
+                            resultant_transform.uniform_scale,
+                        ));
+                    },
                 }
 
                 var position: @Vector(3, f32) = @splat(0);
@@ -1196,20 +1195,30 @@ pub fn main(init: std.process.Init) !void {
                     node.transform.position[1] += delta_translation[1];
                     node.transform.position[2] += delta_translation[2];
 
-                    if (selected_node_handles.items[0] != node_handle or selected_node.data != .box) {
+                    if (selected_node_handles.items[0] != node_handle or selected_node.data != .box or selected_node.data != .cylinder) {
                         node.transform.uniform_scale *= delta_scale[0];
                     }
                 }
 
-                if (selected_node.data == .box) {
-                    selected_node.data.box.bounds[0] = @floor(scale[0]);
-                    selected_node.data.box.bounds[1] = @floor(scale[1]);
-                    selected_node.data.box.bounds[2] = @floor(scale[2]);
+                switch (selected_node.data) {
+                    .box => {
+                        selected_node.data.box.bounds[0] = @floor(scale[0]);
+                        selected_node.data.box.bounds[1] = @floor(scale[1]);
+                        selected_node.data.box.bounds[2] = @floor(scale[2]);
+                    },
+                    .cylinder => {
+                        selected_node.data.cylinder.radius = @floor(scale[0]);
+                        selected_node.data.cylinder.extrusion_height = @floor(scale[1]);
+                        selected_node.data.cylinder.radius = @floor(scale[2]);
+                    },
+                    else => {},
                 }
 
-                if (selected_node_handles.items[0] != .root and selected_node.data != .box) {
+                if (selected_node_handles.items[0] != .root and selected_node.data != .box and selected_node.data != .cylinder) {
                     selected_node.transform.uniform_scale = scale[0];
-                } else {}
+                } else {
+                    selected_node.transform.uniform_scale = 1;
+                }
 
                 delta_quat[3] = 0;
                 //selected_node.transform.rotation = math.mulQuat(delta_quat, selected_node.transform.rotation);
@@ -1432,13 +1441,28 @@ pub const CSGTree = struct {
     }
 
     pub fn initFromZonMemory(zon: [:0]const u8, arena: std.mem.Allocator) !CSGTree {
-        const serialized_tree = try std.zon.parse.fromSliceAlloc(
+        var diag: std.zon.parse.Diagnostics = .{};
+
+        const serialized_tree = std.zon.parse.fromSliceAlloc(
             CSGTreeZonSerializable,
             arena,
             zon,
-            null,
+            &diag,
             .{},
-        );
+        ) catch |e| {
+            switch (e) {
+                error.ParseZon => {
+                    var error_iter = diag.iterateErrors();
+
+                    while (error_iter.next()) |err| {
+                        std.debug.print("zon error: {f}\n", .{err.fmtMessage(&diag)});
+                    }
+
+                    return try .init(arena);
+                },
+                else => return e,
+            }
+        };
 
         const tree = @as(*const CSGTree, @ptrCast(&serialized_tree)).*;
 
@@ -1511,7 +1535,7 @@ pub const CSGTree = struct {
     pub fn resolveNodeTransform(
         self: *@This(),
         node_handle: CSGTreeNodeHandle,
-    ) Simulation.CSGRigidTransform {
+    ) Simulation.AffineTransform3D {
         if (node_handle == .root) {
             return .identity;
         }
@@ -1559,18 +1583,18 @@ pub const CSGTree = struct {
         gpa: std.mem.Allocator,
         program: *Simulation.CSGProgram,
     ) !void {
-        program.instructions.clearRetainingCapacity();
-        program.instructions_box.clearRetainingCapacity();
-        program.instructions_sphere.clearRetainingCapacity();
-        program.instructions_extrude_post.clearRetainingCapacity();
-        program.transforms.clearRetainingCapacity();
-        program.instructions_to_nodes.clearRetainingCapacity();
+        program.clear();
+
+        const element_index: u16 = 0;
+        _ = try program.elements.addOne(gpa);
 
         try tree.compileNode(
             .root,
             gpa,
             program,
+            element_index,
             .null,
+            .identity,
         );
     }
 
@@ -1579,126 +1603,86 @@ pub const CSGTree = struct {
         node_handle: CSGTreeNodeHandle,
         gpa: std.mem.Allocator,
         program: *Simulation.CSGProgram,
+        element_index: u16,
         parent_handle: CSGTreeNodeHandle,
+        parent_transform: Simulation.AffineTransform3D,
     ) !void {
+        _ = parent_handle; // autofix
         const node = tree.getNode(node_handle);
 
-        if (node.unary_op != .identity and node_handle != .root) {
-            try program.instructions.append(gpa, .{
-                .csg_op = node.unary_op,
-                .stream_index = 0,
-            });
+        if (node.modifiers.revolution != 0) {
+            try program.element_params.append(gpa, node.modifiers.revolution);
         }
 
-        const transform_index: u32 = @intCast(program.transforms.items.len);
-
-        var parent_transform: Simulation.CSGRigidTransform = .identity;
-
-        if (parent_handle != .null) {
-            parent_transform = tree.getNode(parent_handle).transform;
+        if (node.modifiers.extrusion != 0) {
+            try program.element_params.append(gpa, node.modifiers.extrusion);
         }
 
-        const resolved_transform: Simulation.CSGRigidTransform = .compose(parent_transform, node.transform);
+        if (node.modifiers.rounding.rounding != 0) {
+            try program.element_params.append(gpa, node.modifiers.rounding.rounding);
+        }
+
+        std.debug.print("{}\n", .{node.children.items.len});
+
+        program.elements.items[element_index] = .{
+            .type = .{
+                .type = node.data,
+                .modifiers = .{
+                    .rounding = node.modifiers.rounding.rounding != 0,
+                    .extrusion = node.modifiers.extrusion != 0,
+                    .revolution = node.modifiers.revolution != 0,
+                },
+            },
+            .params_start = @intCast(program.element_params.items.len),
+            .children_start = @intCast(program.elements.items.len),
+            .children_count = @intCast(node.children.items.len),
+        };
+
+        const resolved_transform: Simulation.AffineTransform3D = .compose(parent_transform, node.transform);
 
         try program.transforms.append(gpa, resolved_transform);
+        const element_bounds = try program.element_bounds.addOne(gpa);
+        //TODO: compute bounds
+        element_bounds.* = .{ 128, 128, 128, 0 };
 
-        var identity_transform_index: ?u32 = null;
+        const children = try program.elements.addManyAsSlice(gpa, program.elements.items[element_index].children_count);
+        _ = children; // autofix
 
-        if (node.unary_op == .unary_op_extrude_pre and node_handle != .root) {
-            const extrude_pre = &program.instructions.items[program.instructions.items.len - 1];
-
-            identity_transform_index = @intCast(program.transforms.items.len);
-
-            try program.transforms.append(gpa, .identity);
-
-            extrude_pre.* = .{
-                .csg_op = .unary_op_extrude_pre,
-                .stream_index = 0,
-            };
-        }
-
-        if (node.data != .empty) {
-            const instruction_index: u32 = @intCast(program.instructions.items.len);
-            const instruction = try program.instructions.addOne(gpa);
-
-            try program.instructions_to_nodes.put(gpa, instruction_index, node_handle);
-
-            switch (node.data) {
-                .box => |box| {
-                    const stream_index: u32 = @intCast(program.instructions_box.items.len);
-
-                    const box_data = try program.instructions_box.addOne(gpa);
-
-                    box_data.* = .{
-                        .bounds = box.bounds,
-                        .rigid_transform = transform_index,
-                        .material = node.material,
-                    };
-
-                    if (identity_transform_index) |ident_index| {
-                        box_data.rigid_transform = ident_index;
-                    }
-
-                    instruction.csg_op = .box;
-                    instruction.stream_index = stream_index;
-                },
-                .sphere => |sphere| {
-                    const stream_index: u32 = @intCast(program.instructions_sphere.items.len);
-
-                    const box_data = try program.instructions_sphere.addOne(gpa);
-
-                    box_data.* = .{
-                        .radius = sphere.radius,
-                        .rigid_transform = transform_index,
-                        .material = node.material,
-                    };
-
-                    if (identity_transform_index) |ident_index| {
-                        box_data.rigid_transform = ident_index;
-                    }
-
-                    instruction.csg_op = .sphere;
-                    instruction.stream_index = stream_index;
-                },
-                .extrude => {},
-                .empty => {},
-            }
+        switch (node.data) {
+            .box => |box| {
+                try program.element_params.appendSlice(gpa, &box.bounds);
+            },
+            .cylinder => |cylinder| {
+                try program.element_params.append(gpa, cylinder.extrusion_height);
+                try program.element_params.append(gpa, cylinder.radius);
+            },
+            .sphere => |sphere| {
+                try program.element_params.append(gpa, sphere.radius);
+            },
+            .n_gon => |n_gon| {
+                try program.element_params.append(gpa, n_gon.radius);
+                try program.element_params.append(gpa, n_gon.sides);
+            },
+            .@"union" => {},
+            .intersection => {},
+            .difference => {},
+            .extrude => {},
+            .revolve => {},
         }
 
         for (node.children.items, 0..) |child, i| {
+            const child_element_index: u16 = @intCast(program.elements.items[element_index].children_start + i);
+
             try tree.compileNode(
                 child,
                 gpa,
                 program,
+                child_element_index,
                 node_handle,
+                resolved_transform,
             );
 
-            if (i != 0) {
-                try program.instructions.append(gpa, .{
-                    .csg_op = node.child_op,
-                    .stream_index = 0,
-                });
-            }
-        }
-
-        if (node.unary_op == .unary_op_extrude_pre) {
-            const extrude_post = try program.instructions.addOne(gpa);
-            const stream_index: u32 = @intCast(program.instructions_extrude_post.items.len);
-            const post = try program.instructions_extrude_post.addOne(gpa);
-
-            post.h = node.data.extrude.h;
-
-            extrude_post.* = .{
-                .csg_op = .unary_op_extrude_post,
-                .stream_index = stream_index,
-            };
-        }
-
-        if (node.data != .empty and node.data != .extrude and node.children.items.len != 0) {
-            try program.instructions.append(gpa, .{
-                .csg_op = .binary_op_union,
-                .stream_index = 0,
-            });
+            try program.elements_to_nodes.put(gpa, child_element_index, child);
         }
     }
 };
@@ -1708,38 +1692,85 @@ const CSGTreeZonSerializable = struct {
 };
 
 const CSGTreeNode = struct {
-    transform: Simulation.CSGRigidTransform = .identity,
-    data: Data = .empty,
+    transform: Simulation.AffineTransform3D = .identity,
+    data: Data = .@"union",
+    modifiers: struct {
+        rounding: ModifierRounding = .{},
+        extrusion: f32 = 0,
+        revolution: f32 = 0,
+    } = .{},
     material: Simulation.VoxelMaterialHandle = .air,
     parent: CSGTreeNodeHandle = .root,
     children: std.ArrayList(CSGTreeNodeHandle) = .empty,
     name: [:0]const u8 = "",
-    unary_op: Simulation.CSGInstructionOp = .identity,
-    child_op: Simulation.CSGInstructionOp = .binary_op_union,
 
-    pub const Data = union(enum) {
-        empty: void,
+    pub const Data = union(Simulation.SdfElementType) {
+        @"union",
+        intersection,
+        difference,
         box: struct {
             bounds: [3]f32,
+        },
+        cylinder: struct {
+            extrusion_height: f32,
+            radius: f32,
         },
         sphere: struct {
             radius: f32,
         },
-        extrude: struct {
-            h: f32,
+        extrude,
+        revolve,
+        n_gon: struct {
+            radius: f32,
+            sides: f32,
         },
+
+        pub fn editorDefault(comptime tag: Simulation.SdfElementType) Data {
+            return switch (tag) {
+                .@"union",
+                .intersection,
+                .difference,
+                .extrude,
+                .revolve,
+                => tag,
+                .sphere => .{
+                    .sphere = .{
+                        .radius = 10,
+                    },
+                },
+                .box => .{
+                    .box = .{
+                        .bounds = .{ 10, 10, 10 },
+                    },
+                },
+                .cylinder => .{
+                    .cylinder = .{
+                        .extrusion_height = 10,
+                        .radius = 10,
+                    },
+                },
+                .n_gon => .{
+                    .n_gon = .{
+                        .radius = 10,
+                        .sides = 10,
+                    },
+                },
+            };
+        }
+    };
+
+    pub const ModifierRounding = struct {
+        rounding: f32 = 0,
     };
 };
 
 const CSGTreeNodeZonSerializable = struct {
-    transform: Simulation.CSGRigidTransform = .identity,
-    data: CSGTreeNode.Data = .empty,
+    transform: Simulation.AffineTransform3D = .identity,
+    data: CSGTreeNode.Data = .@"union",
     material: u32 = 0,
     parent: u32 = 0,
     children: std.ArrayList(u32) = .empty,
     name: [:0]const u8 = "",
-    unary_op: Simulation.CSGInstructionOp = .identity,
-    child_op: Simulation.CSGInstructionOp = .binary_op_union,
 };
 
 fn glfwScrollCallback(window: *glfw.Window, x: f64, y: f64) callconv(.c) void {

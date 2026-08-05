@@ -19,8 +19,6 @@ point_lights: std.ArrayList(PointLight) = .empty,
 
 timestep_index: u32 = 0,
 
-csg_invocations: std.ArrayList(CSGInvocation) = .empty,
-
 model_matrix: [4][4]f32 = undefined,
 view_matrix: [4][4]f32 = undefined,
 projection_matrix: [4][4]f32 = undefined,
@@ -46,7 +44,8 @@ pub fn init(
 }
 
 pub fn deinit(sim: *Simulation, gpa: std.mem.Allocator) void {
-    sim.csg_invocations.deinit(gpa);
+    _ = sim; // autofix
+    _ = gpa; // autofix
 }
 
 pub fn update(sim: *Simulation) void {
@@ -56,9 +55,9 @@ pub fn update(sim: *Simulation) void {
         .model = sim.model_matrix,
         .view = sim.view_matrix,
         .projection = sim.projection_matrix,
-        .root_transform = sim.csg_invocations.items[0].transform,
-        .csg_bounding_min = sim.csg_invocations.items[0].bound_min,
-        .csg_bounding_max = sim.csg_invocations.items[0].bound_max,
+        .root_transform = .identity,
+        .csg_bounding_min = undefined,
+        .csg_bounding_max = undefined,
         .substep_index = sim.timestep_index,
         .window_size = sim.window_size,
         .delta_time = 0,
@@ -83,9 +82,9 @@ pub fn render(
         .model = sim.model_matrix,
         .view = sim.view_matrix,
         .projection = sim.projection_matrix,
-        .root_transform = sim.csg_invocations.items[0].transform,
-        .csg_bounding_min = sim.csg_invocations.items[0].bound_min,
-        .csg_bounding_max = sim.csg_invocations.items[0].bound_max,
+        .root_transform = .identity,
+        .csg_bounding_min = undefined,
+        .csg_bounding_max = undefined,
         .substep_index = sim.timestep_index,
         .window_size = sim.window_size,
         .delta_time = 0,
@@ -132,14 +131,47 @@ pub const VoxelMaterialVisual = extern struct {
     refractive_index: f32 = 1.5,
 };
 
+pub const SdfElement3D = extern struct {
+    type: SdfElementTypeAndModifiers,
+    params_start: u16,
+    children_start: u16,
+    children_count: u16,
+};
+
+pub const SdfElementTypeAndModifiers = packed struct(u16) {
+    type: SdfElementType,
+    modifiers: SdfElementModifiers,
+};
+
+pub const SdfElementModifiers = packed struct(u8) {
+    rounding: bool = false,
+    extrusion: bool = false,
+    repetition: bool = false,
+    revolution: bool = false,
+    elongation: bool = false,
+    _: u3 = 0,
+};
+
+pub const SdfElementType = enum(u8) {
+    @"union",
+    intersection,
+    difference,
+    box,
+    cylinder,
+    sphere,
+    extrude,
+    revolve,
+    n_gon,
+};
+
 pub const CSGProgram = struct {
-    transforms: std.ArrayList(CSGRigidTransform) = .empty,
-    instructions: std.ArrayList(CSGInstruction) = .empty,
-    instructions_box: std.ArrayList(CSGInstructionBox) = .empty,
-    instructions_sphere: std.ArrayList(CSGInstructionSphere) = .empty,
-    instructions_extrude_post: std.ArrayList(CSGInstructionExtrudePost) = .empty,
-    material: std.ArrayList(CSGMaterialComponent) = .empty,
-    instructions_to_nodes: std.AutoArrayHashMapUnmanaged(u32, @import("main.zig").CSGTreeNodeHandle) = .empty,
+    //TODO: make this a multi array list
+    elements: std.ArrayList(SdfElement3D) = .empty,
+    element_bounds: std.ArrayList([4]f32) = .empty,
+    transforms: std.ArrayList(AffineTransform3D) = .empty,
+    element_params: std.ArrayList(f32) = .empty,
+
+    elements_to_nodes: std.AutoArrayHashMapUnmanaged(u32, @import("main.zig").CSGTreeNodeHandle) = .empty,
 
     fn sdBox(p: @Vector(3, f32), b: @Vector(3, f32)) f32 {
         const q = @abs(p) - b;
@@ -152,6 +184,14 @@ pub const CSGProgram = struct {
 
     fn sdUnion(a: f32, b: f32) f32 {
         return @min(a, b);
+    }
+
+    pub fn clear(self: *@This()) void {
+        self.transforms.clearRetainingCapacity();
+        self.element_bounds.clearRetainingCapacity();
+        self.elements.clearRetainingCapacity();
+        self.element_params.clearRetainingCapacity();
+        self.elements_to_nodes.clearRetainingCapacity();
     }
 
     pub fn rayMarchSDF(
@@ -198,75 +238,12 @@ pub const CSGProgram = struct {
         transform: u32,
         instruction: u32,
     } {
-        var distance_stack: [16]f32 = [1]f32{0} ** 16;
-        var transform_stack: [16]u32 = undefined;
-        var instruction_stack: [16]usize = [1]usize{std.math.maxInt(u32)} ** 16;
-
-        var position_stack: [16]@Vector(3, f32) = undefined;
-
-        var stack_pointer: u32 = 0;
-        const position_stack_pointer: u32 = 0;
-        position_stack[position_stack_pointer] = sample_position;
-
-        for (program.instructions.items, 0..) |instruction, instruction_index| {
-            const position = position_stack[position_stack_pointer];
-
-            switch (instruction.csg_op) {
-                .box => {
-                    const instruction_box = program.instructions_box.items[instruction.stream_index];
-                    const transform = program.transforms.items[instruction_box.rigid_transform];
-
-                    const point = transformPoint(position, transform);
-
-                    transform_stack[stack_pointer] = instruction_box.rigid_transform;
-                    distance_stack[stack_pointer] = sdBox(point, instruction_box.bounds) * transform.uniform_scale;
-                    instruction_stack[stack_pointer] = instruction_index;
-                    stack_pointer += 1;
-                },
-                .sphere => {
-                    const instructions_sphere = program.instructions_sphere.items[instruction.stream_index];
-                    const transform = program.transforms.items[instructions_sphere.rigid_transform];
-
-                    const point = transformPoint(position, transform);
-
-                    transform_stack[stack_pointer] = instructions_sphere.rigid_transform;
-                    distance_stack[stack_pointer] = sdSphere(point, instructions_sphere.radius) * transform.uniform_scale;
-                    instruction_stack[stack_pointer] = instruction_index;
-                    stack_pointer += 1;
-                },
-                .binary_op_union => {
-                    stack_pointer -= 1;
-                    const d1 = distance_stack[stack_pointer];
-                    const transform_1 = transform_stack[stack_pointer];
-                    const instruction_1 = instruction_stack[stack_pointer];
-                    stack_pointer -= 1;
-                    const d0 = distance_stack[stack_pointer];
-                    const transform_0 = transform_stack[stack_pointer];
-                    const instruction_0 = instruction_stack[stack_pointer];
-
-                    if (d0 < d1) {
-                        transform_stack[stack_pointer] = transform_0;
-                        instruction_stack[stack_pointer] = instruction_0;
-                    } else {
-                        transform_stack[stack_pointer] = transform_1;
-                        instruction_stack[stack_pointer] = instruction_1;
-                    }
-
-                    distance_stack[stack_pointer] = sdUnion(d0, d1);
-                    stack_pointer += 1;
-                },
-                else => {},
-            }
-        }
-
-        return .{
-            .signed_distance = distance_stack[stack_pointer -| 1],
-            .transform = transform_stack[stack_pointer -| 1],
-            .instruction = @intCast(instruction_stack[stack_pointer -| 1]),
-        };
+        _ = program; // autofix
+        _ = sample_position; // autofix
+        return undefined;
     }
 
-    fn transformPoint(point: @Vector(3, f32), rigid_transform: CSGRigidTransform) @Vector(3, f32) {
+    fn transformPoint(point: @Vector(3, f32), rigid_transform: AffineTransform3D) @Vector(3, f32) {
         const result = point - rigid_transform.position;
         var inverse_rotation = rigid_transform.rotation;
         inverse_rotation[3] *= -1;
@@ -284,56 +261,7 @@ pub const CSGProgram = struct {
     }
 };
 
-pub const CSGInstructionOp = enum(u32) {
-    identity,
-    box,
-    sphere,
-    plane,
-    triangle,
-    cylynder,
-    cone,
-    torus,
-
-    binary_op_union,
-    binary_op_intersection,
-    binary_op_difference,
-    binary_op_xor,
-    binary_op_smooth_union,
-    binary_op_smooth_intersection,
-    binary_op_smooth_difference,
-    unary_op_revolve,
-    unary_op_elgongate,
-    unary_op_extrude_pre,
-    unary_op_extrude_post,
-    pop_distance,
-    pop_position,
-    transform,
-    transform_post,
-};
-
-pub const CSGInstruction = extern struct {
-    csg_op: CSGInstructionOp,
-    stream_index: u32,
-};
-
-pub const CSGInstructionBox = extern struct {
-    bounds: [3]f32,
-    rigid_transform: u32,
-    material: VoxelMaterialHandle,
-    pad: [12]u8 = undefined,
-};
-
-pub const CSGInstructionSphere = extern struct {
-    radius: f32,
-    rigid_transform: u32,
-    material: VoxelMaterialHandle,
-};
-
-pub const CSGInstructionExtrudePost = extern struct {
-    h: f32,
-};
-
-pub const CSGRigidTransform = @import("shaders/shaders.zig").CSGRigidTransform;
+pub const AffineTransform3D = @import("shaders/shaders.zig").AffineTransform3D;
 pub const CSGMaterialComponent = extern struct {
     material: VoxelMaterialHandle,
     density: f32,
@@ -344,12 +272,6 @@ pub const CSGMaterial = extern struct {
     component_count: u32,
     min_temperature: f32,
     max_temperature: f32,
-};
-
-pub const CSGInvocation = extern struct {
-    transform: CSGRigidTransform,
-    bound_min: [3]i32,
-    bound_max: [3]i32,
 };
 
 pub const RendererViewType = @import("shaders/shaders.zig").RendererViewType;

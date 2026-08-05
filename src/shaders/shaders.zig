@@ -6,7 +6,7 @@ pub const ShaderUniforms = extern struct {
     padding0: u32 = 0,
     base_velocity: [3]i32,
     substep_index: u32,
-    root_transform: CSGRigidTransform,
+    root_transform: AffineTransform3D,
     csg_bounding_min: [3]i32,
     padding1: u32 = 0,
     csg_bounding_max: [3]i32,
@@ -16,19 +16,19 @@ pub const ShaderUniforms = extern struct {
     renderer_view_type: RendererViewType,
 };
 
-pub const CSGRigidTransform = extern struct {
+pub const AffineTransform3D = extern struct {
     position: [3]f32 = .{ 0, 0, 0 },
     uniform_scale: f32 = 1,
     rotation: @Vector(4, f32) align(@alignOf(f32)) = .{ 0, 0, 0, 1 },
 
-    pub const identity: CSGRigidTransform = .{
+    pub const identity: AffineTransform3D = .{
         .position = .{ 0, 0, 0 },
         .uniform_scale = 1,
         .rotation = .{ 0, 0, 0, 1 },
     };
 
-    pub fn compose(lhs: CSGRigidTransform, rhs: CSGRigidTransform) CSGRigidTransform {
-        var result: CSGRigidTransform = .identity;
+    pub fn compose(lhs: AffineTransform3D, rhs: AffineTransform3D) AffineTransform3D {
+        var result: AffineTransform3D = .identity;
         const rotated_pos = zmath.rotate(lhs.rotation, .{ rhs.position[0], rhs.position[1], rhs.position[2], 0 });
         result.position = .{
             lhs.position[0] + rotated_pos[0] * lhs.uniform_scale,

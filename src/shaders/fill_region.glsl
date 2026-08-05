@@ -38,10 +38,10 @@ float argInTurns(float x, float y) {
 shared int fill_finished_semaphore;
 
 void main() {
-    ivec3 position_int = csg_bounding_min + ivec3(gl_GlobalInvocationID);
+    ivec3 position_int = ivec3(gl_GlobalInvocationID);
     uint index = position_int.x + uSize.x * position_int.y + uSize.x * uSize.y * position_int.z;
 
-    bool is_in_region = all(greaterThanEqual(position_int, csg_bounding_min)) && all(lessThan(position_int, csg_bounding_max));
+    bool is_in_region = all(greaterThanEqual(position_int, uvec3(0))) && all(lessThan(position_int, uvec3(128)));
     is_in_region = is_in_region && isInBounds(position_int);
 
     if (!is_in_region) {
@@ -62,20 +62,16 @@ void main() {
 
     vec3 position = vec3(position_int) + 0.5;
 
-    vec3 transformed_point = transformPoint(position, root_transform);
-    float transform_scale = root_transform.uniform_scale;
+    SDFResult3D field = evaluateSDF(0, position, vec3(0), vec3(128));
 
-    FieldResult field = executeDistanceProgram(transformed_point, false);
-    field.signed_distance *= transform_scale;
-
-    transformed_point = transformPoint(transformed_point, transforms[field.transform]);
+    vec3 transformed_point = transformPoint(position, sdf_elements_3d_transforms[field.transform]);
 
     // transform_scale *= transforms[field.transform].uniform_scale;
 
     vec4 random = hash43(vec4(transformed_point, 0));
     random.r = clamp(random.r, 0, 1);
 
-    if (field.signed_distance < 0) {
+    if (field.sdf_gradient.x < 0) {
         float running_weight = 0;
 
         for (int i = 0; i < composite_material.length(); i++) {

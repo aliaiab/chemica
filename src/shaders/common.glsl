@@ -124,7 +124,7 @@ int bitScanForward(uint x) {
     return count;
 }
 
-struct RigidTransform {
+struct AffineTransform3D {
     //TODO: store inverse position, inverse rotation and inverse scale(maybe)
     vec3 position;
     float uniform_scale;
@@ -145,7 +145,7 @@ layout(std140, binding = 0) uniform Uniforms
     uint substep_index;
 
     //CSG parameters
-    RigidTransform root_transform;
+    AffineTransform3D root_transform;
     ivec3 csg_bounding_min;
     ivec3 csg_bounding_max;
     float delta_time;

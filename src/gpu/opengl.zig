@@ -435,11 +435,11 @@ pub const Simulation = struct {
 
     uniform_buffer: u32 = 0,
 
-    csg_instruction_buffer: u32 = 0,
-    csg_instructions_box_buffer: u32 = 0,
-    csg_instructions_sphere_buffer: u32 = 0,
-    csg_instructions_extrude_post_buffer: u32 = 0,
-    csg_transform_buffer: u32 = 0,
+    sdf_elements_3d_buffer: u32 = 0,
+    sdf_elements_3d_transforms_buffer: u32 = 0,
+    sdf_elements_3d_params_buffer: u32 = 0,
+    sdf_elements_3d_bounds_buffer: u32 = 0,
+
     csg_composite_material_buffer: u32 = 0,
 
     voxel_allocator_bins_buffer: u32 = 0,
@@ -571,12 +571,10 @@ pub const Simulation = struct {
         gl.CreateBuffers(2, &gpu_sim.simulation_deviation_buffers);
         gl.CreateBuffers(1, @ptrCast(&gpu_sim.heat_measurement_buffer));
 
-        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_instruction_buffer));
-        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_instructions_box_buffer));
-        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_instructions_sphere_buffer));
-        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_instructions_extrude_post_buffer));
-        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_transform_buffer));
-        gl.CreateBuffers(1, @ptrCast(&gpu_sim.csg_composite_material_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.sdf_elements_3d_bounds_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.sdf_elements_3d_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.sdf_elements_3d_transforms_buffer));
+        gl.CreateBuffers(1, @ptrCast(&gpu_sim.sdf_elements_3d_params_buffer));
 
         gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_materials_buffer));
         gl.CreateBuffers(1, @ptrCast(&gpu_sim.voxel_materials_visual_buffer));
@@ -948,57 +946,43 @@ pub const Simulation = struct {
         sim: @import("../Simulation.zig"),
         program: CSGProgram,
     ) !void {
-        if (program.instructions.items.len == 0) {
-            return;
-        }
+        _ = sim; // autofix
 
-        sim.csg_invocations.items[0].bound_min = .{ 0, 0, 0 };
-        sim.csg_invocations.items[0].bound_max = .{
-            @intCast(sim.width),
-            @intCast(sim.height),
-            @intCast(sim.depth),
-        };
-
-        gl.NamedBufferData(
-            gpu_sim.csg_instruction_buffer,
-            @intCast(program.instructions.items.len * @sizeOf(CSGInstruction)),
-            program.instructions.items.ptr,
-            gl.DYNAMIC_DRAW,
-        );
-
-        if (program.instructions_box.items.len > 0) {
+        if (program.elements.items.len != 0) {
             gl.NamedBufferData(
-                gpu_sim.csg_instructions_box_buffer,
-                @intCast(program.instructions_box.items.len * @sizeOf(CSGInstructionBox)),
-                program.instructions_box.items.ptr,
+                gpu_sim.sdf_elements_3d_buffer,
+                @intCast(program.elements.items.len * @sizeOf(@import("../Simulation.zig").SdfElement3D)),
+                program.elements.items.ptr,
                 gl.DYNAMIC_DRAW,
             );
         }
 
-        if (program.instructions_sphere.items.len > 0) {
+        if (program.element_params.items.len != 0) {
             gl.NamedBufferData(
-                gpu_sim.csg_instructions_sphere_buffer,
-                @intCast(program.instructions_sphere.items.len * @sizeOf(CSGInstructionSphere)),
-                program.instructions_sphere.items.ptr,
+                gpu_sim.sdf_elements_3d_params_buffer,
+                @intCast(program.element_params.items.len * @sizeOf(f32)),
+                program.element_params.items.ptr,
                 gl.DYNAMIC_DRAW,
             );
         }
 
-        if (program.instructions_extrude_post.items.len > 0) {
+        if (program.transforms.items.len != 0) {
             gl.NamedBufferData(
-                gpu_sim.csg_instructions_extrude_post_buffer,
-                @intCast(program.instructions_extrude_post.items.len * @sizeOf(CSGInstructionExtrudePost)),
-                program.instructions_extrude_post.items.ptr,
+                gpu_sim.sdf_elements_3d_transforms_buffer,
+                @intCast(program.transforms.items.len * @sizeOf(AffineTransform3D)),
+                program.transforms.items.ptr,
                 gl.DYNAMIC_DRAW,
             );
         }
 
-        gl.NamedBufferData(
-            gpu_sim.csg_transform_buffer,
-            @intCast(program.transforms.items.len * @sizeOf(CSGRigidTransform)),
-            program.transforms.items.ptr,
-            gl.DYNAMIC_DRAW,
-        );
+        if (program.element_bounds.items.len != 0) {
+            gl.NamedBufferData(
+                gpu_sim.sdf_elements_3d_bounds_buffer,
+                @intCast(program.element_bounds.items.len * @sizeOf([4]f32)),
+                program.element_bounds.items.ptr,
+                gl.DYNAMIC_DRAW,
+            );
+        }
     }
 
     pub fn update(gpu_sim: *Simulation, sim: *@import("../Simulation.zig"), shader_uniforms: ShaderUniforms) void {
@@ -1037,11 +1021,6 @@ pub const Simulation = struct {
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 23, gpu_sim.voxel_materials_visual_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, 0);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, gpu_sim.simulation_material_buffers[0]);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 10, gpu_sim.csg_transform_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, gpu_sim.csg_instruction_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 12, gpu_sim.csg_instructions_box_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 13, gpu_sim.csg_instructions_sphere_buffer);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 30, gpu_sim.csg_instructions_extrude_post_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 14, gpu_sim.csg_composite_material_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 20, gpu_sim.simulation_deviation_buffers[0]);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 21, gpu_sim.simulation_deviation_buffers[1]);
@@ -1060,6 +1039,11 @@ pub const Simulation = struct {
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 41, gpu_sim.simulation_vertex_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 42, gpu_sim.simulation_draws_buffer);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 43, gpu_sim.simulation_bounds_buffer);
+
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 60, gpu_sim.sdf_elements_3d_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 61, gpu_sim.sdf_elements_3d_transforms_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 62, gpu_sim.sdf_elements_3d_params_buffer);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 63, gpu_sim.sdf_elements_3d_bounds_buffer);
 
         std.debug.assert(gl.IsTexture(gpu_sim.voxel_bit_buffer_memory_texture) != 0);
 
@@ -1094,6 +1078,8 @@ pub const Simulation = struct {
         if (sim.gpu_sim.shaders.fill_region_shader != sim.gpu_sim.shaders.old_fill_region_shader) {
             sim.csg_dirty = true;
         }
+
+        sim.csg_dirty = true;
 
         if (!sim.enable_simulation and sim.csg_dirty) {
             gl.UseProgram(gpu_sim.shaders.fill_region_shader);
@@ -1537,7 +1523,7 @@ const VoxelMaterialVisual = @import("../Simulation.zig").VoxelMaterialVisual;
 const PointLight = @import("../Simulation.zig").PointLight;
 const CSGProgram = @import("../Simulation.zig").CSGProgram;
 const CSGTree = @import("../main.zig").CSGTree;
-const CSGRigidTransform = @import("../Simulation.zig").CSGRigidTransform;
+const AffineTransform3D = @import("../Simulation.zig").AffineTransform3D;
 const CSGInstruction = @import("../Simulation.zig").CSGInstruction;
 const CSGInstructionBox = @import("../Simulation.zig").CSGInstructionBox;
 const CSGInstructionSphere = @import("../Simulation.zig").CSGInstructionSphere;
