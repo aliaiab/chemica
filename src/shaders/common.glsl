@@ -152,6 +152,7 @@ layout(std140, binding = 0) uniform Uniforms
     uvec2 window_size;
     bool enable_radiative_cooling;
     uint renderer_mode;
+    uint sdf_texture_root;
 };
 
 #define RENDERER_MODE_PBR 0

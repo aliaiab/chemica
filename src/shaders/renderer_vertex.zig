@@ -41,4 +41,4 @@ comptime {
 
 const std = @import("std");
 const zmath = @import("zmath");
-const gpu = std.gpu;
+const gpu = std.spirv;

@@ -2,15 +2,15 @@
     .name = .chemica,
     .version = "0.0.0",
     .fingerprint = 0x68684ad7248e6055, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.1516+8a4b5424d",
     .dependencies = .{
         .zglfw = .{
-            .url = "git+https://github.com/zig-gamedev/zglfw.git#51003c105d23db378bb59ce415a387b22f1b0892",
-            .hash = "zglfw-0.10.0-dev-zgVDNIy4IQDJNRy4jrP1As-SZxfJpuWhU1iJ-wBab_VD",
+            .url = "git+https://github.com/kcbanner/zglfw.git?ref=c_translate#84dbf397f383d64e9a7b6cac7fd63f3848061f59",
+            .hash = "zglfw-0.10.0-dev-zgVDNIG5IQCGi-JaRJkA0CW9RdgROuYR22CekZE_mAJ7",
         },
         .cimgui_zig = .{
-            .url = "git+https://github.com/tiawl/cimgui.zig.git#aed4bf2397e315f5e0ca710081ce265af54778ae",
-            .hash = "cimgui_zig-1.0.0-2XubkqU3wgBSXFt2PvNRqA7NQxgkxHsuTM3fU0tS-Iz1",
+            .url = "git+https://github.com/tiawl/cimgui.zig.git#0c4879c66b1847372d0c3fb583f85b4610eb319f",
+            .hash = "cimgui_zig-1.0.0-2XubkgIExgAD_16D1jswkYZkdKYK1zGueFcJN-eoMrsY",
         },
         .zigglgen = .{
             .url = "git+https://github.com/castholm/zigglgen.git#fdf06cc7ea9951203f91a27a5548f943cd6c1d59",
@@ -29,8 +29,8 @@
             .hash = "N-V-__8AAKvLSQFMmnxKgPgSZhAlDHhho5wMmywvjIVqm11V",
         },
         .nfd = .{
-            .url = "git+https://github.com/fabioarnold/nfd-zig.git#031b6b08c28b4c209fde1d7cfc2387aa956febb2",
-            .hash = "nfd-0.1.0-y82kbsSLBgBgSEauGFsHxH7RmcL4AEOqZEqOvA8-NEFq",
+            .url = "git+https://github.com/aliaiab/nfd-zig.git#37508ad2c57c336e4e4cd961278958e8111b741f",
+            .hash = "nfd-0.1.0-y82kbrOMBgCNFqLVufstDZIuzZvNcS5XwQZNDBy14D8a",
         },
         .MGL = .{
             .url = "git+https://github.com/openglonmetal/MGL.git#de0ded04ec7dc99182e27e555a17775523b26911",

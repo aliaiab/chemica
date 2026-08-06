@@ -16,6 +16,10 @@ layout(std430, binding = 0) restrict buffer TemperatureInput
     float in_temperature[];
 };
 
+layout(std430, binding = 20) restrict buffer InDeviationBuffer {
+    int8_t in_deviation_buffer[];
+};
+
 #include "sdf.glsl"
 
 vec4 hash43(vec4 p)
@@ -62,7 +66,7 @@ void main() {
 
     vec3 position = vec3(position_int) + 0.5;
 
-    SDFResult3D field = evaluateSDF(0, position, vec3(0), vec3(128));
+    SDFResult3D field = evaluateSDF(sdf_texture_root, position, vec3(0), vec3(128));
 
     vec3 transformed_point = transformPoint(position, sdf_elements_3d_transforms[field.transform]);
 
@@ -72,16 +76,18 @@ void main() {
     random.r = clamp(random.r, 0, 1);
 
     if (field.sdf_gradient.x < 0) {
-        float running_weight = 0;
+        /*
 
-        for (int i = 0; i < composite_material.length(); i++) {
-            running_weight += composite_material[i].weight;
+                                                float running_weight = 0;
+                                                for (int i = 0; i < composite_material.length(); i++) {
+                                                    running_weight += composite_material[i].weight;
 
-            if (random.r < running_weight) {
-                in_voxel_lattice[index] = uint16_t(composite_material[i].material);
-                break;
-            }
-        }
+                                                    if (random.r < running_weight) {
+                                                        in_voxel_lattice[index] = uint16_t(composite_material[i].material);
+                                                        break;
+                                                    }
+                                                }
+                                                */
 
         in_voxel_lattice[mortonEncode(position_int)] = uint16_t(field.material);
 

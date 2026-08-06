@@ -48,7 +48,7 @@ pub fn deinit(sim: *Simulation, gpa: std.mem.Allocator) void {
     _ = gpa; // autofix
 }
 
-pub fn update(sim: *Simulation) void {
+pub fn update(sim: *Simulation, scene_root_index: u32) void {
     const shader_uniforms: ShaderUniforms = .{
         .size = .{ sim.width, sim.height, sim.depth },
         .base_velocity = undefined,
@@ -63,6 +63,7 @@ pub fn update(sim: *Simulation) void {
         .delta_time = 0,
         .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
         .renderer_view_type = sim.renderer_view_type,
+        .sdf_texture_root = scene_root_index,
     };
 
     sim.gpu_sim.update(sim, shader_uniforms);
@@ -72,6 +73,7 @@ pub fn render(
     sim: *Simulation,
     context: gpu.Context,
     render_texture: ?*Texture,
+    scene_root_index: u32,
     options: struct {
         render_sdf_raymarched: bool = false,
     },
@@ -90,12 +92,14 @@ pub fn render(
         .delta_time = 0,
         .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
         .renderer_view_type = sim.renderer_view_type,
+        .sdf_texture_root = scene_root_index,
     };
 
     sim.gpu_sim.render(
         context,
         shader_uniforms,
         render_texture,
+        scene_root_index,
         .{ .render_sdf_raymarched = options.render_sdf_raymarched },
     );
 }

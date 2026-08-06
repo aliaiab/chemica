@@ -103,15 +103,6 @@ float sdfSmoothUnion(float x, float y) {
     return smin(x, y, 5);
 }
 
-struct MaterialComponent {
-    uint material;
-    float weight;
-};
-
-layout(std430, binding = 20) restrict buffer InDeviationBuffer {
-    int8_t in_deviation_buffer[];
-};
-
 const uint SDF_ELEMENT_3D_TYPE_MASK = 0x00ff;
 const uint SDF_ELEMENT_3D_MODIFIERS_MASK = 0xff00;
 
@@ -153,10 +144,6 @@ layout(std430, binding = 62) restrict readonly buffer SdfElement3DParamBuffer {
 
 layout(std430, binding = 63) restrict readonly buffer SdfElements3DBounds {
     vec3 sdf_elements_3d_bounds[];
-};
-
-layout(std430, binding = 14) restrict readonly buffer CompositeMaterial {
-    MaterialComponent composite_material[];
 };
 
 vec3 sdf3DLoadParamVec3(uint index) {

@@ -440,8 +440,8 @@ pub fn menuItem(label: [:0]const u8, options: struct {
     );
 }
 
-pub fn openPopup(string: [:0]const u8) void {
-    cimgui.ImGui_OpenPopup(string.ptr, 0);
+pub fn openPopup(string: [:0]const u8) bool {
+    return cimgui.ImGui_OpenPopup(string.ptr, 0);
 }
 
 pub fn selectable(string: [:0]const u8) bool {
@@ -545,7 +545,10 @@ pub fn image(
     const imgui_texture_id = userImageToImTextureID(user_texture_id);
 
     return cimgui.ImGui_ImageEx(
-        .{ ._TexID = imgui_texture_id },
+        .{
+            ._TexID = imgui_texture_id,
+            ._TexData = null,
+        },
         .{ .x = image_size[0], .y = image_size[1] },
         .{ .x = options.uv0[0], .y = options.uv0[1] },
         .{ .x = options.uv1[0], .y = options.uv1[1] },
@@ -569,11 +572,11 @@ pub fn imageButton(
 
     var str_id_buf: [128]u8 = undefined;
 
-    const str_id = std.fmt.bufPrintZ(&str_id_buf, "0x{x}", .{id.value}) catch @panic("");
+    const str_id = std.mem.printSentinel(&str_id_buf, "0x{x}", .{id.value}, 0) catch @panic("");
 
     return cimgui.ImGui_ImageButtonEx(
         str_id.ptr,
-        .{ ._TexID = imgui_texture_id },
+        .{ ._TexID = imgui_texture_id, ._TexData = null },
         .{ .x = image_size[0], .y = image_size[1] },
         .{ .x = options.uv0[0], .y = options.uv0[1] },
         .{ .x = options.uv1[0], .y = options.uv1[1] },
@@ -776,7 +779,7 @@ pub fn beginChild(
 ) bool {
     return cimgui.ImGui_BeginChild(
         name.ptr,
-        @bitCast(options.size),
+        .{ .x = options.size[0], .y = options.size[1] },
         options.child_flags,
         @bitCast(options.window_flags),
     );
@@ -803,14 +806,14 @@ pub fn valueEdit(
         .@"enum" => |enum_info| {
             const ptr_to_enum = @as([*]u8, @ptrCast(value));
 
-            var items: [enum_info.fields.len][*]const u8 = undefined;
+            var items: [enum_info.field_names.len][*]const u8 = undefined;
 
-            inline for (enum_info.fields, 0..) |field, i| {
-                items[i] = field.name.ptr;
+            inline for (enum_info.field_names, 0..) |field_name, i| {
+                items[i] = field_name.ptr;
 
                 switch (options.naming_case) {
                     .spaced_pascal => {
-                        items[i] = &snakeToSpacedPascalCase(field.name);
+                        items[i] = &snakeToSpacedPascalCase(field_name);
                     },
                     else => {},
                 }
@@ -833,7 +836,7 @@ pub fn valueEdit(
 }
 
 fn snakeToSpacedPascalCase(comptime str: []const u8) [str.len + 1]u8 {
-    var result: [str.len + 1]u8 = [1]u8{0} ** (str.len + 1);
+    var result: [str.len + 1]u8 = @splat(0);
 
     var previous_char: u8 = 0;
 

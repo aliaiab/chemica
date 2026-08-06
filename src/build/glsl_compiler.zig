@@ -234,14 +234,14 @@ pub fn run(init: std.process.Init) !void {
     glslang_c.glslang_program_set_source_file(program, shader_stage, file_path);
 
     var spirv_options: glslang_c.glslang_spv_options_t = .{
-        .generate_debug_info = shader_optimize == .Debug and false,
-        .strip_debug_info = shader_optimize != .Debug and false,
-        .disable_optimizer = shader_optimize == .Debug,
-        .optimize_size = shader_optimize == .ReleaseSmall,
+        .generate_debug_info = shader_optimize == .debug and false,
+        .strip_debug_info = shader_optimize != .debug and false,
+        .disable_optimizer = shader_optimize == .debug,
+        .optimize_size = shader_optimize == .small,
         .disassemble = false,
         .validate = true,
-        .emit_nonsemantic_shader_debug_info = shader_optimize == .Debug and false,
-        .emit_nonsemantic_shader_debug_source = shader_optimize == .Debug and false,
+        .emit_nonsemantic_shader_debug_info = shader_optimize == .debug and false,
+        .emit_nonsemantic_shader_debug_source = shader_optimize == .debug and false,
     };
 
     glslang_c.glslang_program_SPIRV_generate_with_options(program, shader_stage, &spirv_options);

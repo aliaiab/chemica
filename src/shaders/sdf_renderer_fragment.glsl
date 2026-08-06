@@ -53,7 +53,7 @@ vec3 sampleTexture(uint sdf_tex, vec2 pos) {
     SDFResult3D field = evaluateSDF(sdf_tex, vec3(pos, 0), vec3(0), vec3(128));
 
     if (field.sdf_gradient.x <= 0) {
-        return noised(pos);
+        return field.sdf_gradient.yzw;
     }
 
     return vec3(1);
@@ -78,7 +78,7 @@ void main() {
     for (int i = 0; i < max_steps; i++) {
         sample_point = ray_origin + ray_direction * t;
 
-        field = evaluateSDF(0, sample_point, vec3(0), vec3(128));
+        field = evaluateSDF(sdf_texture_root, sample_point, vec3(0), vec3(128));
 
         if (field.sdf_gradient.x < 0.01) {
             hit = true;
@@ -110,11 +110,11 @@ void main() {
 
             vec3 radiance = unpackUnorm4x8(light.colour).rgb * light.radiance * 0.1 * max(0, dot(normal, L));
             //radiance /= dot(L, L);
-            light_radiance += radiance * tex;
+            light_radiance += tex;
         }
 
         out_colour.xyz = field.sdf_gradient.yzw;
-        out_colour.xyz = light_radiance;
+        out_colour.xyz = tex;
 
         out_colour.a = 1;
     }

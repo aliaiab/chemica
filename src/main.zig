@@ -4,9 +4,11 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
     _ = args; // autofix
 
-    if (@import("builtin").os.tag == .linux and @import("builtin").mode == .Debug) {
+    if (@import("builtin").os.tag == .linux and @import("builtin").mode == .debug) {
         //We do this in debug mode so that we can do renderdoc captures
-        try glfw.initHint(.platform, glfw.Platform.x11);
+        if (!@import("options").enable_nfd) {
+            try glfw.initHint(.platform, glfw.Platform.x11);
+        }
     }
 
     try glfw.init();
@@ -172,13 +174,11 @@ pub fn main(init: std.process.Init) !void {
 
     imguiStyleSetup();
 
-    if (@import("builtin").mode == .Debug) {
+    if (@import("builtin").mode == .debug) {
         imgui.loadIniSettingsFromDisk("src/assets/imgui.ini");
     } else {
         imgui.loadIniSettingsFromMemory(@embedFile("assets/imgui.ini"));
     }
-
-    std.debug.print("Sus\n", .{});
 
     defer blk: {
         std.Io.Dir.cwd().access(init.io, "src/assets/", .{}) catch |e| {
@@ -215,9 +215,9 @@ pub fn main(init: std.process.Init) !void {
 
     window.setUserPointer(&mouse_scroll);
 
-    var csg_tree: CSGTree = try .init(arena);
-
-    std.debug.print("Sus\n", .{});
+    var csg_tree_3d: CSGTree = try .init(arena);
+    var csg_tree: *CSGTree = &csg_tree_3d;
+    var csg_tree_2d: CSGTree = try .init(arena);
 
     //csg_tree = try .initFromZonMemory(@embedFile("assets/test_scenes/metal_spheres.chemc.zon"), arena);
 
@@ -250,7 +250,7 @@ pub fn main(init: std.process.Init) !void {
     var sim_file_path: []const u8 = "";
 
     defer if (maybe_sim_file) |sim_file| {
-        csg_tree.saveToFile(init.io, sim_file) catch @panic("");
+        csg_tree.saveToFile(init.io, gpa, sim_file) catch @panic("");
     };
 
     const heat_measurement_values = try arena.alloc(f32, 512);
@@ -283,7 +283,7 @@ pub fn main(init: std.process.Init) !void {
     var sample_scenes: std.ArrayList(CSGTree) = .empty;
 
     const sample_scenes_zon_paths = [_][:0]const u8{
-        ("assets/sample_scenes/metal_blocks.chemc.zon"),
+        //("assets/sample_scenes/metal_blocks.chemc.zon"),
     };
     comptime var sample_scenes_zon: [sample_scenes_zon_paths.len][:0]const u8 = undefined;
 
@@ -399,11 +399,16 @@ pub fn main(init: std.process.Init) !void {
 
                 var scene: CSGTree = try .initFromFile(init.io, scene_file, gpa);
                 defer scene.nodes.deinit(gpa);
+                csg_program.clear();
+
+                const scene_root = try scene.compile(gpa, &csg_program);
+
+                try simulation.updateCSGProgram(csg_program);
 
                 _ = try simulation.gpu_sim.renderSceneThumbnail(
                     gpu_context,
                     &simulation,
-                    &scene,
+                    scene_root,
                     scene_path,
                     arena,
                 );
@@ -426,11 +431,14 @@ pub fn main(init: std.process.Init) !void {
         simulation.view_matrix = camera.view;
         simulation.projection_matrix = camera.projection;
 
-        try csg_tree.compile(arena, &csg_program);
+        csg_program.clear();
+
+        const scene_2d_root_index = try csg_tree_2d.compile(arena, &csg_program);
+        const scene_root_index = try csg_tree_3d.compile(arena, &csg_program);
 
         try simulation.updateCSGProgram(csg_program);
 
-        simulation.update();
+        simulation.update(scene_root_index);
 
         const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
 
@@ -442,9 +450,19 @@ pub fn main(init: std.process.Init) !void {
         simulation.render(
             gpu_context,
             null,
+            scene_root_index,
             .{
                 .render_sdf_raymarched = render_sdf_raymarched,
             },
+        );
+
+        const scene_2d_texture = try simulation.gpu_sim.render2DScene(
+            gpu_context,
+            &simulation,
+            scene_2d_root_index,
+            gpa,
+            512,
+            512,
         );
 
         if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Space)) {
@@ -593,10 +611,25 @@ pub fn main(init: std.process.Init) !void {
 
             var csg_editor_window_pos: [2]f32 = undefined;
 
-            const enable_nfd = false;
+            const enable_nfd = @import("options").enable_nfd;
+
+            if (imgui.begin("Texture Editor", .{})) {
+                imgui.image(scene_2d_texture, .{ 512, 512 }, .{});
+            }
+            imgui.end();
 
             if (imgui.begin("CSG Editor", .{})) {
-                csg_editor_window_pos = @bitCast(imgui.cimgui.ImGui_GetWindowPos());
+                csg_editor_window_pos[0] = imgui.cimgui.ImGui_GetWindowPos().x;
+                csg_editor_window_pos[1] = imgui.cimgui.ImGui_GetWindowPos().y;
+
+                if (imgui.button("Switch Scene (2D/3D)", .{})) {
+                    if (csg_tree == &csg_tree_3d) {
+                        csg_tree = &csg_tree_2d;
+                    } else {
+                        csg_tree = &csg_tree_3d;
+                    }
+                    selected_node_handles.clearRetainingCapacity();
+                }
 
                 if (true or imgui.beginMenuBar()) {
                     if (imgui.beginMenu("File", .{})) {
@@ -604,7 +637,7 @@ pub fn main(init: std.process.Init) !void {
                         if (imgui.menuItem("New", .{})) {
                             csg_tree.nodes.deinit(arena);
                             selected_node_handles.clearRetainingCapacity();
-                            csg_tree = try .init(arena);
+                            csg_tree_3d = try .init(arena);
                             csg_program.clear();
                             simulation.csg_dirty = true;
                             maybe_sim_file = null;
@@ -625,9 +658,8 @@ pub fn main(init: std.process.Init) !void {
                                     }
 
                                     selected_node_handles.clearRetainingCapacity();
-                                    csg_program.clear();
 
-                                    csg_tree = try .initFromFile(init.io, file, arena);
+                                    csg_tree_3d = try .initFromFile(init.io, file, arena);
 
                                     sim_file_path = try std.Io.Dir.cwd().realPathFileAlloc(init.io, path, arena);
                                     maybe_sim_file = file;
@@ -638,7 +670,7 @@ pub fn main(init: std.process.Init) !void {
                         }
                         if (imgui.menuItem("Save", .{ .shortcut = "Ctrl+S" })) {
                             if (maybe_sim_file) |sim_file| {
-                                try csg_tree.saveToFile(init.io, sim_file);
+                                try csg_tree.saveToFile(init.io, gpa, sim_file);
 
                                 try thumbnail_gen_queue.append(arena, sim_file_path);
                             }
@@ -657,7 +689,7 @@ pub fn main(init: std.process.Init) !void {
                                     }
                                     maybe_sim_file = file;
 
-                                    try csg_tree.saveToFile(init.io, file);
+                                    try csg_tree.saveToFile(init.io, gpa, file);
                                 }
                             }
                         }
@@ -720,7 +752,7 @@ pub fn main(init: std.process.Init) !void {
 
                         //simulation.csg_dirty |= imgui.combo("Material", &material, voxel_material_names_ptrs);
 
-                        var input_buffer: [1024]u8 = [1]u8{0} ** 1024;
+                        var input_buffer: [1024]u8 = @splat(0);
 
                         for (voxel_material_names.items, 0..) |mat_name, mat_id| {
                             if (mat_id == material) {
@@ -747,12 +779,12 @@ pub fn main(init: std.process.Init) !void {
                 }
 
                 if (imgui.button("Add Node", .{})) {
-                    imgui.openPopup("node_type_popup");
+                    _ = imgui.openPopup("node_type_popup");
                 }
 
                 if (imgui.beginPopup("node_type_popup")) {
-                    inline for (comptime std.meta.fields(CSGTreeNode.Data), comptime std.meta.tags(std.meta.Tag(CSGTreeNode.Data))) |field, tag| {
-                        if (imgui.selectable(field.name)) {
+                    inline for (comptime std.meta.fieldNames(CSGTreeNode.Data), comptime std.meta.tags(std.meta.Tag(CSGTreeNode.Data))) |field_name, tag| {
+                        if (imgui.selectable(field_name)) {
                             const node_handle = try csg_tree.addNode(arena, .root);
 
                             const node = csg_tree.getNode(node_handle);
@@ -767,7 +799,7 @@ pub fn main(init: std.process.Init) !void {
                             };
                             node.material = @enumFromInt(1);
 
-                            node.name = field.name;
+                            node.name = field_name;
                             simulation.csg_dirty = true;
 
                             selected_node_handles.clearRetainingCapacity();
@@ -908,7 +940,7 @@ pub fn main(init: std.process.Init) !void {
                             maybe_sim_file = try dir_to_browse.openFile(init.io, entry.name, .{ .mode = .read_write });
                             sim_file_path = try dir_to_browse.realPathFileAlloc(init.io, entry.name, arena);
 
-                            csg_tree = try .initFromFile(init.io, maybe_sim_file.?, arena);
+                            csg_tree_3d = try .initFromFile(init.io, maybe_sim_file.?, arena);
                             selected_node_handles.clearRetainingCapacity();
                             simulation.csg_dirty = true;
                         }
@@ -931,7 +963,7 @@ pub fn main(init: std.process.Init) !void {
                             .{},
                         )) {
                             //TODO: make a deep copy
-                            csg_tree = sample_scene;
+                            csg_tree_3d = sample_scene;
                             selected_node_handles.clearRetainingCapacity();
                             simulation.csg_dirty = true;
                             simulation.enable_simulation = false;
@@ -1274,7 +1306,7 @@ fn imGuiCSGTreeNodeGizmos(
     node_handle: CSGTreeNodeHandle,
 ) !void {
     const node = tree.getNode(node_handle);
-    var fmt_buffer: [64]u8 = [_]u8{0} ** 64;
+    var fmt_buffer: [64]u8 = [_]u8{0} * *64;
 
     var name: [:0]const u8 = try std.fmt.bufPrintZ(&fmt_buffer, "{s}:{x}", .{ node.name, @intFromEnum(node_handle) });
 
@@ -1293,7 +1325,7 @@ fn imGuiCSGTreeNodeGizmos(
 }
 
 fn imGuiCSGTreeNode(
-    tree: CSGTree,
+    tree: *CSGTree,
     gpa: std.mem.Allocator,
     parent_handle: CSGTreeNodeHandle,
     node_handle: CSGTreeNodeHandle,
@@ -1435,7 +1467,7 @@ pub const CSGTree = struct {
         const stat = try file.stat(io);
 
         const sim_file_source = try sim_file_reader.interface.readAlloc(arena, stat.size);
-        const sim_file_source_z = try arena.dupeZ(u8, sim_file_source);
+        const sim_file_source_z = try arena.dupeSentinel(u8, sim_file_source, 0);
 
         return try .initFromZonMemory(sim_file_source_z, arena);
     }
@@ -1469,14 +1501,50 @@ pub const CSGTree = struct {
         return tree;
     }
 
-    pub fn saveToFile(self: *@This(), io: std.Io, file: std.Io.File) !void {
+    pub fn saveToFile(self: *@This(), io: std.Io, gpa: std.mem.Allocator, file: std.Io.File) !void {
         self.trimArrayLists();
 
         try file.setLength(io, 0);
-        var sim_file_writer = file.writer(io, &.{});
-        try std.zon.stringify.serializeArbitraryDepth(@as(*CSGTreeZonSerializable, @ptrCast(self)).*, .{
+
+        var buffer: [1024]u8 = undefined;
+        var sim_file_writer = file.writer(io, &buffer);
+        var serializer: std.zon.Serializer = .{
+            .writer = &sim_file_writer.interface,
+        };
+
+        const serialized_node = try self.serializeNodeZon(gpa, .root, &serializer);
+
+        try serializer.valueArbitraryDepth(serialized_node, .{
             .emit_default_optional_fields = false,
-        }, &sim_file_writer.interface);
+        });
+
+        try sim_file_writer.flush();
+    }
+
+    pub fn serializeNodeZon(
+        self: *@This(),
+        gpa: std.mem.Allocator,
+        node_handle: CSGTreeNodeHandle,
+        serializer: *std.zon.Serializer,
+    ) !CSGTreeNodeZonSerializable {
+        const node = self.getNode(node_handle);
+        const children = try gpa.alloc(CSGTreeNodeZonSerializable, node.children.items.len);
+        const out_node: CSGTreeNodeZonSerializable = .{
+            .name = node.name,
+            .children = children,
+            .modifiers = node.modifiers,
+            .material = @intFromEnum(node.material),
+        };
+
+        for (node.children.items, children) |child, *out_child| {
+            out_child.* = try self.serializeNodeZon(
+                gpa,
+                child,
+                serializer,
+            );
+        }
+
+        return out_node;
     }
 
     pub fn trimArrayLists(self: *@This()) void {
@@ -1582,10 +1650,8 @@ pub const CSGTree = struct {
         tree: *@This(),
         gpa: std.mem.Allocator,
         program: *Simulation.CSGProgram,
-    ) !void {
-        program.clear();
-
-        const element_index: u16 = 0;
+    ) !u32 {
+        const element_index: u16 = @intCast(program.elements.items.len);
         _ = try program.elements.addOne(gpa);
 
         try tree.compileNode(
@@ -1596,6 +1662,8 @@ pub const CSGTree = struct {
             .null,
             .identity,
         );
+
+        return element_index;
     }
 
     pub fn compileNode(
@@ -1694,15 +1762,17 @@ const CSGTreeZonSerializable = struct {
 const CSGTreeNode = struct {
     transform: Simulation.AffineTransform3D = .identity,
     data: Data = .@"union",
-    modifiers: struct {
-        rounding: ModifierRounding = .{},
-        extrusion: f32 = 0,
-        revolution: f32 = 0,
-    } = .{},
+    modifiers: Modifiers = .{},
     material: Simulation.VoxelMaterialHandle = .air,
     parent: CSGTreeNodeHandle = .root,
     children: std.ArrayList(CSGTreeNodeHandle) = .empty,
     name: [:0]const u8 = "",
+
+    pub const Modifiers = struct {
+        rounding: ModifierRounding = .{},
+        extrusion: f32 = 0,
+        revolution: f32 = 0,
+    };
 
     pub const Data = union(Simulation.SdfElementType) {
         @"union",
@@ -1767,9 +1837,9 @@ const CSGTreeNode = struct {
 const CSGTreeNodeZonSerializable = struct {
     transform: Simulation.AffineTransform3D = .identity,
     data: CSGTreeNode.Data = .@"union",
+    modifiers: CSGTreeNode.Modifiers = .{},
     material: u32 = 0,
-    parent: u32 = 0,
-    children: std.ArrayList(u32) = .empty,
+    children: []CSGTreeNodeZonSerializable = &.{},
     name: [:0]const u8 = "",
 };
 

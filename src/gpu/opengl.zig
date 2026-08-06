@@ -209,7 +209,7 @@ pub const Context = struct {
         comptime sources: []const ShaderSource,
         program: *u32,
     ) !void {
-        if (@import("builtin").mode == .Debug) {
+        if (@import("builtin").mode == .debug) {
             const actual_sources = try arena.dupe(ShaderSource, sources);
 
             const program_index: u32 = @intCast(context.watcher_context.programs.items.len);
@@ -458,6 +458,9 @@ pub const Simulation = struct {
     voxel_positions_buffer: u32 = 0,
 
     scene_thumbnails: std.StringHashMapUnmanaged(?*Texture) = .empty,
+    scene_2d_texture: ?*Texture = null,
+    scene_2d_texture_width: u32 = 0,
+    scene_2d_texture_height: u32 = 0,
 
     const SimShaders = struct {
         renderer_program: u32 = 0,
@@ -470,6 +473,7 @@ pub const Simulation = struct {
         depth_prepass_shader: u32 = 0,
         bounds_depth_prepass_shader: u32 = 0,
         raymarched_sdf_shader: u32 = 0,
+        sdf_texture_compute: u32 = 0,
 
         old_fill_region_shader: u32 = 0,
     };
@@ -520,6 +524,12 @@ pub const Simulation = struct {
         }, &gpu_sim.shaders.generate_chunk_draws);
         try context.loadShaderProgram(arena, &.{
             .{
+                .type = gl.COMPUTE_SHADER,
+                .source_path = "sdf_texture_compute.spv",
+            },
+        }, &gpu_sim.shaders.sdf_texture_compute);
+        try context.loadShaderProgram(arena, &.{
+            .{
                 .type = gl.VERTEX_SHADER,
                 .source_path = "gizmo_shader_vertex.spv",
             },
@@ -561,6 +571,12 @@ pub const Simulation = struct {
                 .source_path = "sdf_renderer_fragment.spv",
             },
         }, &gpu_sim.shaders.raymarched_sdf_shader);
+
+        var scene_2d_texture: u32 = 0;
+
+        gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&scene_2d_texture));
+
+        gpu_sim.scene_2d_texture = @ptrFromInt(scene_2d_texture);
 
         gl.CreateVertexArrays(1, @ptrCast(&gpu_sim.vertex_array));
 
@@ -715,7 +731,7 @@ pub const Simulation = struct {
         gl.TextureParameteri(gpu_sim.voxel_chunk_positions_texture, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 
         const VoxelAllocatorBins = extern struct {
-            voxel_allocator_bin: [15]i32 = [1]i32{-1} ** 15,
+            voxel_allocator_bin: [15]i32 = @splat(-1),
             allocators_bump: u32 = 0,
             voxel_temperature_bump: u32 = 0,
             voxel_pallete_bump: u32 = 0,
@@ -1246,6 +1262,7 @@ pub const Simulation = struct {
         context: Context,
         shader_uniforms: ShaderUniforms,
         render_texture: ?*Texture,
+        scene_root_index: u32,
         options: struct {
             render_sdf_raymarched: bool = false,
         },
@@ -1255,6 +1272,13 @@ pub const Simulation = struct {
             0,
             @sizeOf(ShaderUniforms),
             &shader_uniforms,
+        );
+
+        gl.NamedBufferSubData(
+            sim.uniform_buffer,
+            @offsetOf(ShaderUniforms, "sdf_texture_root"),
+            @sizeOf(u32),
+            &scene_root_index,
         );
 
         gl.BindBufferBase(
@@ -1423,19 +1447,21 @@ pub const Simulation = struct {
         gpu_sim: *Simulation,
         context: Context,
         sim: *@import("../Simulation.zig"),
-        scene: *CSGTree,
+        scene_root_index: u32,
         scene_path: []const u8,
         gpa: std.mem.Allocator,
     ) !?*Texture {
-        var scene_program: CSGProgram = .{};
-
-        try scene.compile(gpa, &scene_program);
         sim.csg_dirty = true;
 
-        try sim.updateCSGProgram(scene_program);
+        gl.NamedBufferSubData(
+            gpu_sim.uniform_buffer,
+            @offsetOf(ShaderUniforms, "sdf_texture_root"),
+            @sizeOf(u32),
+            &scene_root_index,
+        );
 
         const is_enabled: bool = sim.enable_simulation;
-        sim.update();
+        sim.update(scene_root_index);
 
         const thumbnail_result = try gpu_sim.scene_thumbnails.getOrPut(gpa, std.fs.path.basename(scene_path));
 
@@ -1465,12 +1491,80 @@ pub const Simulation = struct {
             .{ 0, 1, 0, 0 },
         )));
 
-        sim.render(context, thumbnail_result.value_ptr.*, .{});
+        sim.render(
+            context,
+            thumbnail_result.value_ptr.*,
+            scene_root_index,
+            .{},
+        );
 
         gl.Viewport(0, 0, context.window.getSize()[0], context.window.getSize()[1]);
 
         sim.enable_simulation = is_enabled;
         return null;
+    }
+
+    pub fn render2DScene(
+        gpu_sim: *Simulation,
+        context: Context,
+        sim: *@import("../Simulation.zig"),
+        scene_root_index: u32,
+        gpa: std.mem.Allocator,
+        width: u32,
+        height: u32,
+    ) !*Texture {
+        _ = sim; // autofix
+        _ = gpa; // autofix
+        _ = context; // autofix
+        //
+        gl.NamedBufferSubData(
+            gpu_sim.uniform_buffer,
+            @offsetOf(ShaderUniforms, "sdf_texture_root"),
+            @sizeOf(u32),
+            &scene_root_index,
+        );
+
+        var scene_2d_texture: u32 = @intCast(@intFromPtr(gpu_sim.scene_2d_texture));
+
+        if (gpu_sim.scene_2d_texture_width != width or gpu_sim.scene_2d_texture_height != height) {
+            gl.DeleteTextures(1, @ptrCast(&scene_2d_texture));
+            gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&scene_2d_texture));
+            gl.TextureStorage2D(
+                scene_2d_texture,
+                1,
+                gl.RGBA8,
+                @intCast(width),
+                @intCast(height),
+            );
+
+            gpu_sim.scene_2d_texture = @ptrFromInt(scene_2d_texture);
+            gpu_sim.scene_2d_texture_width = width;
+            gpu_sim.scene_2d_texture_height = height;
+        }
+
+        gl.ClearTexImage(scene_2d_texture, 0, gl.RGBA, gl.UNSIGNED_INT, &@as(u32, 0xffffffff));
+
+        gl.BindImageTexture(
+            5,
+            @intCast(@intFromPtr(gpu_sim.scene_2d_texture)),
+            0,
+            0,
+            0,
+            gl.READ_WRITE,
+            gl.RGBA8,
+        );
+
+        gl.UseProgram(gpu_sim.shaders.sdf_texture_compute);
+
+        const dispatch_width = try std.math.divCeil(u32, width, 8);
+        const dispatch_height = try std.math.divCeil(u32, height, 8);
+
+        gl.DispatchCompute(dispatch_width, dispatch_height, 1);
+
+        gl.MemoryBarrier(gl.SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        gl.MemoryBarrier(gl.TEXTURE_UPDATE_BARRIER_BIT);
+
+        return gpu_sim.scene_2d_texture.?;
     }
 };
 
@@ -1524,10 +1618,6 @@ const PointLight = @import("../Simulation.zig").PointLight;
 const CSGProgram = @import("../Simulation.zig").CSGProgram;
 const CSGTree = @import("../main.zig").CSGTree;
 const AffineTransform3D = @import("../Simulation.zig").AffineTransform3D;
-const CSGInstruction = @import("../Simulation.zig").CSGInstruction;
-const CSGInstructionBox = @import("../Simulation.zig").CSGInstructionBox;
-const CSGInstructionSphere = @import("../Simulation.zig").CSGInstructionSphere;
-const CSGInstructionExtrudePost = @import("../Simulation.zig").CSGInstructionExtrudePost;
 const std = @import("std");
 const Texture = @import("../gpu.zig").Texture;
 const gl = @import("gl");

@@ -41,6 +41,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
+    _ = cimgui_translate_c; // autofix
 
     const main_module = b.createModule(.{
         .target = target,
@@ -59,7 +60,14 @@ pub fn build(b: *std.Build) !void {
         }).module("objc"));
     }
 
-    if (false) {
+    const disable_nfd = b.option(bool, "disable_nfd", "Disables native file dialogs") orelse false;
+
+    const exe_options = b.addOptions();
+    exe_options.addOption(bool, "enable_nfd", !disable_nfd);
+
+    main_module.addImport("options", exe_options.createModule());
+
+    if (!disable_nfd) {
         const nfd = b.dependency("nfd", .{ .target = target, .optimize = optimize });
         const nfd_mod = nfd.module("nfd");
         main_module.addImport("nfd", nfd_mod);
@@ -68,8 +76,7 @@ pub fn build(b: *std.Build) !void {
     main_module.link_libc = true;
 
     const cimgui_lib = cimgui_dep.artifact("cimgui");
-    addIncludePathsToTranslateC(cimgui_translate_c, cimgui_lib);
-    const c_module = cimgui_translate_c.createModule();
+    const c_module = cimgui.createModule(b, cimgui_dep, cimgui_lib, b.path("src/cimgui.h"));
     c_module.linkLibrary(cimgui_lib);
 
     if (target.result.os.tag == .macos) {
@@ -98,13 +105,23 @@ pub fn build(b: *std.Build) !void {
     });
     main_module.addIncludePath(glm_dep.path(""));
 
-    main_module.strip = optimize != .Debug;
+    main_module.strip = optimize != .debug;
 
     const exe = b.addExecutable(.{
         .name = "chemica",
         .root_module = main_module,
-        .use_llvm = optimize != .Debug,
+        .use_llvm = optimize != .debug,
     });
+
+    const exe_check = b.addExecutable(.{
+        .name = "chemica",
+        .root_module = main_module,
+        .use_llvm = false,
+    });
+
+    const check_step = b.step("check", "Check if the executable compiles");
+
+    check_step.dependOn(&exe_check.step);
 
     const glslang_zig = b.dependency("glslang_zig", .{
         .optimize = optimize,
@@ -116,7 +133,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/build/glsl_compiler.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
 
@@ -171,6 +188,7 @@ pub fn build(b: *std.Build) !void {
     _ = compileShader(b, glsl_compiler, target, optimize, exe, .fragment, "src/shaders/gizmo_shader_fragment.glsl");
     _ = compileShader(b, glsl_compiler, target, optimize, exe, .fragment, "src/shaders/depth_prepass_fragment.glsl");
     _ = compileShader(b, glsl_compiler, target, optimize, exe, .fragment, "src/shaders/sdf_renderer_fragment.glsl");
+    _ = compileShader(b, glsl_compiler, target, optimize, exe, .compute, "src/shaders/sdf_texture_compute.glsl");
 
     exe.is_linking_libcpp = true;
 
@@ -240,9 +258,9 @@ fn compileShader(
 
     const install_path = b.addInstallFile(generated_file, source_basename);
 
-    compile_shader.step.addWatchInput(b.path(source)) catch @panic("oom");
+    compile_shader.addFileInput(b.path(source));
 
-    if (mode != .Debug) {
+    if (mode != .debug) {
         exe_step.root_module.addImport(output_path, b.createModule(.{
             .root_source_file = output_file_path,
         }));
@@ -268,7 +286,7 @@ fn compileShader(
             msl_output_path_install,
         });
 
-        convert_to_msl.step.addWatchInput(b.path(output_path)) catch @panic("");
+        convert_to_msl.addFileInput(b.path(output_path));
         exe_step.step.dependOn(&convert_to_msl.step);
     }
     b.getInstallStep().dependOn(&compile_shader.step);

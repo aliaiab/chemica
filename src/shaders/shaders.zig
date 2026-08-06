@@ -14,12 +14,13 @@ pub const ShaderUniforms = extern struct {
     window_size: [2]u32,
     enable_radiative_cooling: u32,
     renderer_view_type: RendererViewType,
+    sdf_texture_root: u32 = 0,
 };
 
 pub const AffineTransform3D = extern struct {
     position: [3]f32 = .{ 0, 0, 0 },
     uniform_scale: f32 = 1,
-    rotation: @Vector(4, f32) align(@alignOf(f32)) = .{ 0, 0, 0, 1 },
+    rotation: [4]f32 = .{ 0, 0, 0, 1 },
 
     pub const identity: AffineTransform3D = .{
         .position = .{ 0, 0, 0 },
