@@ -41,6 +41,40 @@ pub const AffineTransform3D = extern struct {
 
         return result;
     }
+
+    pub inline fn transformInverseVector(
+        transform: AffineTransform3D,
+        vector: @Vector(3, f32),
+    ) @Vector(3, f32) {
+        const transform_position: @Vector(3, f32) = .{ transform.position[0], transform.position[1], transform.position[2] };
+        _ = transform_position; // autofix
+        var translated = vector;
+
+        translated[0] -= transform.position[0];
+
+        if (false) {
+            const rotated = zmath.rotate(
+                transform.rotation,
+                .{ translated[0], translated[1], translated[2], 0 },
+            );
+            _ = rotated; // autofix
+        }
+        const rotated = translated;
+
+        if (true) {
+            return translated;
+        }
+
+        var scaled: @Vector(3, f32) = .{ rotated[0], rotated[1], rotated[2] };
+
+        scaled *= @splat(1 / transform.uniform_scale);
+
+        return scaled;
+    }
+
+    test {
+        std.testing.refAllDecls(@This());
+    }
 };
 
 pub const RendererViewType = enum(u32) {
@@ -56,5 +90,13 @@ pub const RendererViewType = enum(u32) {
     ray_steps,
 };
 
-const zmath = @import("zmath");
-const math = @import("math.zig");
+pub const common = @import("common.zig");
+pub const sdf = @import("sdf.zig");
+
+test {
+    _ = std.testing.refAllDecls(@This());
+}
+
+const zmath = @import("lib").zmath;
+const math = @import("lib").math;
+const std = @import("std");

@@ -52,6 +52,10 @@ layout(std430, binding = 22) restrict readonly buffer PointLights {
 vec3 sampleTexture(uint sdf_tex, vec2 pos) {
     SDFResult3D field = evaluateSDF(sdf_tex, vec3(pos, 0), vec3(0), vec3(128));
 
+    if (true) {
+        return noised(pos);
+    }
+
     if (field.sdf_gradient.x <= 0) {
         return field.sdf_gradient.yzw;
     }

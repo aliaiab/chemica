@@ -1460,4 +1460,4 @@ pub fn worldToScreenPos(
 
 pub const cimgui = @import("cimgui");
 const std = @import("std");
-const zmath = @import("zmath");
+const zmath = @import("lib").zmath;

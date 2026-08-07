@@ -748,7 +748,7 @@ pub fn main(init: std.process.Init) !void {
                     );
 
                     if (selected_node.material != .air) {
-                        var material: usize = @intFromEnum(selected_node.material);
+                        var material: usize = @backingInt(selected_node.material);
 
                         //simulation.csg_dirty |= imgui.combo("Material", &material, voxel_material_names_ptrs);
 
@@ -774,7 +774,7 @@ pub fn main(init: std.process.Init) !void {
                             }
                         }
 
-                        selected_node.material = @enumFromInt(material);
+                        selected_node.material = @fromBackingInt(@intCast(material));
                     }
                 }
 
@@ -797,7 +797,7 @@ pub fn main(init: std.process.Init) !void {
                                 @floatFromInt(simulation.height / 2),
                                 @floatFromInt(simulation.depth / 2),
                             };
-                            node.material = @enumFromInt(1);
+                            node.material = @fromBackingInt(@intCast(1));
 
                             node.name = field_name;
                             simulation.csg_dirty = true;
@@ -1308,7 +1308,7 @@ fn imGuiCSGTreeNodeGizmos(
     const node = tree.getNode(node_handle);
     var fmt_buffer: [64]u8 = [_]u8{0} * *64;
 
-    var name: [:0]const u8 = try std.fmt.bufPrintZ(&fmt_buffer, "{s}:{x}", .{ node.name, @intFromEnum(node_handle) });
+    var name: [:0]const u8 = try std.fmt.bufPrintZ(&fmt_buffer, "{s}:{x}", .{ node.name, @backingInt(node_handle) });
 
     if (name[0] == 0) {
         name = "Root";
@@ -1533,7 +1533,7 @@ pub const CSGTree = struct {
             .name = node.name,
             .children = children,
             .modifiers = node.modifiers,
-            .material = @intFromEnum(node.material),
+            .material = @backingInt(node.material),
         };
 
         for (node.children.items, children) |child, *out_child| {
@@ -1561,17 +1561,17 @@ pub const CSGTree = struct {
     }
 
     pub fn getNode(self: @This(), handle: CSGTreeNodeHandle) *CSGTreeNode {
-        return &self.nodes.items[@intFromEnum(handle)];
+        return &self.nodes.items[@backingInt(handle)];
     }
 
     pub fn addNode(self: *@This(), gpa: std.mem.Allocator, parent: CSGTreeNodeHandle) !CSGTreeNodeHandle {
         const handle_int: u32 = @intCast(self.nodes.items.len);
-        const handle: CSGTreeNodeHandle = @enumFromInt(handle_int);
+        const handle: CSGTreeNodeHandle = @fromBackingInt(@intCast(handle_int));
         try self.nodes.append(gpa, .{
             .parent = parent,
         });
 
-        try self.nodes.items[@intFromEnum(parent)].children.append(gpa, handle);
+        try self.nodes.items[@backingInt(parent)].children.append(gpa, handle);
 
         return handle;
     }
@@ -1892,13 +1892,19 @@ pub fn formatNumberWithUnits(allocator: std.mem.Allocator, x: f32) ![]const u8 {
     return try std.fmt.allocPrint(allocator, "{:.2}{s}", .{ value, unit });
 }
 
+test {
+    _ = std.testing.refAllDecls(@This());
+}
+
+pub const math = @import("lib").math;
+pub const zmath = @import("lib").zmath;
+pub const shaders = @import("shaders/shaders.zig");
+
 const imgui = @import("imgui.zig");
 const Simulation = @import("Simulation.zig");
-const zmath = @import("zmath");
 const glfw = @import("zglfw");
 const zigimg = @import("zigimg");
 const std = @import("std");
 const stb_image = @import("stb_image.zig");
 const imguizmo = @import("imguizmo.zig");
-const math = @import("math.zig");
 const gpu = @import("gpu.zig");

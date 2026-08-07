@@ -48,6 +48,14 @@
             .url = "git+https://github.com/aliaiab/glslang-zig#d45a39fa3ebd00d2cd3cdf549072a28bbb467ff9",
             .hash = "glslang_zig-0.0.0-V29wTx4xAADgsmkiOehRI8jTot_FQcoLiSO7B2TYQyKY",
         },
+        .vulkan = .{
+            .url = "git+https://github.com/Snektron/vulkan-zig.git#6994c93a6e882bac855aed606cf97a91e3f71d1f",
+            .hash = "vulkan-0.0.0-r7Ytx_6DAwDB1QJAbIew5IzR2PiiAtJENX5kdJHf449X",
+        },
+        .vulkan_headers = .{
+            .url = "git+https://github.com/KhronosGroup/Vulkan-Headers#f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+            .hash = "N-V-__8AAMgnfgKxQBLuasOmdRqVVIc1HwfkjIUSwaryYgzo",
+        },
     },
     .paths = .{
         "build.zig",

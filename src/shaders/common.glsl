@@ -270,7 +270,7 @@ void voxelChunkFree(ChunkAllocation allocation) {
 uniform layout(binding = 0, r16ui) restrict uimage3D voxel_bit_buffer_texture;
 uniform layout(binding = 1, r32ui) restrict uimage3D voxel_chunk_allocations_image;
 //Stores positions as linearized indicies into the flat space of the voxel bit buffer image
-uniform layout(binding = 2, r16ui) restrict uimage3D voxel_chunk_positions_image;
+uniform layout(binding = 2, r32ui) restrict uimage3D voxel_chunk_positions_image;
 
 uniform layout(binding = 3, r32ui) restrict uimage3D voxel_temperature_image;
 uniform layout(binding = 4, r8ui) restrict uimage3D voxel_deviation_image;

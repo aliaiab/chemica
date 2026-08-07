@@ -12,6 +12,28 @@ fn watcherCallback(context: ?*anyopaque, path: [:0]const u8, event: watchers.Eve
                 .unlimited,
             );
 
+            if (std.mem.containsAtLeast(u8, path, 1, ".glsl")) {
+                watcher_context.*.programs.items[shader_query.program_index].sources[shader_query.source_index] = .{
+                    .type = shader_query.type,
+                    .source_path = try watcher_context.gpa.dupe(u8, path),
+                };
+
+                const file_data = try std.Io.Dir.cwd().readFileAlloc(
+                    watcher_context.io,
+                    path,
+                    watcher_context.gpa,
+                    .unlimited,
+                );
+
+                try watcher_context.shader_compile_queue.append(watcher_context.gpa, .{
+                    .binary = file_data,
+                    .type = shader_query.type,
+                    .shader_name = std.fs.path.stem(path),
+                });
+
+                return;
+            }
+
             const actual_file_path = file_path[2 .. file_path.len - 1];
 
             const file_data = try std.Io.Dir.cwd().readFileAlloc(
@@ -222,6 +244,21 @@ pub const Context = struct {
             for (sources, actual_sources, 0..) |source, *output_source, i| {
                 const path_path = try std.fs.path.joinZ(arena, &.{ "zig-out/", std.fs.path.stem(source.source_path) });
 
+                if (std.mem.containsAtLeast(u8, source.source_path, 1, ".glsl")) {
+                    const source_path = try std.fs.path.joinZ(arena, &.{ "zig-out/", std.fs.path.basename(source.source_path) });
+                    output_source.source_path = source_path;
+
+                    try context.watcher_context.shaders.put(context.watcher_context.gpa, std.fs.path.stem(source.source_path), .{
+                        .program_index = program_index,
+                        .shader = 0,
+                        .type = source.type,
+                        .source_index = @intCast(i),
+                    });
+
+                    try context.shaders_watcher.addFile(source_path);
+                    continue;
+                }
+
                 const path = try std.Io.Dir.cwd().readFileAllocOptions(
                     context.io,
                     path_path,
@@ -338,7 +375,7 @@ pub const Context = struct {
         var shaders: [8]u32 = undefined;
 
         for (sources, 0..) |source, i| {
-            std.log.info("src_path: {s}\n", .{source.source_path});
+            std.debug.print("src_path: {s}\n", .{source.source_path});
 
             const binary = try std.Io.Dir.cwd().readFileAlloc(
                 context.io,
@@ -347,7 +384,9 @@ pub const Context = struct {
                 .unlimited,
             );
 
-            shaders[i] = try loadShader(.{ .binary = binary, .type = source.type });
+            const is_glsl = std.mem.containsAtLeast(u8, source.source_path, 1, ".glsl");
+
+            shaders[i] = try loadShader(.{ .is_spirv = !is_glsl, .binary = binary, .type = source.type });
 
             gl.AttachShader(program, shaders[i]);
         }
@@ -368,8 +407,11 @@ pub const Context = struct {
             );
 
             const info_log = try arena.alloc(u8, @intCast(info_log_length));
+            @memset(info_log, 0);
 
-            std.log.err(
+            gl.GetProgramInfoLog(program, @intCast(info_log_length), null, info_log.ptr);
+
+            std.debug.print(
                 "[OpenGL]: Shader Program failed to link: {s}\n",
                 .{info_log},
             );
@@ -1576,24 +1618,32 @@ pub const ShaderSource = struct {
 pub fn loadShader(source: struct {
     type: u32,
     binary: []const u8,
+    is_spirv: bool,
 }) !u32 {
     const shader = gl.CreateShader(source.type);
 
-    gl.ShaderBinary(
-        1,
-        @ptrCast(&shader),
-        gl.SHADER_BINARY_FORMAT_SPIR_V,
-        source.binary.ptr,
-        @intCast(source.binary.len),
-    );
+    if (!source.is_spirv) {
+        const sources: []const [*]const u8 = &.{source.binary.ptr};
+        std.debug.print("glsl: {s}\n", .{source.binary});
+        gl.ShaderSource(shader, 1, sources.ptr, null);
+        gl.CompileShader(shader);
+    } else {
+        gl.ShaderBinary(
+            1,
+            @ptrCast(&shader),
+            gl.SHADER_BINARY_FORMAT_SPIR_V,
+            source.binary.ptr,
+            @intCast(source.binary.len),
+        );
 
-    gl.SpecializeShader(
-        shader,
-        "main",
-        0,
-        undefined,
-        undefined,
-    );
+        gl.SpecializeShader(
+            shader,
+            "main",
+            0,
+            undefined,
+            undefined,
+        );
+    }
 
     var success: i32 = 0;
 
@@ -1604,6 +1654,12 @@ pub fn loadShader(source: struct {
     );
 
     if (success == 0) {
+        var info_log: [1024]u8 = undefined;
+
+        gl.GetShaderInfoLog(shader, 1024, null, &info_log);
+
+        std.debug.print("Shader info log: {s}\n", .{&info_log});
+
         return error.ShaderRejectedBinary;
     }
 
@@ -1624,4 +1680,4 @@ const gl = @import("gl");
 const imgui = @import("../imgui.zig");
 const glfw = @import("zglfw");
 const stb_image = @import("../stb_image.zig");
-const zmath = @import("zmath");
+const zmath = @import("lib").zmath;
