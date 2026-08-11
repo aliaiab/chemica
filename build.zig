@@ -2,9 +2,12 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const use_vulkan = b.option(bool, "use_vulkan", "Use the vulkan backend") orelse false;
+
     const zglfw = b.dependency("zglfw", .{
         .target = target,
         .optimize = optimize,
+        .import_vulkan = true,
     });
 
     var cimgui_renderers: [1]cimgui.Renderer = undefined;
@@ -12,6 +15,10 @@ pub fn build(b: *std.Build) !void {
     if (target.result.os.tag == .macos) {
         cimgui_renderers[0] = .Metal;
     } else {
+        if (use_vulkan) {
+            //cimgui_renderers[0] = .Vulkan;
+        }
+
         cimgui_renderers[0] = .OpenGL3;
     }
 
@@ -55,8 +62,10 @@ pub fn build(b: *std.Build) !void {
 
     root_module.addImport("zmath", zmath.module("root"));
 
+    const zglfw_mod = zglfw.module("root");
+
     main_module.addImport("gl", gl_bindings);
-    main_module.addImport("zglfw", zglfw.module("root"));
+    main_module.addImport("zglfw", zglfw_mod);
     main_module.addImport("zigimg", zigimg.module("zigimg"));
     main_module.addImport("lib", root_module);
 
@@ -74,6 +83,9 @@ pub fn build(b: *std.Build) !void {
     });
     // ... and pass it as a module to your executable's build command
     main_module.addImport("vulkan", vulkan_zig);
+    main_module.link_libc = true;
+
+    zglfw_mod.addImport("vulkan", vulkan_zig);
 
     if (target.result.os.tag == .macos) {
         main_module.addImport("objc", b.dependency("zig_objc", .{
@@ -86,6 +98,7 @@ pub fn build(b: *std.Build) !void {
 
     const exe_options = b.addOptions();
     exe_options.addOption(bool, "enable_nfd", !disable_nfd);
+    exe_options.addOption(bool, "use_vulkan", use_vulkan);
 
     main_module.addImport("options", exe_options.createModule());
 
@@ -112,7 +125,7 @@ pub fn build(b: *std.Build) !void {
 
     main_module.addImport("cimgui", c_module);
 
-    main_module.linkLibrary(zglfw.artifact("glfw"));
+    //main_module.linkLibrary(zglfw.artifact("glfw"));
 
     main_module.linkLibrary(cimgui_dep.artifact("cimgui"));
 
@@ -184,6 +197,8 @@ pub fn build(b: *std.Build) !void {
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/depth_prepass_fragment.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/sdf_renderer_fragment.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/sdf_texture_compute.zig");
+    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/zgizmo_shader_vertex.zig");
+    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/zgizmo_shader_fragment.zig");
 
     exe.is_linking_libcpp = true;
 
@@ -254,10 +269,12 @@ fn compileShader(
             "--force-temporary",
             "--version",
             "330",
+            "--no-es",
             "--extension",
             "GL_EXT_shader_image_load_store",
             "--extension",
             "GL_ARB_shader_storage_buffer_object",
+            "--disable-storage-image-qualifier-deduction",
         });
 
         if (false) {

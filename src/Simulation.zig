@@ -111,7 +111,7 @@ pub fn updateCSGProgram(
     try sim.gpu_sim.updateCSGProgram(sim.*, program);
 }
 
-pub const ShaderUniforms = @import("shaders/shaders.zig").ShaderUniforms;
+pub const ShaderUniforms = @import("lib").shaders.ShaderUniforms;
 
 pub const VoxelMaterial = extern struct {
     //kgmol^-1
@@ -265,7 +265,7 @@ pub const CSGProgram = struct {
     }
 };
 
-pub const AffineTransform3D = @import("shaders/shaders.zig").AffineTransform3D;
+pub const AffineTransform3D = @import("lib").shaders.AffineTransform3D;
 pub const CSGMaterialComponent = extern struct {
     material: VoxelMaterialHandle,
     density: f32,
@@ -278,7 +278,7 @@ pub const CSGMaterial = extern struct {
     max_temperature: f32,
 };
 
-pub const RendererViewType = @import("shaders/shaders.zig").RendererViewType;
+pub const RendererViewType = @import("lib").shaders.RendererViewType;
 pub const VoxelMaterialHandle = enum(u32) {
     air = 0,
     _,

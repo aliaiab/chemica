@@ -265,7 +265,7 @@ inline fn atomicMax(
     );
 }
 
-const common = @import("common.zig");
+const common = @import("lib").shaders.common;
 
 pub const out_indices = @extern(*addrspace(.storage_buffer) extern struct {
     data: @SpirvType(

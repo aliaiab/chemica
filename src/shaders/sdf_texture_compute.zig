@@ -7,7 +7,7 @@ export fn main() callconv(.{ .spirv_kernel = .{
 
     const sample_pos_3d: @Vector(3, f32) = @floatFromInt(tex_pos);
     var sample_pos_2d: @Vector(2, f32) = .{ sample_pos_3d[0], sample_pos_3d[1] };
-    const image_size: @Vector(2, f32) = @floatFromInt(spirv.imageQuerySize(out_image));
+    const image_size: @Vector(2, f32) = @floatFromInt(spirv_ext.imageQuerySize(out_image));
     sample_pos_2d /= image_size;
     sample_pos_2d -= @splat(0.5);
     sample_pos_2d *= @splat(100);
@@ -19,26 +19,27 @@ export fn main() callconv(.{ .spirv_kernel = .{
             &sdf.elemnents_transform_buffer.data,
             &sdf.elmements_bounds_buffer.data,
             &sdf.elements_params_buffer.data,
-            @enumFromInt(0),
+            @enumFromInt(common.uniforms.sdf_texture_root),
             @splat(-100),
             @splat(100),
             .{ sample_pos_2d[0], sample_pos_2d[1], 0 },
         );
 
         if (field.sdf_grad.distance < 0) {
-            spirv.imageWrite(out_image, u32, .{ tex_pos[0], tex_pos[1] }, .{
+            spirv_ext.imageWrite(out_image, u32, .{ tex_pos[0], tex_pos[1] }, .{
                 field.sdf_grad.gradient[0],
                 field.sdf_grad.gradient[1],
                 field.sdf_grad.gradient[2],
                 1,
             });
+            spirv_ext.imageWrite(out_image, u32, .{ tex_pos[0], tex_pos[1] }, .{ 1, 0, 0, 1 });
         } else {
-            spirv.imageWrite(out_image, u32, .{ tex_pos[0], tex_pos[1] }, .{ 0, 0, 0, 1 });
+            spirv_ext.imageWrite(out_image, u32, .{ tex_pos[0], tex_pos[1] }, .{ 0, 0, 0, 1 });
         }
     }
 }
 
-const common = @import("common.zig");
+const common = @import("lib").shaders.common;
 
 pub const out_image = @extern(
     *addrspace(.constant) const Image2D,

@@ -148,38 +148,39 @@ pub inline fn evaluateElement(
     params: anytype,
     sample_position: @Vector(3, f32),
 ) SdfGrad {
-    const transformed_position = transform.transformInverseVector(sample_position);
-    //const transformed_position = sample_position;
+    _ = transform; // autofix
+    //const transformed_position = transform.transformInverseVector(sample_position);
+    const transformed_position = sample_position;
 
     var sdf_grad: SdfGrad = .{};
-
-    sdf_grad = .box(transformed_position, @splat(10));
-    if (true) {}
 
     const desc = element.descriptor;
 
     switch (desc.type) {
         .box => {
-            sdf_grad = .box(sample_position, element.paramVec3(
+            sdf_grad = .box(transformed_position, element.paramVec3(
                 address_space,
                 params,
             ));
-            sdf_grad = .box(sample_position, @splat(10));
         },
         .cylinder => {},
         .sphere => {
             sdf_grad = .sphere(
-                sample_position,
+                transformed_position,
                 params[element.params_start],
             );
         },
-        .n_gon => {},
+        .n_gon => {
+            return sdf_grad;
+        },
         .@"union",
         .difference,
         .intersection,
         .extrude,
         .revolve,
-        => {},
+        => {
+            return sdf_grad;
+        },
     }
 
     //sdf_grad.distance *= transform.uniform_scale;
@@ -215,8 +216,9 @@ pub inline fn evaluate(
 
     var test_sdf: SdfGrad = .box(sample_position, .{ 10, 10, 10 });
 
-    if (true) {
+    if (false) {
         test_sdf = .unionSet(test_sdf, .sphere(sample_position - @Vector(3, f32){ 10, 10, 0 }, 10));
+        test_sdf = .differenceSet(test_sdf, .sphere(sample_position - @Vector(3, f32){ 10, 5, 0 }, 10));
         return .{ .sdf_grad = test_sdf, .material = 0 };
     }
 
@@ -266,7 +268,9 @@ pub inline fn evaluate(
                     .difference => {
                         lhs_sdf_grad = .differenceSet(lhs_sdf_grad, rhs_sdf_grad);
                     },
-                    else => {},
+                    else => blk: {
+                        break :blk;
+                    },
                 }
             }
         }
@@ -358,4 +362,4 @@ test {
 }
 
 const std = @import("std");
-const shaders = @import("shaders.zig");
+const shaders = @import("lib").shaders;

@@ -11,17 +11,31 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
+    const renderdoc = @import("renderdoc_app.zig");
+
+    var rdoc_api: ?*renderdoc.RENDERDOC_API_1_2_0 = null;
+
+    var renderdoc_dynlib = try std.DynLib.open("librenderdoc.so");
+    defer renderdoc_dynlib.close();
+
+    const render_doc_get_api = renderdoc_dynlib.lookup(renderdoc.pRENDERDOC_GetAPI, "RENDERDOC_GetAPI").?;
+
+    _ = render_doc_get_api.?(renderdoc.eRENDERDOC_API_Version_1_1_2, @ptrCast(&rdoc_api));
+
     try glfw.init();
     defer glfw.terminate();
 
-    if (@import("builtin").os.tag != .macos) {
+    if (@import("builtin").os.tag != .macos and !@import("gpu.zig").use_vulkan) {
         glfw.windowHint(.context_version_major, 4);
         glfw.windowHint(.context_version_minor, 6);
         glfw.windowHint(.opengl_debug_context, true);
         glfw.windowHint(.opengl_profile, .opengl_core_profile);
     } else {
         glfw.windowHint(.client_api, .no_api);
-        glfw.windowHint(.cocoa_retina_framebuffer, true);
+
+        if (@import("builtin").os.tag == .macos) {
+            glfw.windowHint(.cocoa_retina_framebuffer, true);
+        }
     }
 
     const content_scale = imgui.cimgui.cImGui_ImplGlfw_GetContentScaleForMonitor(@ptrCast(glfw.getPrimaryMonitor()));
@@ -38,6 +52,11 @@ pub fn main(init: std.process.Init) !void {
     window.maximize();
     glfw.makeContextCurrent(window);
     glfw.swapInterval(0);
+
+    var gizmo_context: asym.geo.Context = .init(gpa);
+    defer gizmo_context.deinit();
+
+    asym.geo.setCurrentContext(&gizmo_context);
 
     _ = imgui.createContext(.{});
 
@@ -280,6 +299,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var sample_scenes_thumbnails: std.ArrayList(?*gpu.Texture) = .empty;
+    var scene_thumbnails: std.StringHashMapUnmanaged(?*gpu.Texture) = .empty;
     var sample_scenes: std.ArrayList(CSGTree) = .empty;
 
     const sample_scenes_zon_paths = [_][:0]const u8{
@@ -322,9 +342,21 @@ pub fn main(init: std.process.Init) !void {
     while (!window.shouldClose()) {
         glfw.pollEvents();
 
+        const start_capture = window.getKey(.F12) == .press;
+
+        if (start_capture) {
+            rdoc_api.?.TriggerCapture.?();
+            rdoc_api.?.StartFrameCapture.?(null, null);
+        }
+        defer if (start_capture) {
+            _ = rdoc_api.?.EndFrameCapture.?(null, null);
+        };
+
         imgui.impl.glfw.newFrame();
 
         gpu_context.beginFrame();
+
+        gizmo_context.beginSubmission();
 
         if (imgui.cimgui.ImGui_IsKeyPressed(imgui.cimgui.ImGuiKey_T)) {
             enable_transform_gizmo = !enable_transform_gizmo;
@@ -426,6 +458,17 @@ pub fn main(init: std.process.Init) !void {
             .{ camera.target[0], camera.target[1], camera.target[2], 0 },
             .{ 0, 1, 0, 0 },
         )));
+
+        asym.geo.beginView(
+            camera.view,
+            camera.projection,
+            .{
+                0,
+                0,
+                @floatFromInt(window.getSize()[0]),
+                @floatFromInt(window.getSize()[1]),
+            },
+        );
 
         simulation.model_matrix = @bitCast(zmath.transpose(zmath.identity()));
         simulation.view_matrix = camera.view;
@@ -884,6 +927,10 @@ pub fn main(init: std.process.Init) !void {
                 _ = imgui.valueEdit("Mode", &simulation.renderer_view_type, .{});
                 _ = imgui.checkbox("Render Continous SDF", &render_sdf_raymarched);
 
+                if (imgui.button("Take Renderdoc Capture", .{})) {
+                    rdoc_api.?.TriggerCapture.?();
+                }
+
                 imgui.text("Performance Stats", .{});
 
                 imgui.separator(.{});
@@ -933,7 +980,7 @@ pub fn main(init: std.process.Init) !void {
                         imgui.text("{s}", .{entry.name});
                         if (imgui.imageButton(
                             .fromFmt("{s}", .{entry.name}),
-                            simulation.gpu_sim.scene_thumbnails.get(entry.name) orelse null,
+                            scene_thumbnails.get(entry.name) orelse null,
                             .{ 100, 100 },
                             .{},
                         )) {
@@ -1278,6 +1325,17 @@ pub fn main(init: std.process.Init) !void {
         }
 
         imgui.render();
+
+        _ = asym.geo.circle(.{
+            .id = .fromSrc(@src()),
+            .radius = 10,
+            .colour = .red,
+            .transform = .identity,
+        });
+
+        const gizmo_views = gizmo_context.endSubmission();
+
+        gpu_context.renderGizmos(&gizmo_context.draw_data[gizmo_context.active_draw_data], gizmo_views);
 
         if (@import("builtin").os.tag != .macos) {
             imgui.impl.opengl3.renderDrawData(imgui.getDrawData());
@@ -1898,10 +1956,11 @@ test {
 
 pub const math = @import("lib").math;
 pub const zmath = @import("lib").zmath;
-pub const shaders = @import("shaders/shaders.zig");
+pub const shaders = @import("lib").shaders;
 
 const imgui = @import("imgui.zig");
 const Simulation = @import("Simulation.zig");
+const asym = @import("asym.zig");
 const glfw = @import("zglfw");
 const zigimg = @import("zigimg");
 const std = @import("std");

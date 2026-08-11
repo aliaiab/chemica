@@ -89,6 +89,7 @@ const ShaderProgram = struct {
 
 const Shaders = struct {
     env_map_shader: u32,
+    gizmo_shader: u32,
 };
 
 pub const Context = struct {
@@ -100,6 +101,12 @@ pub const Context = struct {
     watcher_context: *WatcherContext,
     watcher_thread: std.Thread,
     shaders: *Shaders,
+    asym_uniforms_buffer: u32,
+    gizmo_draw_buffer: u32,
+    gizmo_vertex_buffer: u32,
+    gizmo_uniform_buffer: u32,
+    asym_transforms_buffer: u32,
+    asym_parameters_buffer: u32,
 
     pub fn init(
         arena: std.mem.Allocator,
@@ -174,10 +181,55 @@ pub const Context = struct {
             env_map_data,
         );
 
+        gl.CreateBuffers(1, @ptrCast(&context.asym_uniforms_buffer));
+        gl.NamedBufferStorage(
+            context.asym_uniforms_buffer,
+            @sizeOf([4][4]f32),
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateBuffers(1, @ptrCast(&context.gizmo_draw_buffer));
+        gl.NamedBufferStorage(
+            context.gizmo_draw_buffer,
+            @sizeOf(u32) * 1024 * 24,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateBuffers(1, @ptrCast(&context.gizmo_vertex_buffer));
+        gl.NamedBufferStorage(
+            context.gizmo_vertex_buffer,
+            @sizeOf([4]f32) * 1024 * 24,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateBuffers(1, @ptrCast(&context.asym_transforms_buffer));
+        gl.NamedBufferStorage(
+            context.asym_transforms_buffer,
+            @sizeOf(u32) * 1024 * 24,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateBuffers(1, @ptrCast(&context.asym_parameters_buffer));
+        gl.NamedBufferStorage(
+            context.asym_parameters_buffer,
+            @sizeOf([4]f32) * 1024 * 24,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
         try context.loadShaderProgram(arena, &.{
             .{ .type = gl.VERTEX_SHADER, .source_path = "env_map_vertex.spv" },
             .{ .type = gl.FRAGMENT_SHADER, .source_path = "env_map_fragment.spv" },
         }, &context.env_map_shader);
+
+        try context.loadShaderProgram(arena, &.{
+            .{ .type = gl.VERTEX_SHADER, .source_path = "zgizmo_shader_vertex.spv" },
+            .{ .type = gl.FRAGMENT_SHADER, .source_path = "zgizmo_shader_fragment.spv" },
+        }, &context.shaders.gizmo_shader);
 
         try imgui.impl.opengl3.init(.{});
         try imgui.impl.glfw.initForOpenGL(window, .{});
@@ -223,6 +275,112 @@ pub const Context = struct {
 
     pub fn endFrame(context: Context) void {
         _ = context; // autofix
+    }
+
+    const asym = @import("../asym.zig");
+
+    pub fn bindResources(comptime T: type, resources: T) void {
+        inline for (
+            comptime std.meta.fieldNames(T),
+            comptime std.meta.fieldTypes(T),
+        ) |field_name, field_type| {
+            const address_space: std.lang.AddressSpace = field_type.address_space;
+            switch (address_space) {
+                .storage_buffer => {
+                    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, @backingInt(@field(resources, field_name)));
+                },
+                else => @compileError("Address space not supported!"),
+            }
+        }
+    }
+
+    pub fn renderGizmos(
+        context: *Context,
+        scene: *const asym.geo.Scene,
+        gizmo_views: []const asym.geo.Scene.View,
+    ) void {
+        gl.UseProgram(context.shaders.gizmo_shader);
+        gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, context.gizmo_draw_buffer);
+        gl.Viewport(0, 0, context.window.getSize()[0], context.window.getSize()[1]);
+
+        bindResources(@import("lib").shaders.common.AsymDescriptors, .{
+            .uniforms = @fromBackingInt(context.asym_uniforms_buffer),
+            .draws = @fromBackingInt(context.gizmo_draw_buffer),
+            .materials = @fromBackingInt(context.asym_uniforms_buffer),
+            .transforms = @fromBackingInt(context.asym_transforms_buffer),
+            .parameters = @fromBackingInt(context.asym_parameters_buffer),
+            .vertices = @fromBackingInt(context.gizmo_vertex_buffer),
+        });
+
+        var transforms_offset: usize = 0;
+
+        for (scene.transforms_by_type.values, scene.materials_by_type.values) |transforms, materials| {
+            _ = materials; // autofix
+            if (transforms.items.len == 0) {
+                continue;
+            }
+
+            gl.NamedBufferSubData(
+                context.asym_transforms_buffer,
+                @intCast(transforms_offset * @sizeOf(@import("lib").shaders.AffineTransform3D)),
+                @intCast(@sizeOf(@import("lib").shaders.AffineTransform3D) * transforms.items.len),
+                transforms.items.ptr,
+            );
+
+            transforms_offset += transforms.items.len;
+        }
+
+        for (gizmo_views) |*view| {
+            var iter = view.iterate();
+
+            gl.Scissor(
+                @intFromFloat(view.scissor[0]),
+                @intFromFloat(view.scissor[1]),
+                @intFromFloat(view.scissor[2]),
+                @intFromFloat(view.scissor[3]),
+            );
+
+            while (iter.next()) |tuple| {
+                const state, const group = tuple;
+
+                var draw_buffer_offset: usize = 0;
+                var parameter_buffer_offset: usize = 0;
+
+                for (group.draws_by_type.values, group.parameters_by_type.values) |draws, params| {
+                    if (draws.len == 0) {
+                        continue;
+                    }
+
+                    gl.NamedBufferSubData(
+                        context.asym_parameters_buffer,
+                        @intCast(parameter_buffer_offset * @sizeOf(f32)),
+                        @intCast(@sizeOf(f32) * params.len),
+                        params.ptr,
+                    );
+
+                    gl.NamedBufferSubData(
+                        context.gizmo_draw_buffer,
+                        @intCast(draw_buffer_offset * @sizeOf(asym.geo.DrawCommand)),
+                        @intCast(@sizeOf(asym.geo.DrawCommand) * draws.len),
+                        draws.ptr,
+                    );
+
+                    draw_buffer_offset += draws.len;
+                    parameter_buffer_offset += params.len;
+                }
+
+                if (state.depth_testing) {
+                    gl.Enable(gl.DEPTH_TEST);
+                }
+
+                gl.MultiDrawArraysIndirect(
+                    gl.TRIANGLES,
+                    0,
+                    @intCast(draw_buffer_offset),
+                    @sizeOf(asym.geo.DrawCommand),
+                );
+            }
+        }
     }
 
     pub fn loadShaderProgram(

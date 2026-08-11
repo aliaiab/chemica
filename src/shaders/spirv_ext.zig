@@ -62,6 +62,86 @@ pub inline fn imageFetch(
     );
 }
 
+/// Query the dimensions of `image`, with no level of detail.
+pub inline fn imageQuerySize(
+    image: anytype,
+) ImageCoordinate(std.meta.Child(@TypeOf(image)), u32) {
+    const Image = switch (@typeInfo(@TypeOf(image))) {
+        .pointer => |pointer| pointer.child,
+        else => @compileError("Expected a pointer to SPIR-V image type, found '" ++ @typeName(@TypeOf(image)) ++ "'"),
+    };
+
+    const image_info = switch (@typeInfo(Image)) {
+        .spirv => |spirv| switch (spirv) {
+            .image => |info| info,
+            else => @compileError("Expected SPIR-V image type, found '" ++ @typeName(Image) ++ "'"),
+        },
+        else => @compileError("Expected SPIR-V image type, found '" ++ @typeName(Image) ++ "'"),
+    };
+
+    // TODO: Remove this check if dimension is not 1d, 2d, 3d, or cube (in case buffer is added).
+    if (!image_info.multisampled and image_info.usage != .unknown and image_info.usage != .storage)
+        @compileError("SPIR-V image must be either be multisampled or have an unknown or storage usage");
+
+    const Result = ImageCoordinate(std.meta.Child(@TypeOf(image)), u32);
+
+    return asm volatile (
+        \\%loaded_image = OpLoad %Image %image
+        \\%ret          = OpImageQuerySize %Result %loaded_image
+        : [ret] "" (-> Result),
+        : [Image] "t" (Image),
+          [image] "" (image),
+          [Result] "t" (Result),
+    );
+}
+
+/// Write a texel to an image without a sampler.
+/// The type of `image` must be a pointer to a SPIR-V image.
+pub inline fn imageWrite(
+    image: anytype,
+    T: type,
+    coordinate: ImageCoordinate(std.meta.Child(@TypeOf(image)), T),
+    texel: @Vector(4, ImageSampledType(std.meta.Child(@TypeOf(image)))),
+) void {
+    switch (T) {
+        u32, i32 => {},
+        f32 => if (@import("builtin").target.os.tag != .opencl) {
+            @compileError("Floating point image coordinates only supported by OpenCL");
+        },
+        else => @compileError("Expected one of u32, i32 and f32 types. Found '" ++ @typeName(T) ++ "'"),
+    }
+
+    const Image = switch (@typeInfo(@TypeOf(image))) {
+        .pointer => |pointer| pointer.child,
+        else => @compileError("Expected a pointer to SPIR-V image type, found '" ++ @typeName(@TypeOf(image)) ++ "'"),
+    };
+
+    const image_info = switch (@typeInfo(Image)) {
+        .spirv => |spirv| switch (spirv) {
+            .image => |info| info,
+            else => @compileError("Expected SPIR-V image type, found '" ++ @typeName(Image) ++ "'"),
+        },
+        else => @compileError("Expected SPIR-V image type, found '" ++ @typeName(Image) ++ "'"),
+    };
+
+    switch (image_info.usage) {
+        .unknown, .storage => {},
+        else => @compileError("SPIR-V image must have unknown or storage usage"),
+    }
+
+    // TODO: If SubpassData dim is added, throw a compiler error if the image is arrayed and has the SubpassData dim.
+
+    return asm volatile (
+        \\%loaded_image = OpLoad %Image %image
+        \\                OpImageWrite %loaded_image %coordinate %texel
+        :
+        : [Image] "t" (Image),
+          [image] "" (image),
+          [coordinate] "" (coordinate),
+          [texel] "" (texel),
+    );
+}
+
 /// The type of the components that result from sampling or reading from the given SPIR-V image or sampled image type.
 fn ImageSampledType(Image: type) type {
     const image_info = switch (@typeInfo(Image)) {
@@ -93,6 +173,25 @@ fn ImageCoordinate(Image: type, Element: type) type {
         .@"3d", .cube => 3 + @as(u8, @intFromBool(image_info.arrayed)),
     };
     if (dim == 1) return Element else return @Vector(dim, Element);
+}
+
+///Takes a struct type containing spirv resources and computes bindings for them automatically
+pub fn externBindings(comptime T: type) T {
+    var desc: T = undefined;
+
+    inline for (std.meta.fieldNames(T), std.meta.fieldTypes(T), 0..) |field_name, field_type, binding| {
+        @field(desc, field_name) = @extern(field_type, .{
+            .name = field_name,
+            .decoration = .{
+                .descriptor = .{
+                    .binding = binding,
+                    .set = 0,
+                },
+            },
+        });
+    }
+
+    return desc;
 }
 
 const std = @import("std");

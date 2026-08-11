@@ -1380,6 +1380,30 @@ pub const impl = struct {
         }
     };
 
+    pub const vulkan = struct {
+        pub fn init(
+            init_info: cimgui.ImGui_ImplVulkan_InitInfo,
+        ) InitError!void {
+            const status = cimgui.cImGui_ImplVulkan_Init(@ptrCast(@constCast(&init_info)));
+
+            if (status == false) {
+                return InitError.InitFailed;
+            }
+        }
+
+        pub fn shutdown() void {
+            cimgui.cImGui_ImplVulkan_Shutdown();
+        }
+
+        pub fn newFrame() void {
+            cimgui.cImGui_ImplVulkan_NewFrame();
+        }
+
+        pub fn renderDrawData(draw_data: *DrawData) void {
+            cimgui.cImGui_ImplVulkan_RenderDrawData(@ptrCast(draw_data));
+        }
+    };
+
     pub const metal = struct {
         pub fn init(device: mtl.MetalDevice) !void {
             if (!cimgui.cImGui_ImplMetal_Init(device.handle.value)) {
