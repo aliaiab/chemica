@@ -95,6 +95,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     const disable_nfd = b.option(bool, "disable_nfd", "Disables native file dialogs") orelse false;
+    const use_llvm = b.option(bool, "use_llvm", "Enables llvm") orelse false;
 
     const exe_options = b.addOptions();
     exe_options.addOption(bool, "enable_nfd", !disable_nfd);
@@ -145,7 +146,7 @@ pub fn build(b: *std.Build) !void {
     const exe = b.addExecutable(.{
         .name = "chemica",
         .root_module = main_module,
-        .use_llvm = optimize != .debug,
+        .use_llvm = optimize != .debug or use_llvm,
     });
 
     exe.step.dependOn(&cimgui_lib.step);
@@ -236,6 +237,8 @@ fn compileShader(
     const output_file = b.addWriteFile(output_path, &.{});
     var output_file_path = output_file.add(output_path, &.{});
 
+    var compile_shader_step: *std.Build.Step = undefined;
+
     if (std.mem.containsAtLeast(u8, source, 1, ".zig")) {
         const compile_zig_shader = b.addObject(.{
             .name = source_basename,
@@ -259,6 +262,7 @@ fn compileShader(
             .use_llvm = false,
             .use_lld = false,
         });
+        compile_shader_step = &compile_zig_shader.step;
         const zig_shader_spv = b.createModule(.{ .root_source_file = compile_zig_shader.getEmittedBin() });
         _ = zig_shader_spv; // autofix
 
@@ -310,6 +314,7 @@ fn compileShader(
         compile_shader.addArg(source);
         compile_shader.addFileArg(output_file_path);
         compile_shader.addFileInput(b.path(source));
+        compile_shader_step = &compile_shader.step;
 
         exe_step.step.dependOn(&compile_shader.step);
     }
@@ -341,13 +346,18 @@ fn compileShader(
 
         const convert_to_msl = b.addSystemCommand(&.{
             "spirv-cross",
-            output_path,
+        });
+
+        convert_to_msl.addFileArg(output_file_path);
+
+        convert_to_msl.addArgs(&.{
             "--msl",
             "--msl-version",
-            "20200",
+            "20300",
             "--output",
             msl_output_path_install,
         });
+        convert_to_msl.step.dependOn(compile_shader_step);
 
         convert_to_msl.addFileInput(b.path(output_path));
         exe_step.step.dependOn(&convert_to_msl.step);

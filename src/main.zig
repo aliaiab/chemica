@@ -15,12 +15,14 @@ pub fn main(init: std.process.Init) !void {
 
     var rdoc_api: ?*renderdoc.RENDERDOC_API_1_2_0 = null;
 
-    var renderdoc_dynlib = try std.DynLib.open("librenderdoc.so");
-    defer renderdoc_dynlib.close();
+    var renderdoc_dynlib = std.DynLib.open("librenderdoc.so") catch null;
+    defer if (renderdoc_dynlib) |*dynlib| dynlib.close();
 
-    const render_doc_get_api = renderdoc_dynlib.lookup(renderdoc.pRENDERDOC_GetAPI, "RENDERDOC_GetAPI").?;
+    if (renderdoc_dynlib != null) {
+        const render_doc_get_api = renderdoc_dynlib.?.lookup(renderdoc.pRENDERDOC_GetAPI, "RENDERDOC_GetAPI").?;
 
-    _ = render_doc_get_api.?(renderdoc.eRENDERDOC_API_Version_1_1_2, @ptrCast(&rdoc_api));
+        _ = render_doc_get_api.?(renderdoc.eRENDERDOC_API_Version_1_1_2, @ptrCast(&rdoc_api));
+    }
 
     try glfw.init();
     defer glfw.terminate();
