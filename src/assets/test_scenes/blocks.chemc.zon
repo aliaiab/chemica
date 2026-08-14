@@ -1,5 +1,23 @@
-.{ .children = .{.{
-    .material = 1,
-    .children = .{},
-    .name = "box",
-}} }
+.{ .children = .{
+    .{
+        .material = 1,
+        .children = .{},
+        .name = "box",
+    },
+    .{
+        .material = 1,
+        .children = .{},
+        .name = "box",
+    },
+    .{
+        .material = 1,
+        .children = .{},
+        .name = "box",
+    },
+    .{
+        .modifiers = .{ .rounding = .{ .rounding = 9.6 } },
+        .material = 1,
+        .children = .{},
+        .name = "cylinder",
+    },
+} }

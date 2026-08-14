@@ -76,19 +76,6 @@ void main() {
     random.r = clamp(random.r, 0, 1);
 
     if (field.sdf_gradient.x < 0) {
-        /*
-
-                                                float running_weight = 0;
-                                                for (int i = 0; i < composite_material.length(); i++) {
-                                                    running_weight += composite_material[i].weight;
-
-                                                    if (random.r < running_weight) {
-                                                        in_voxel_lattice[index] = uint16_t(composite_material[i].material);
-                                                        break;
-                                                    }
-                                                }
-                                                */
-
         in_voxel_lattice[mortonEncode(position_int)] = uint16_t(field.material);
 
         if (true) {

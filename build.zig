@@ -43,6 +43,18 @@ pub fn build(b: *std.Build) !void {
         .extensions = &.{},
     });
 
+    const freetype_dep = b.dependency("freetype", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const mist_dep = b.dependency("msdf_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    _ = freetype_dep; // autofix
+
     const cimgui_translate_c = b.addTranslateC(.{
         .root_source_file = b.path("src/cimgui.h"),
         .target = target,
@@ -68,6 +80,7 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("zglfw", zglfw_mod);
     main_module.addImport("zigimg", zigimg.module("zigimg"));
     main_module.addImport("lib", root_module);
+    main_module.addImport("msdf-zig", mist_dep.module("msdf-zig"));
 
     // Get the (lazy) path to vk.xml:
     const registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml");
@@ -192,14 +205,14 @@ pub fn build(b: *std.Build) !void {
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/grain_simulation.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/env_map_fragment.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/env_map_vertex.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/generate_chunk_draws.zig");
+    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/generate_chunk_draws.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/gizmo_shader_vertex.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/gizmo_shader_fragment.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/depth_prepass_fragment.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/sdf_renderer_fragment.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/sdf_texture_compute.zig");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/zgizmo_shader_vertex.zig");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/zgizmo_shader_fragment.zig");
+    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/asym_vertex.glsl");
+    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/asym_fragment.glsl");
 
     exe.is_linking_libcpp = true;
 
@@ -312,9 +325,11 @@ fn compileShader(
         compile_shader.addArg(@tagName(mode));
         compile_shader.addArg(@tagName(shader_type));
         compile_shader.addArg(source);
-        compile_shader.addFileArg(output_file_path);
+        compile_shader.addFileArg2(output_file_path, .{});
         compile_shader.addFileInput(b.path(source));
         compile_shader_step = &compile_shader.step;
+
+        b.install_tls.step.dependOn(&compile_shader.step);
 
         exe_step.step.dependOn(&compile_shader.step);
     }

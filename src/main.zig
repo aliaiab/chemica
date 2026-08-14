@@ -55,10 +55,10 @@ pub fn main(init: std.process.Init) !void {
     glfw.makeContextCurrent(window);
     glfw.swapInterval(0);
 
-    var gizmo_context: asym.geo.Context = .init(gpa);
-    defer gizmo_context.deinit();
+    var asym_geo_context: asym.geo.Context = .init(gpa);
+    defer asym_geo_context.deinit();
 
-    asym.geo.setCurrentContext(&gizmo_context);
+    asym.geo.setCurrentContext(&asym_geo_context);
 
     _ = imgui.createContext(.{});
 
@@ -341,6 +341,22 @@ pub fn main(init: std.process.Init) !void {
 
     var render_sdf_raymarched: bool = false;
 
+    const asym_typeface = try asym.typeface.loadTypeFaceFromTTf(&asym_geo_context, @embedFile("assets/JetBrainsMono_regular.ttf"));
+
+    const typeface_textures: []?*gpu.Texture = try arena.alloc(?*gpu.Texture, 1);
+
+    typeface_textures[0] = try gpu_context.loadTypeFaceTextureFromTTF(
+        gpa,
+        init.io,
+        &asym_geo_context,
+        asym_typeface,
+        @embedFile("assets/JetBrainsMono_regular.ttf"),
+    );
+
+    asym.geo.setDefaultStateTextTypeFace(asym_typeface);
+
+    var zoom: f32 = 1;
+
     while (!window.shouldClose()) {
         glfw.pollEvents();
 
@@ -358,7 +374,7 @@ pub fn main(init: std.process.Init) !void {
 
         gpu_context.beginFrame();
 
-        gizmo_context.beginSubmission();
+        asym_geo_context.beginSubmission();
 
         if (imgui.cimgui.ImGui_IsKeyPressed(imgui.cimgui.ImGuiKey_T)) {
             enable_transform_gizmo = !enable_transform_gizmo;
@@ -414,6 +430,7 @@ pub fn main(init: std.process.Init) !void {
 
             var eye: @Vector(3, f32) = camera.eye;
             const target: @Vector(3, f32) = camera.target;
+            zoom = zoom_factor[0];
 
             eye += zoom_factor * (eye - target);
             mouse_scroll = 0;
@@ -461,16 +478,36 @@ pub fn main(init: std.process.Init) !void {
             .{ 0, 1, 0, 0 },
         )));
 
-        asym.geo.beginView(
-            camera.view,
-            camera.projection,
-            .{
-                0,
-                0,
-                @floatFromInt(window.getSize()[0]),
-                @floatFromInt(window.getSize()[1]),
-            },
-        );
+        const aspect_ratio: f32 = @as(f32, @floatFromInt(window.getSize()[0])) / @as(f32, @floatFromInt(window.getSize()[1]));
+
+        if (false) {
+            asym.geo.beginView(
+                @bitCast(zmath.identity()),
+                [4][4]f32{
+                    .{ 1 / aspect_ratio, 0, 0, 0 },
+                    .{ 0, 1, 0, 0 },
+                    .{ 0, 0, 1, 0 },
+                    .{ 0, 0, 0, 1 },
+                },
+                .{
+                    0,
+                    0,
+                    @floatFromInt(window.getSize()[0]),
+                    @floatFromInt(window.getSize()[1]),
+                },
+            );
+        } else {
+            asym.geo.beginView(
+                camera.view,
+                camera.projection,
+                .{
+                    0,
+                    0,
+                    @floatFromInt(window.getSize()[0]),
+                    @floatFromInt(window.getSize()[1]),
+                },
+            );
+        }
 
         simulation.model_matrix = @bitCast(zmath.transpose(zmath.identity()));
         simulation.view_matrix = camera.view;
@@ -1328,25 +1365,125 @@ pub fn main(init: std.process.Init) !void {
 
         imgui.render();
 
-        _ = asym.geo.circle(.{
-            .id = .fromSrc(@src()),
-            .radius = 10,
-            .colour = .red,
-            .transform = .identity,
-        });
+        if (true) {
+            if (false) {
+                _ = asym.geo.box(.{
+                    .id = .fromSrc(@src()),
+                    .bounds = .{ 1, 1, 0 },
+                    .colour = .green,
+                    .transform = .{
+                        .position = .{ @floatCast(@cos(glfw.getTime())), 0, 0 },
+                        .scale = 1,
+                        .rotation = .{ 0, 0, 0, 1 },
+                    },
+                });
 
-        const gizmo_views = gizmo_context.endSubmission();
+                _ = asym.geo.box(.{
+                    .id = .fromSrc(@src()),
+                    .bounds = .{ 1, 1, 0 },
+                    .colour = .red,
+                    .transform = .{
+                        .position = .{ @floatCast(@sin(glfw.getTime())), 1, 0 },
+                        .scale = 1,
+                        .rotation = .{ 0, 0, 0, 1 },
+                    },
+                });
+            }
 
-        gpu_context.renderGizmos(&gizmo_context.draw_data[gizmo_context.active_draw_data], gizmo_views);
+            if (false) {
+                _ = asym.geo.circle(.{
+                    .id = .fromSrc(@src()),
+                    .radius = 10,
+                    .colour = .blue,
+                    .transform = .{
+                        .position = .{ @floatCast(@sin(glfw.getTime())), 0, 0 },
+                        .scale = 1,
+                        .rotation = .{ 0, 0, 0, 1 },
+                    },
+                });
 
-        if (@import("builtin").os.tag != .macos) {
-            imgui.impl.opengl3.renderDrawData(imgui.getDrawData());
-        } else {
-            imgui.impl.metal.renderDrawData(
-                imgui.getDrawData(),
-                simulation.gpu_sim.command_buffer,
-                simulation.gpu_sim.render_encoder,
-            );
+                _ = asym.geo.circle(.{
+                    .id = .fromSrc(@src()),
+                    .radius = 10,
+                    .colour = .{ .r = 0, .g = 255, .b = 0, .a = 100 },
+                    .transform = .{
+                        .position = .{ @floatCast(@cos(glfw.getTime())), 0, 0 },
+                        .scale = 1,
+                        .rotation = .{ 0, 0, 0, 1 },
+                    },
+                });
+
+                _ = asym.geo.circle(.{
+                    .id = .fromSrc(@src()),
+                    .radius = 10,
+                    .colour = .red,
+                    .transform = .{
+                        .position = .{ 0, 0.5, 0 },
+                        .scale = 1,
+                        .rotation = .{ 0, 0, 0, 1 },
+                    },
+                });
+            }
+
+            const Static = struct {
+                pub var text_scale: f32 = 1;
+            };
+
+            Static.text_scale -= zoom;
+
+            var fmt_buf: [1024]u8 = undefined;
+
+            const str = try std.fmt.bufPrint(&fmt_buf, "sin(t) = {:.2}", .{@sin(glfw.getTime())});
+            _ = str; // autofix
+
+            const lorem_ipsum = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.";
+            _ = lorem_ipsum; // autofix
+            const lorem = @embedFile("assets/lorem_ipsum.txt");
+            _ = lorem; // autofix
+
+            const test_text = "Images galore!\nShitehead revisited!\nSussssy!!!\nBakka!! Bum Bum\n    Poo!!\nWeeeeee!! HAHAHAHA!!!:D:D";
+            _ = test_text; // autofix
+            const test_src = @embedFile("Simulation.zig");
+            _ = test_src; // autofix
+            const train_text =
+                \\1st 1848 Basingstoke         1848
+                \\2nd 1918 Basingstoke         1918
+            ;
+            _ = train_text; // autofix
+            const elements_lyrics = @embedFile("assets/the_elements_lyrics.txt");
+
+            asym.geo.text(.{
+                .id = .fromSrc(@src()),
+                .string = elements_lyrics,
+                .colour = .red,
+                .transform = .{
+                    .position = .{ 50, 0, 0 },
+                    .scale = 10 + Static.text_scale * 3,
+                    .rotation = .{ 0, 0, 0, 1 },
+                },
+            });
+        }
+
+        const gizmo_views = asym_geo_context.endSubmission();
+
+        gpu_context.renderGizmos(
+            gpa,
+            &asym_geo_context,
+            gizmo_views,
+            gizmo_views.views.items,
+            typeface_textures,
+        );
+
+        if (false) {
+            if (@import("builtin").os.tag != .macos) {
+                imgui.impl.opengl3.renderDrawData(imgui.getDrawData());
+            } else {
+                imgui.impl.metal.renderDrawData(
+                    imgui.getDrawData(),
+                    simulation.gpu_sim.command_buffer,
+                    simulation.gpu_sim.render_encoder,
+                );
+            }
         }
 
         gpu_context.endFrame();

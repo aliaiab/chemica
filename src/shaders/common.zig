@@ -167,6 +167,43 @@ pub const AsymDescriptors = struct {
     materials: StorageBuffer(RuntimeArray(Material)),
     parameters: StorageBuffer(RuntimeArray(f32)),
     vertices: StorageBuffer(RuntimeArray([3]f32)),
+    grapheme_buffers: StorageBuffer(RuntimeArray(asym.GraphemeBuffer)),
+    grapheme_pidgeon_holes: StorageBuffer(RuntimeArray(asym.GraphemePidgeonHole)),
+    grapheme_instances: StorageBuffer(RuntimeArray(asym.GraphemeInstance)),
+    grapheme_materials: StorageBuffer(RuntimeArray(u32)),
+    glyph_metrics: StorageBuffer(RuntimeArray(asym.GlyphMetric)),
+    transform_offsets_by_type: StorageBuffer(RuntimeArray(u32)),
+    parameter_offsets_by_type: StorageBuffer(RuntimeArray(u32)),
+};
+
+pub const asym = struct {
+    pub const GraphemeBuffer = extern struct {
+        buffer_begin: u32,
+        width: u32,
+        height: u32,
+    };
+
+    pub const GraphemePidgeonHole = extern struct {
+        grapheme_slice: GraphemeSlice,
+
+        pub const GraphemeSlice = packed struct(u32) {
+            offset: u28,
+            count: u4,
+        };
+    };
+
+    pub const GraphemeInstance = extern struct {
+        glyph_index: u16,
+        x_offset: f16,
+    };
+
+    pub const GlyphMetric = extern struct {
+        width: f32 = 0,
+        height: f32 = 0,
+        advance: f32 = 0,
+        bearing_x: f32 = 0,
+        bearing_y: f32 = 0,
+    };
 };
 
 pub const uniforms = @extern(*addrspace(.storage_buffer) const ShaderUniforms, .{

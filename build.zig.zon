@@ -56,6 +56,14 @@
             .url = "git+https://github.com/KhronosGroup/Vulkan-Headers#f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
             .hash = "N-V-__8AAMgnfgKxQBLuasOmdRqVVIc1HwfkjIUSwaryYgzo",
         },
+        .freetype = .{
+            .url = "git+https://code.hexops.org/hexops/freetype.git#1d0f0f11162275d67d3db2cb4905ed5c659b8a41",
+            .hash = "freetype-0.0.0-Oa073aaddgBS9kbmOT8NQP-kfpHr3YJgIASnj5V9PsZX",
+        },
+        .msdf_zig = .{
+            .url = "git+https://github.com/aliaiab/mist.git#65b004486e1c0cbde8291cda2a919287d427e400",
+            .hash = "msdf_zig-1.0.0-5-oN46gzBQASxm386LJm4K8_HhKxGNoGuA13BNZ84lM9",
+        },
     },
     .paths = .{
         "build.zig",

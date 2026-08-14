@@ -10,4 +10,4 @@ pub const Context = switch (@import("builtin").os.tag) {
     else => if (!use_vulkan) @import("gpu/opengl.zig").Context else @import("gpu/vulkan.zig").Context,
 };
 
-pub const use_vulkan = true;
+pub const use_vulkan = false;

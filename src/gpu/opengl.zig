@@ -106,7 +106,12 @@ pub const Context = struct {
     gizmo_vertex_buffer: u32,
     gizmo_uniform_buffer: u32,
     asym_transforms_buffer: u32,
+    asym_materials_buffer: u32,
     asym_parameters_buffer: u32,
+    asym_grapheme_buffers: u32,
+    asym_grapheme_pigeon_hole_buffers: u32,
+    asym_grapheme_instances_buffer: u32,
+    asym_glyph_metrics_buffer: u32,
 
     pub fn init(
         arena: std.mem.Allocator,
@@ -184,7 +189,7 @@ pub const Context = struct {
         gl.CreateBuffers(1, @ptrCast(&context.asym_uniforms_buffer));
         gl.NamedBufferStorage(
             context.asym_uniforms_buffer,
-            @sizeOf([4][4]f32),
+            @sizeOf([4][4]f32) + @sizeOf([4][4]f32),
             null,
             gl.DYNAMIC_STORAGE_BIT,
         );
@@ -221,14 +226,47 @@ pub const Context = struct {
             gl.DYNAMIC_STORAGE_BIT,
         );
 
+        gl.CreateBuffers(1, @ptrCast(&context.asym_materials_buffer));
+        gl.NamedBufferStorage(
+            context.asym_materials_buffer,
+            @sizeOf(asym.geo.Material) * 1024 * 24,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateBuffers(1, @ptrCast(&context.asym_grapheme_buffers));
+        gl.NamedBufferStorage(
+            context.asym_grapheme_buffers,
+            @sizeOf([4]f32) * 1024 * 24,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateBuffers(1, @ptrCast(&context.asym_grapheme_pigeon_hole_buffers));
+        gl.NamedBufferStorage(
+            context.asym_grapheme_pigeon_hole_buffers,
+            @sizeOf([4]f32) * 1024 * 24,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateBuffers(1, @ptrCast(&context.asym_grapheme_instances_buffer));
+        gl.NamedBufferStorage(
+            context.asym_grapheme_instances_buffer,
+            @sizeOf([4]f32) * 1024 * 24,
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+        gl.CreateBuffers(1, @ptrCast(&context.asym_glyph_metrics_buffer));
+
         try context.loadShaderProgram(arena, &.{
             .{ .type = gl.VERTEX_SHADER, .source_path = "env_map_vertex.spv" },
             .{ .type = gl.FRAGMENT_SHADER, .source_path = "env_map_fragment.spv" },
         }, &context.env_map_shader);
 
         try context.loadShaderProgram(arena, &.{
-            .{ .type = gl.VERTEX_SHADER, .source_path = "zgizmo_shader_vertex.spv" },
-            .{ .type = gl.FRAGMENT_SHADER, .source_path = "zgizmo_shader_fragment.spv" },
+            .{ .type = gl.VERTEX_SHADER, .source_path = "asym_vertex.spv" },
+            .{ .type = gl.FRAGMENT_SHADER, .source_path = "asym_fragment.spv" },
         }, &context.shaders.gizmo_shader);
 
         try imgui.impl.opengl3.init(.{});
@@ -283,21 +321,142 @@ pub const Context = struct {
         inline for (
             comptime std.meta.fieldNames(T),
             comptime std.meta.fieldTypes(T),
-        ) |field_name, field_type| {
+            0..,
+        ) |field_name, field_type, binding_index| {
             const address_space: std.lang.AddressSpace = field_type.address_space;
             switch (address_space) {
                 .storage_buffer => {
-                    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, @backingInt(@field(resources, field_name)));
+                    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, binding_index, @backingInt(@field(resources, field_name)));
                 },
                 else => @compileError("Address space not supported!"),
             }
         }
     }
 
+    fn printableAscii() []const u21 {
+        var ret: []const u21 = &.{};
+        for (32..127) |i| ret = ret ++ [_]u21{@intCast(i)};
+        return ret;
+    }
+
+    pub fn loadTypeFaceTextureFromTTF(
+        context: *Context,
+        gpa: std.mem.Allocator,
+        io: std.Io,
+        geo_ctx: *const asym.geo.Context,
+        typeface_handle: asym.geo.TextTypeFaceHandle,
+        typeface_ttf: []const u8,
+    ) !?*Texture {
+        _ = io; // autofix
+        const Generator = @import("msdf-zig");
+
+        var gen: Generator = try .create(typeface_ttf);
+
+        const sdf_type: Generator.SdfType = .mtsdf;
+
+        const opts: Generator.Options = .{
+            .sdf_type = sdf_type,
+            .px_size = 64,
+            .px_range = 8,
+            .coloring_rng_seed = 0,
+            .validate_shape = true,
+            .normalize_shape = true,
+            .orient_contours = true,
+        };
+
+        var texture_handle: u32 = 0;
+
+        gl.CreateTextures(gl.TEXTURE_2D_ARRAY, 1, @ptrCast(&texture_handle));
+
+        const typeface = geo_ctx.type_faces.items[@backingInt(typeface_handle)];
+
+        const printable_ascii = comptime printableAscii();
+        var sdfs: []?Generator.GeneratedGlyph = try gpa.alloc(?Generator.GeneratedGlyph, typeface.codepoints_to_glyph.count());
+        defer gpa.free(sdfs);
+
+        @memset(sdfs, null);
+
+        const glyph_metrics = try gpa.alloc(@import("lib").shaders.common.asym.GlyphMetric, typeface.codepoints_to_glyph.count());
+        defer gpa.free(glyph_metrics);
+
+        @memset(glyph_metrics, .{});
+
+        var max_width: u32 = 0;
+        var max_height: u32 = 0;
+
+        for (printable_ascii) |codepoint| {
+            const data = try gen.generateSingle(gpa, codepoint, &opts);
+
+            max_width = @max(max_width, data.metrics.width);
+            max_height = @max(max_height, data.metrics.height);
+
+            const glyph_index = typeface.codepoints_to_glyph.getIndex(codepoint).?;
+            sdfs[glyph_index] = data;
+        }
+
+        gl.TextureStorage3D(
+            texture_handle,
+            @as(i32, @intFromFloat(1 + @floor(@log2(@as(f32, @floatFromInt(@max(max_width, max_height))))))),
+            gl.RGBA8,
+            @intCast(max_width),
+            @intCast(max_height),
+            @intCast(typeface.codepoints_to_glyph.count()),
+        );
+
+        for (sdfs, glyph_metrics, 0..) |*maybe_data, *metrics, glyph_index| {
+            if (maybe_data.* == null) {
+                continue;
+            }
+
+            const data = maybe_data.*.?;
+            defer data.deinit(gpa);
+
+            if (data.pixels.len == 0) {
+                continue;
+            }
+            metrics.width = @floatFromInt(data.metrics.width);
+            metrics.height = @floatFromInt(data.metrics.height);
+            metrics.advance = @floatCast(data.metrics.advance);
+            metrics.bearing_x = @floatCast(data.metrics.bearing_x);
+            metrics.bearing_y = @floatCast(data.metrics.bearing_y);
+
+            gl.TextureSubImage3D(
+                texture_handle,
+                0,
+                0,
+                0,
+                @intCast(glyph_index),
+                data.metrics.width,
+                data.metrics.height,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_BYTE,
+                data.pixels.ptr,
+            );
+        }
+
+        gl.GenerateTextureMipmap(texture_handle);
+
+        gl.TextureParameteri(texture_handle, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.TextureParameteri(texture_handle, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+
+        gl.NamedBufferData(
+            context.asym_glyph_metrics_buffer,
+            @intCast(@sizeOf(@import("lib").shaders.common.asym.GlyphMetric) * glyph_metrics.len),
+            glyph_metrics.ptr,
+            gl.STATIC_READ,
+        );
+
+        return @ptrFromInt(texture_handle);
+    }
+
     pub fn renderGizmos(
         context: *Context,
+        gpa: std.mem.Allocator,
+        geo_context: *const asym.geo.Context,
         scene: *const asym.geo.Scene,
-        gizmo_views: []const asym.geo.Scene.View,
+        views: []const asym.geo.Scene.View,
+        typeface_textures: []?*Texture,
     ) void {
         gl.UseProgram(context.shaders.gizmo_shader);
         gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, context.gizmo_draw_buffer);
@@ -306,16 +465,27 @@ pub const Context = struct {
         bindResources(@import("lib").shaders.common.AsymDescriptors, .{
             .uniforms = @fromBackingInt(context.asym_uniforms_buffer),
             .draws = @fromBackingInt(context.gizmo_draw_buffer),
-            .materials = @fromBackingInt(context.asym_uniforms_buffer),
+            .materials = @fromBackingInt(context.asym_materials_buffer),
             .transforms = @fromBackingInt(context.asym_transforms_buffer),
             .parameters = @fromBackingInt(context.asym_parameters_buffer),
             .vertices = @fromBackingInt(context.gizmo_vertex_buffer),
+            .grapheme_buffers = @fromBackingInt(context.asym_grapheme_buffers),
+            .grapheme_pidgeon_holes = @fromBackingInt(context.asym_grapheme_pigeon_hole_buffers),
+            .grapheme_instances = @fromBackingInt(context.asym_grapheme_instances_buffer),
+            .grapheme_materials = @fromBackingInt(0),
+            .glyph_metrics = @fromBackingInt(context.asym_glyph_metrics_buffer),
+            .parameter_offsets_by_type = @fromBackingInt(0),
+            .transform_offsets_by_type = @fromBackingInt(0),
         });
 
+        for (typeface_textures) |type_face_texture| {
+            gl.BindTextureUnit(0, @intCast(@intFromPtr(type_face_texture.?)));
+        }
+
         var transforms_offset: usize = 0;
+        var materials_offset: usize = 0;
 
         for (scene.transforms_by_type.values, scene.materials_by_type.values) |transforms, materials| {
-            _ = materials; // autofix
             if (transforms.items.len == 0) {
                 continue;
             }
@@ -327,10 +497,18 @@ pub const Context = struct {
                 transforms.items.ptr,
             );
 
+            gl.NamedBufferSubData(
+                context.asym_materials_buffer,
+                @intCast(materials_offset * @sizeOf(asym.geo.Material)),
+                @intCast(@sizeOf(asym.geo.Material) * materials.items.len),
+                materials.items.ptr,
+            );
+
             transforms_offset += transforms.items.len;
+            materials_offset += materials.items.len;
         }
 
-        for (gizmo_views) |*view| {
+        for (views) |*view| {
             var iter = view.iterate();
 
             gl.Scissor(
@@ -340,11 +518,104 @@ pub const Context = struct {
                 @intFromFloat(view.scissor[3]),
             );
 
+            const Mat4x4 = [4]@Vector(4, f32);
+
+            const view_projection = zmath.mul(@as(Mat4x4, @bitCast(view.view)), @as(Mat4x4, @bitCast(view.projection)));
+
+            gl.NamedBufferSubData(
+                context.asym_uniforms_buffer,
+                @intCast(0 * @sizeOf([4][4]f32)),
+                @intCast(@sizeOf([4][4]f32)),
+                &view_projection,
+            );
+
+            gl.NamedBufferSubData(
+                context.asym_uniforms_buffer,
+                @intCast(1 * @sizeOf([4][4]f32)),
+                @intCast(@sizeOf(f32)),
+                &@as(f32, @floatCast(glfw.getTime())),
+            );
+
+            var text_buffer_entry_begin: usize = 0;
+
             while (iter.next()) |tuple| {
                 const state, const group = tuple;
 
                 var draw_buffer_offset: usize = 0;
                 var parameter_buffer_offset: usize = 0;
+
+                defer text_buffer_entry_begin += group.draws_by_type.get(.text).len;
+
+                for (group.draws_by_type.get(.text), group.text_typefaces, 0..) |draws, typeface, draw_index| {
+                    _ = draws; // autofix
+                    std.debug.assert(scene.text_buffer_entires.items.len != 0);
+                    const text_buffer = scene.text_buffer_entires.items[text_buffer_entry_begin + draw_index];
+                    std.debug.print("Text Entry: {s}\n", .{text_buffer});
+
+                    var line_iter: std.mem.SplitIterator(u8, .sequence) = .{
+                        .delimiter = "\n",
+                        .buffer = text_buffer,
+                        .index = 0,
+                    };
+
+                    const typeface_data = &geo_context.type_faces.items[@backingInt(typeface)];
+
+                    var grapheme_buffer_height: u32 = 0;
+                    var grapheme_buffer_width: u32 = 0;
+
+                    while (line_iter.next()) |line| {
+                        grapheme_buffer_width = @max(grapheme_buffer_width, @as(u32, @intCast(line.len)));
+                        grapheme_buffer_height += 1;
+                    }
+
+                    line_iter.reset();
+
+                    const GraphemeBin = @import("lib").shaders.common.asym.GraphemePidgeonHole;
+
+                    const grapheme_buffer_bins = gpa.alloc(GraphemeBin, grapheme_buffer_width * grapheme_buffer_height) catch @panic("oom");
+                    defer gpa.free(grapheme_buffer_bins);
+                    var line_index: u32 = 0;
+
+                    while (line_iter.next()) |line| {
+                        defer line_index += 1;
+
+                        std.debug.print("line[{}]: {s}\n", .{ line_index, line });
+
+                        for (line, 0..) |char, column_index| {
+                            const bin = &grapheme_buffer_bins[column_index + line_index * grapheme_buffer_width];
+
+                            const glyph_index: u16 = @intCast(typeface_data.codepoints_to_glyph.getIndex(char).?);
+                            bin.grapheme_slice = @bitCast(@as(u32, glyph_index));
+                            if (char == ' ') {
+                                bin.grapheme_slice = @bitCast(@as(u32, std.math.maxInt(u32)));
+                            }
+                        }
+                    }
+
+                    const GraphemeBuffer = extern struct {
+                        buffer_begin: u32,
+                        width: u32,
+                        height: u32,
+                    };
+
+                    gl.NamedBufferSubData(
+                        context.asym_grapheme_buffers,
+                        @intCast(draw_index * @sizeOf(GraphemeBuffer)),
+                        @intCast(@sizeOf(GraphemeBuffer)),
+                        &GraphemeBuffer{
+                            .buffer_begin = 0,
+                            .width = grapheme_buffer_width,
+                            .height = grapheme_buffer_height,
+                        },
+                    );
+
+                    gl.NamedBufferSubData(
+                        context.asym_grapheme_pigeon_hole_buffers,
+                        @intCast(0 * @sizeOf(GraphemeBin)),
+                        @intCast(@sizeOf(GraphemeBin) * grapheme_buffer_bins.len),
+                        grapheme_buffer_bins.ptr,
+                    );
+                }
 
                 for (group.draws_by_type.values, group.parameters_by_type.values) |draws, params| {
                     if (draws.len == 0) {
@@ -372,6 +643,8 @@ pub const Context = struct {
                 if (state.depth_testing) {
                     gl.Enable(gl.DEPTH_TEST);
                 }
+
+                gl.Disable(gl.CULL_FACE);
 
                 gl.MultiDrawArraysIndirect(
                     gl.TRIANGLES,

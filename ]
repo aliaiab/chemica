@@ -115,8 +115,6 @@ pub const Scene = struct {
             for (draw_group.parameters_by_type.values) |*val| {
                 val.clearRetainingCapacity();
             }
-
-            draw_group.text_typefaces.clearRetainingCapacity();
         }
 
         pub fn slice(draw_group: *const Group) GroupSlice {
@@ -137,7 +135,6 @@ pub const Scene = struct {
             return .{
                 .parameters_by_type = parameters_by_type,
                 .draws_by_type = draws_by_type,
-                .text_typefaces = draw_group.text_typefaces.items,
             };
         }
     };
@@ -145,7 +142,6 @@ pub const Scene = struct {
     pub const GroupSlice = struct {
         parameters_by_type: std.EnumArray(PrimitiveType, []const f32),
         draws_by_type: std.EnumArray(PrimitiveType, []const DrawCommand),
-        text_typefaces: []const TextTypeFaceHandle,
 
         pub fn empty(self: GroupSlice) bool {
             for (self.draws_by_type.values) |val| {
@@ -393,9 +389,6 @@ pub const TextTypeFaceData = struct {
 
     pub const Glyph = struct {
         aspect_ratio: f32,
-        advance: f32,
-        bearing_x: f32,
-        bearing_y: f32,
     };
 };
 
@@ -420,26 +413,13 @@ pub fn textComputeSize(
         type: TextType = .utf8,
     },
 ) [2]f32 {
+    _ = options; // autofix
     const context = current_context.?;
 
     const type_face = &context.type_faces.items[@backingInt(context.default_type_face)];
     _ = type_face; // autofix
-    var iter: std.mem.SplitIterator(u8, .sequence) = .{
-        .buffer = options.string,
-        .delimiter = "\n",
-        .index = 0,
-    };
 
-    var width: f32 = 0;
-    var height: f32 = 0;
-
-    while (iter.next()) |text_line| {
-        width = @max(width, @as(f32, @floatFromInt(text_line.len)));
-
-        height += 1;
-    }
-
-    return .{ width, height };
+    return @splat(0);
 }
 
 pub fn textComputeSizeAndType(
@@ -459,12 +439,6 @@ pub const TextFormatting = packed struct(u32) {
     _: u30 = 0,
 };
 
-pub const TextBounds = union(enum) {
-    ///Size based on the text itself
-    auto,
-    aabb: [3]f32,
-};
-
 ///Draws a rect containing text defined by options.string
 pub fn text(
     options: struct {
@@ -476,7 +450,7 @@ pub fn text(
         type_face: TextTypeFaceHandle = .default,
         formatting: TextFormatting = .{},
         transform: AffineTransform3D,
-        bounds: TextBounds = .auto,
+        bounds: [3]f32,
     },
 ) void {
     const context = current_context.?;
@@ -491,10 +465,6 @@ pub fn text(
     const parameters_begin: u32 = @intCast(group.parameters_by_type.get(primitive_type).items.len);
     const instance_ids_begin: u32 = @intCast(scene.instance_ids_by_type.get(primitive_type).items.len);
 
-    const typeface = if (options.type_face == .default) context.default_type_face else options.type_face;
-
-    group.text_typefaces.append(context.arena.allocator(), typeface) catch @panic("oom");
-
     const text_buffer_begin: u32 = @intCast(scene.text_buffer.items.len);
 
     scene.text_buffer.appendSlice(context.arena.allocator(), options.string) catch @panic("oom");
@@ -503,15 +473,9 @@ pub fn text(
 
     scene.text_buffer_entires.append(context.arena.allocator(), text_buffer) catch @panic("");
 
-    const bounds: [2]f32 = if (options.bounds == .aabb) options.bounds.aabb[0..2].* else textComputeSize(.{
-        .string = options.string,
-        .type = options.type,
-        .type_face = typeface,
-    });
-
     scene.transforms_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.transform) catch @panic("oom");
     scene.materials_by_type.getPtr(primitive_type).append(context.arena.allocator(), .{ .colour = options.colour }) catch @panic("oom");
-    group.parameters_by_type.getPtr(primitive_type).appendSlice(context.arena.allocator(), &bounds) catch @panic("oom");
+    group.parameters_by_type.getPtr(primitive_type).append(context.arena.allocator(), undefined) catch @panic("oom");
     scene.instance_ids_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.id) catch @panic("oom");
 
     scene.instance_ids_by_type.getPtr(primitive_type).append(

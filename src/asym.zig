@@ -3,3 +3,4 @@
 pub const geo = @import("asym/geo.zig");
 pub const gui = @import("asym/gui.zig");
 pub const input = @import("asym/input.zig");
+pub const typeface = @import("asym/typeface.zig");
