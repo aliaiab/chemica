@@ -480,7 +480,7 @@ pub fn main(init: std.process.Init) !void {
 
         const aspect_ratio: f32 = @as(f32, @floatFromInt(window.getSize()[0])) / @as(f32, @floatFromInt(window.getSize()[1]));
 
-        if (false) {
+        if (true) {
             asym.geo.beginView(
                 @bitCast(zmath.identity()),
                 [4][4]f32{
@@ -1457,8 +1457,8 @@ pub fn main(init: std.process.Init) !void {
                 .string = elements_lyrics,
                 .colour = .red,
                 .transform = .{
-                    .position = .{ 50, 0, 0 },
-                    .scale = 10 + Static.text_scale * 3,
+                    .position = .{ 0, 0, 0 },
+                    .scale = 1 + Static.text_scale * 3,
                     .rotation = .{ 0, 0, 0, 1 },
                 },
             });

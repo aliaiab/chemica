@@ -84,7 +84,7 @@ pub const Scene = struct {
         projection: [4][4]f32,
         scissor: [4]f32,
         ///Indexed by @backingInt(draw_state)
-        draws_by_state: [8]Group = @splat(.{}),
+        draws_by_state: [64]Group = @splat(.{}),
         draw_group_count: usize = 0,
 
         ///Returns an iterator which iterates the draw groups and clears them afterwards
@@ -237,8 +237,10 @@ pub const ImageHandle = enum(u64) {
 pub const PipelineState = packed struct(u32) {
     depth_testing: bool = false,
     filled: bool = true,
+    face_culling: bool = false,
+    face_culling_front_face: bool = false,
     transparency: bool = false,
-    _: u29 = 0,
+    _: u27 = 0,
 };
 
 ///Represents a frame stable id of a draw primitive or group of draws
@@ -297,8 +299,6 @@ pub fn beginView(
 
         for (&draw_group.parameters_by_type.values) |*params| {
             params.items = &.{};
-            std.debug.print("params.len = {}\n", .{params.items.len});
-            std.debug.assert(params.items.len == 0);
         }
     }
 }
@@ -540,13 +540,13 @@ pub fn text(
 
 pub fn sphere(
     options: struct {
+        id: InstanceId,
         draw_state: PipelineState = .{},
-        interactable: ?InstanceId = null,
         transform: AffineTransform3D,
         colour: Colour,
         radius: f32,
     },
-) bool {
+) void {
     const context = current_context.?;
     const view = current_context.?.draw_data[current_context.?.active_draw_data].views.last().?;
     const group = view.drawGroup(options.draw_state);
@@ -558,9 +558,7 @@ pub fn sphere(
                 .colour = options.colour,
             },
         },
-    }) orelse return false;
-
-    return true;
+    });
 }
 
 pub fn circle(
@@ -573,7 +571,7 @@ pub fn circle(
         ///Segment angle in turns
         segment_angle: f32 = 1,
     },
-) bool {
+) void {
     const context = current_context.?;
     const scene = &current_context.?.draw_data[current_context.?.active_draw_data];
     const view = scene.views.last().?;
@@ -605,14 +603,12 @@ pub fn circle(
             .transforms_begin = transforms_begin,
             .parameters_begin = parameters_begin,
             .instance_ids_begin = instance_ids_begin,
-        }) catch return false;
+        });
     } else {
         const circle_draw = group.draws_by_type.getPtr(.circle).last().?;
 
         circle_draw.instance_count += 1;
     }
-
-    return true;
 }
 
 pub fn planeSegment() void {}

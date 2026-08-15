@@ -112,6 +112,7 @@ pub const Context = struct {
     asym_grapheme_pigeon_hole_buffers: u32,
     asym_grapheme_instances_buffer: u32,
     asym_glyph_metrics_buffer: u32,
+    asym_transform_offsets_by_type_buffer: u32,
 
     pub fn init(
         arena: std.mem.Allocator,
@@ -258,6 +259,13 @@ pub const Context = struct {
             gl.DYNAMIC_STORAGE_BIT,
         );
         gl.CreateBuffers(1, @ptrCast(&context.asym_glyph_metrics_buffer));
+        gl.CreateBuffers(1, @ptrCast(&context.asym_transform_offsets_by_type_buffer));
+        gl.NamedBufferStorage(
+            context.asym_transform_offsets_by_type_buffer,
+            @intCast(@sizeOf(u32) * std.meta.fieldNames(asym.geo.PrimitiveType).len),
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
 
         try context.loadShaderProgram(arena, &.{
             .{ .type = gl.VERTEX_SHADER, .source_path = "env_map_vertex.spv" },
@@ -475,7 +483,7 @@ pub const Context = struct {
             .grapheme_materials = @fromBackingInt(0),
             .glyph_metrics = @fromBackingInt(context.asym_glyph_metrics_buffer),
             .parameter_offsets_by_type = @fromBackingInt(0),
-            .transform_offsets_by_type = @fromBackingInt(0),
+            .transform_offsets_by_type = @fromBackingInt(context.asym_transform_offsets_by_type_buffer),
         });
 
         for (typeface_textures) |type_face_texture| {
@@ -485,10 +493,17 @@ pub const Context = struct {
         var transforms_offset: usize = 0;
         var materials_offset: usize = 0;
 
-        for (scene.transforms_by_type.values, scene.materials_by_type.values) |transforms, materials| {
+        for (scene.transforms_by_type.values, scene.materials_by_type.values, 0..) |transforms, materials, type_index| {
             if (transforms.items.len == 0) {
                 continue;
             }
+
+            gl.NamedBufferSubData(
+                context.asym_transform_offsets_by_type_buffer,
+                @intCast(type_index * @sizeOf(u32)),
+                @intCast(@sizeOf(u32)),
+                &@as(u32, @intCast(transforms_offset)),
+            );
 
             gl.NamedBufferSubData(
                 context.asym_transforms_buffer,
@@ -548,9 +563,7 @@ pub const Context = struct {
 
                 for (group.draws_by_type.get(.text), group.text_typefaces, 0..) |draws, typeface, draw_index| {
                     _ = draws; // autofix
-                    std.debug.assert(scene.text_buffer_entires.items.len != 0);
                     const text_buffer = scene.text_buffer_entires.items[text_buffer_entry_begin + draw_index];
-                    std.debug.print("Text Entry: {s}\n", .{text_buffer});
 
                     var line_iter: std.mem.SplitIterator(u8, .sequence) = .{
                         .delimiter = "\n",
@@ -578,8 +591,6 @@ pub const Context = struct {
 
                     while (line_iter.next()) |line| {
                         defer line_index += 1;
-
-                        std.debug.print("line[{}]: {s}\n", .{ line_index, line });
 
                         for (line, 0..) |char, column_index| {
                             const bin = &grapheme_buffer_bins[column_index + line_index * grapheme_buffer_width];
@@ -644,7 +655,17 @@ pub const Context = struct {
                     gl.Enable(gl.DEPTH_TEST);
                 }
 
-                gl.Disable(gl.CULL_FACE);
+                if (state.face_culling) {
+                    gl.Enable(gl.CULL_FACE);
+                } else {
+                    gl.Disable(gl.CULL_FACE);
+                }
+
+                if (state.transparency) {
+                    gl.Enable(gl.BLEND);
+                } else {
+                    gl.Disable(gl.BLEND);
+                }
 
                 gl.MultiDrawArraysIndirect(
                     gl.TRIANGLES,

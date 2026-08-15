@@ -1,4 +1,4 @@
-#version 450
+#version 460 core
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_ARB_shader_draw_parameters : enable
 
@@ -44,9 +44,9 @@ const uint quad_indices[6] = uint[6](
 void main() {
     vec3 vertex_position = vec3(0);
 
-    vertex_out.draw_id = gl_DrawIDARB;
+    vertex_out.draw_id = gl_DrawID;
 
-    DrawCommand draw = draws.data[gl_DrawIDARB];
+    DrawCommand draw = draws.data[gl_DrawID];
 
     switch (draw.primitive_type) {
         case PrimitiveType_circle:
@@ -79,10 +79,12 @@ void main() {
     vertex_position.x *= bounds_x / 4;
     vertex_position.y *= bounds_y / 2;
 
-    vertex_out.position = vec3(uniforms.view_projection * vec4(vertex_position, 1.0));
+    //vertex_out.position = vec3(uniforms.view_projection * vec4(vertex_position, 1.0));
+
+    vertex_out.position = vec3(vec4(vertex_position, 1.0));
 
     Material material = materials.data[draw.materials_begin + gl_InstanceID];
-    AffineTransform3D transform = transforms.data[draw.transforms_begin + gl_InstanceID];
+    AffineTransform3D transform = transforms.data[transform_offsets_by_type.data[draw.primitive_type] + draw.transforms_begin + gl_InstanceID];
 
     vertex_out.colour = unpackUnorm4x8(material.colour);
 
