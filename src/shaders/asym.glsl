@@ -75,14 +75,14 @@ layout(binding = 6) readonly restrict buffer GraphemeBuffers {
     GraphemeBuffer data[];
 } grapheme_buffers;
 
-struct GraphemePidgeonHole {
+struct GlyphQuadrat {
     ///4 bits count + 28 bits address
     uint grapheme_slice;
 };
 
-layout(binding = 7) readonly restrict buffer GlyphPidgeonHoles {
-    GraphemePidgeonHole data[];
-} grapheme_pidgeon_holes;
+layout(binding = 7) readonly restrict buffer GlyphQuadrats {
+    GlyphQuadrat data[];
+} glyph_quadrats;
 
 const uint GraphemeLineFlags_centred = 1 << 16;
 const uint GraphemeLineFlags_left_justified = 1 << 15;

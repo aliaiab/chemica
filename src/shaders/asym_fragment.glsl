@@ -87,7 +87,7 @@ void main() {
             vec2 glyph_uv = grapheme_buffer_loc - floor(grapheme_buffer_loc);
             uint grapheme_bin_index = uint(grapheme_buffer_loc.x) + uint(grapheme_buffer_loc.y) * grapheme_buffer.width;
 
-            GraphemePidgeonHole bin = grapheme_pidgeon_holes.data[grapheme_buffer.buffer_begin + grapheme_bin_index];
+            GlyphQuadrat bin = glyph_quadrats.data[grapheme_buffer.buffer_begin + grapheme_bin_index];
 
             uint glyph_index = bin.grapheme_slice;
 
@@ -102,7 +102,12 @@ void main() {
             if (reorder_x) {
                 texCoord.x = 1 - texCoord.x;
             }
-
+                
+            float glyph_deadspace = textureSize(glyph_atlas, 0).x - metrics.width;
+            glyph_deadspace *= 0.5;
+                
+            texCoord.x -= glyph_deadspace / textureSize(glyph_atlas, 0).x;
+            
             //texCoord.x /= float(metrics.width) / float(textureSize(glyph_atlas, 0).x);
             //texCoord.y /= float(metrics.height) / float(textureSize(glyph_atlas, 0).y);
 
@@ -119,6 +124,18 @@ void main() {
             if (opacity == 0) {}
 
             colour = mix(bgColor, fgColor, opacity);
+                
+            //helium, and hafnium
+            
+            float border_width = 0.05;
+            bool is_border = glyph_uv.x < border_width || glyph_uv.x > (1 - border_width);
+            is_border = is_border || (glyph_uv.y > (1 - border_width) || glyph_uv.y < border_width );
+                
+            bool visualize_quadrats = false;
+            
+            if (is_border && visualize_quadrats) {
+                colour = vec4(1, 0, 0, 1);              
+            }
 
             break;
         }

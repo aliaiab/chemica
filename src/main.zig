@@ -1452,16 +1452,18 @@ pub fn main(init: std.process.Init) !void {
             _ = train_text; // autofix
             const elements_lyrics = @embedFile("assets/the_elements_lyrics.txt");
 
-            asym.geo.text(.{
-                .id = .fromSrc(@src()),
-                .string = elements_lyrics,
-                .colour = .red,
-                .transform = .{
-                    .position = .{ 0, 0, 0 },
-                    .scale = 0.2 + Static.text_scale * 0.003,
-                    .rotation = .{ 0, 0, 0, 1 },
-                },
-            });
+            if (true) {
+                asym.geo.text(.{
+                    .id = .fromSrc(@src()),
+                    .string = elements_lyrics,
+                    .colour = .red,
+                    .transform = .{
+                        .position = .{ 0, 0, 0 },
+                        .scale = 0.2 + Static.text_scale * 0.003,
+                        .rotation = .{ 0, 0, 0, 1 },
+                    },
+                });
+            }
         }
 
         const gizmo_views = asym_geo_context.endSubmission();
