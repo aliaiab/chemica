@@ -1301,7 +1301,7 @@ pub const Simulation = struct {
         gl.ClearNamedBufferData(
             gpu_sim.voxel_chunks_buffer,
             gl.RG32UI,
-            gl.RG,
+            gl.RED_INTEGER,
             gl.UNSIGNED_INT,
             &VoxelChunksAllocation{
                 .allocation = std.math.maxInt(u32),
@@ -1603,13 +1603,13 @@ pub const Simulation = struct {
             gl.ClearNamedBufferData(
                 gpu_sim.simulation_material_buffers[0],
                 gl.R16UI,
-                gl.RED,
+                gl.RED_INTEGER,
                 gl.UNSIGNED_SHORT,
                 &material_clear,
             );
             gl.ClearNamedBufferData(
                 gpu_sim.simulation_temperature_buffers[0],
-                gl.R32UI,
+                gl.R32F,
                 gl.RED,
                 gl.FLOAT,
                 &temperature_clear,
@@ -1617,7 +1617,7 @@ pub const Simulation = struct {
             gl.ClearNamedBufferData(
                 gpu_sim.simulation_deviation_buffers[0],
                 gl.R8I,
-                gl.RED,
+                gl.RED_INTEGER,
                 gl.BYTE,
                 &deviation_clear,
             );

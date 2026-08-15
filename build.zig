@@ -210,7 +210,7 @@ pub fn build(b: *std.Build) !void {
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/gizmo_shader_fragment.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/depth_prepass_fragment.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/sdf_renderer_fragment.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/sdf_texture_compute.zig");
+    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/sdf_texture_compute.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/asym_vertex.glsl");
     _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/asym_fragment.glsl");
 

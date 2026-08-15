@@ -1458,7 +1458,7 @@ pub fn main(init: std.process.Init) !void {
                 .colour = .red,
                 .transform = .{
                     .position = .{ 0, 0, 0 },
-                    .scale = 1 + Static.text_scale * 3,
+                    .scale = 0.2 + Static.text_scale * 0.003,
                     .rotation = .{ 0, 0, 0, 1 },
                 },
             });
@@ -1886,8 +1886,6 @@ pub const CSGTree = struct {
         if (node.modifiers.rounding.rounding != 0) {
             try program.element_params.append(gpa, node.modifiers.rounding.rounding);
         }
-
-        std.debug.print("{}\n", .{node.children.items.len});
 
         program.elements.items[element_index] = .{
             .type = .{
