@@ -113,6 +113,7 @@ pub const Context = struct {
     asym_grapheme_instances_buffer: u32,
     asym_glyph_metrics_buffer: u32,
     asym_transform_offsets_by_type_buffer: u32,
+    asym_parameter_offsets_by_type_buffer: u32,
 
     pub fn init(
         arena: std.mem.Allocator,
@@ -262,6 +263,14 @@ pub const Context = struct {
         gl.CreateBuffers(1, @ptrCast(&context.asym_transform_offsets_by_type_buffer));
         gl.NamedBufferStorage(
             context.asym_transform_offsets_by_type_buffer,
+            @intCast(@sizeOf(u32) * std.meta.fieldNames(asym.geo.PrimitiveType).len),
+            null,
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+
+        gl.CreateBuffers(1, @ptrCast(&context.asym_parameter_offsets_by_type_buffer));
+        gl.NamedBufferStorage(
+            context.asym_parameter_offsets_by_type_buffer,
             @intCast(@sizeOf(u32) * std.meta.fieldNames(asym.geo.PrimitiveType).len),
             null,
             gl.DYNAMIC_STORAGE_BIT,
@@ -477,17 +486,23 @@ pub const Context = struct {
             .transforms = @fromBackingInt(context.asym_transforms_buffer),
             .parameters = @fromBackingInt(context.asym_parameters_buffer),
             .vertices = @fromBackingInt(context.gizmo_vertex_buffer),
-            .grapheme_buffers = @fromBackingInt(context.asym_grapheme_buffers),
-            .grapheme_pidgeon_holes = @fromBackingInt(context.asym_grapheme_pigeon_hole_buffers),
-            .grapheme_instances = @fromBackingInt(context.asym_grapheme_instances_buffer),
-            .grapheme_materials = @fromBackingInt(0),
-            .glyph_metrics = @fromBackingInt(context.asym_glyph_metrics_buffer),
-            .parameter_offsets_by_type = @fromBackingInt(0),
+            .parameter_offsets_by_type = @fromBackingInt(context.asym_parameter_offsets_by_type_buffer),
             .transform_offsets_by_type = @fromBackingInt(context.asym_transform_offsets_by_type_buffer),
         });
 
+        const sheetmap_binding = 20;
+
+        const shtmap = @import("../shaders/sheetmap.zig");
+
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, sheetmap_binding, context.asym_grapheme_buffers);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, sheetmap_binding + 1, context.asym_grapheme_pigeon_hole_buffers);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, sheetmap_binding + 2, 0);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, sheetmap_binding + 3, 0);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, sheetmap_binding + 4, 0);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, sheetmap_binding + 5, context.asym_glyph_metrics_buffer);
+
         for (typeface_textures) |type_face_texture| {
-            gl.BindTextureUnit(0, @intCast(@intFromPtr(type_face_texture.?)));
+            gl.BindTextureUnit(23, @intCast(@intFromPtr(type_face_texture.?)));
         }
 
         var transforms_offset: usize = 0;
@@ -553,85 +568,96 @@ pub const Context = struct {
 
             var text_buffer_entry_begin: usize = 0;
 
+            var draw_buffer_offset: usize = 0;
+            var parameter_buffer_offset: usize = 0;
+
             while (iter.next()) |tuple| {
                 const state, const group = tuple;
 
-                var draw_buffer_offset: usize = 0;
-                var parameter_buffer_offset: usize = 0;
-
                 defer text_buffer_entry_begin += group.draws_by_type.get(.text).len;
 
-                for (group.draws_by_type.get(.text), group.text_typefaces, 0..) |draws, typeface, draw_index| {
-                    _ = draws; // autofix
-                    const text_buffer = scene.text_buffer_entires.items[text_buffer_entry_begin + draw_index];
+                var quadrat_buffer_begin: usize = 0;
 
-                    var line_iter: std.mem.SplitIterator(u8, .sequence) = .{
-                        .delimiter = "\n",
-                        .buffer = text_buffer,
-                        .index = 0,
-                    };
+                for (group.draws_by_type.get(.text), 0..) |draws, draw_command_index| {
+                    for (0..draws.instance_count) |instance_id| {
+                        const draw_index = draw_command_index + instance_id;
+                        const text_buffer = scene.text_buffer_entires.items[text_buffer_entry_begin + draw_index];
 
-                    const typeface_data = &geo_context.type_faces.items[@backingInt(typeface)];
+                        var line_iter: std.mem.SplitIterator(u8, .sequence) = .{
+                            .delimiter = "\n",
+                            .buffer = text_buffer,
+                            .index = 0,
+                        };
 
-                    var grapheme_buffer_height: u32 = 0;
-                    var grapheme_buffer_width: u32 = 0;
+                        const typeface_data = &geo_context.type_faces.items[0];
 
-                    while (line_iter.next()) |line| {
-                        grapheme_buffer_width = @max(grapheme_buffer_width, @as(u32, @intCast(line.len)));
-                        grapheme_buffer_height += 1;
-                    }
+                        var grapheme_buffer_height: u32 = 0;
+                        var grapheme_buffer_width: u32 = 0;
 
-                    line_iter.reset();
+                        while (line_iter.next()) |line| {
+                            grapheme_buffer_width = @max(grapheme_buffer_width, @as(u32, @intCast(line.len)));
+                            grapheme_buffer_height += 1;
+                        }
 
-                    const GraphemeBin = @import("lib").shaders.common.asym.GraphemePidgeonHole;
+                        line_iter.reset();
 
-                    const grapheme_buffer_bins = gpa.alloc(GraphemeBin, grapheme_buffer_width * grapheme_buffer_height) catch @panic("oom");
-                    defer gpa.free(grapheme_buffer_bins);
-                    var line_index: u32 = 0;
+                        const GraphemeBin = @import("lib").shaders.common.asym.GraphemePidgeonHole;
 
-                    while (line_iter.next()) |line| {
-                        defer line_index += 1;
+                        const grapheme_buffer_bins = gpa.alloc(GraphemeBin, grapheme_buffer_width * grapheme_buffer_height) catch @panic("oom");
+                        defer gpa.free(grapheme_buffer_bins);
+                        var line_index: u32 = 0;
 
-                        for (line, 0..) |char, column_index| {
-                            const bin = &grapheme_buffer_bins[column_index + line_index * grapheme_buffer_width];
+                        while (line_iter.next()) |line| {
+                            defer line_index += 1;
 
-                            const glyph_index: u16 = @intCast(typeface_data.codepoints_to_glyph.getIndex(char).?);
-                            bin.grapheme_slice = @bitCast(@as(u32, glyph_index));
-                            if (char == ' ') {
-                                bin.grapheme_slice = @bitCast(@as(u32, std.math.maxInt(u32)));
+                            for (line, 0..) |char, column_index| {
+                                const bin = &grapheme_buffer_bins[column_index + line_index * grapheme_buffer_width];
+
+                                const glyph_index: u16 = @intCast(typeface_data.codepoints_to_glyph.getIndex(char).?);
+                                bin.grapheme_slice = @bitCast(@as(u32, glyph_index));
+                                if (char == ' ') {
+                                    bin.grapheme_slice = @bitCast(@as(u32, std.math.maxInt(u32)));
+                                }
                             }
                         }
+
+                        gl.NamedBufferSubData(
+                            context.asym_grapheme_buffers,
+                            @intCast(draw_index * @sizeOf(shtmap.Sheetmap)),
+                            @intCast(@sizeOf(shtmap.Sheetmap)),
+                            &shtmap.Sheetmap{
+                                .quadrat_buffer_begin = @intCast(quadrat_buffer_begin),
+                                .width = grapheme_buffer_width,
+                                .height = grapheme_buffer_height,
+                            },
+                        );
+
+                        gl.NamedBufferSubData(
+                            context.asym_grapheme_pigeon_hole_buffers,
+                            @intCast(quadrat_buffer_begin * @sizeOf(GraphemeBin)),
+                            @intCast(@sizeOf(GraphemeBin) * grapheme_buffer_bins.len),
+                            grapheme_buffer_bins.ptr,
+                        );
+
+                        quadrat_buffer_begin += grapheme_buffer_bins.len * @sizeOf(GraphemeBin);
                     }
-
-                    const GraphemeBuffer = extern struct {
-                        buffer_begin: u32,
-                        width: u32,
-                        height: u32,
-                    };
-
-                    gl.NamedBufferSubData(
-                        context.asym_grapheme_buffers,
-                        @intCast(draw_index * @sizeOf(GraphemeBuffer)),
-                        @intCast(@sizeOf(GraphemeBuffer)),
-                        &GraphemeBuffer{
-                            .buffer_begin = 0,
-                            .width = grapheme_buffer_width,
-                            .height = grapheme_buffer_height,
-                        },
-                    );
-
-                    gl.NamedBufferSubData(
-                        context.asym_grapheme_pigeon_hole_buffers,
-                        @intCast(0 * @sizeOf(GraphemeBin)),
-                        @intCast(@sizeOf(GraphemeBin) * grapheme_buffer_bins.len),
-                        grapheme_buffer_bins.ptr,
-                    );
                 }
 
-                for (group.draws_by_type.values, group.parameters_by_type.values) |draws, params| {
+                for (group.draws_by_type.values, group.parameters_by_type.values, 0..) |
+                    draws,
+                    params,
+                    type_index,
+                | {
                     if (draws.len == 0) {
                         continue;
                     }
+
+                    gl.NamedBufferSubData(
+                        context.asym_parameter_offsets_by_type_buffer,
+                        @intCast(type_index * @sizeOf(u32)),
+                        @intCast(@sizeOf(u32)),
+                        &@as(u32, @intCast(parameter_buffer_offset)),
+                    );
 
                     gl.NamedBufferSubData(
                         context.asym_parameters_buffer,
@@ -666,6 +692,8 @@ pub const Context = struct {
                 } else {
                     gl.Disable(gl.BLEND);
                 }
+
+                gl.Enable(gl.BLEND);
 
                 gl.MultiDrawArraysIndirect(
                     gl.TRIANGLES,

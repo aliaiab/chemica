@@ -21,6 +21,7 @@ struct DrawCommand {
     uint materials_begin;
     uint transforms_begin;
     uint parameters_begin;
+    uint instance_ids_begin;
 };
 
 struct AffineTransform3D {
@@ -58,109 +59,10 @@ layout(binding = 5) readonly restrict buffer Vertices {
     vec3 data[];
 } vertices;
 
-struct GraphemeBuffer {
-    uint buffer_begin;
-    ///Width and height in pidgeon holes
-    uint width;
-    uint height;
-};
-
-struct GraphemeBufferSampler {
-    float spacing_x;
-    float spacing_y;
-    float global_ordering;
-};
-
-layout(binding = 6) readonly restrict buffer GraphemeBuffers {
-    GraphemeBuffer data[];
-} grapheme_buffers;
-
-struct GlyphQuadrat {
-    ///4 bits count + 28 bits address
-    uint grapheme_slice;
-};
-
-layout(binding = 7) readonly restrict buffer GlyphQuadrats {
-    GlyphQuadrat data[];
-} glyph_quadrats;
-
-const uint GraphemeLineFlags_centred = 1 << 16;
-const uint GraphemeLineFlags_left_justified = 1 << 15;
-const uint GraphemeLineFlags_right_justified = 1 << 14;
-
-#if 0
-struct GraphemeLine {
-    ///The length of the line that has glyphs committed to them
-    uint32_t buffer_begin;
-    uint8_t flags;
-    uint8_t bin_start;
-    uint8_t bins_length;
-};
-
-layout(binding = 13) readonly restrict buffer GlyphLines {
-    GraphemeLine data[];
-} grapheme_lines;
-#endif
-
-struct Grapheme {
-    uint16_t glyph_index;
-};
-
-struct GrahpemeKerning {
-    float16_t kern;
-};
-
-layout(binding = 8) readonly restrict buffer GlyphInstances {
-    Grapheme data[];
-} graphemes;
-
-struct GraphemeMaterial {
-    uint colour;
-};
-
-layout(binding = 9) readonly restrict buffer GraphemeMaterialBuffers {
-    GraphemeMaterial data[];
-} grapheme_materials;
-
-struct GlyphMetric {
-    float width;
-    float height;
-    float advance;
-    float bearing_x;
-    float bearing_y;
-};
-
-struct TypeFace {
-    uint glyph_metrics_begin;
-    uint glyph_metrics_count;
-    float baseline;
-    float ascent;
-    float descent;
-    float line_gap;
-};
-
-layout(binding = 10) readonly restrict buffer GlyphMetrics {
-    GlyphMetric data[];
-} glyph_metrics;
-
-layout(binding = 11) readonly restrict buffer TransformOffsetsByType {
+layout(binding = 6) readonly restrict buffer TransformOffsetsByType {
     uint data[];
 } transform_offsets_by_type;
 
-layout(binding = 12) readonly restrict buffer ParameterOffsetsByType {
+layout(binding = 7) readonly restrict buffer ParameterOffsetsByType {
     uint data[];
 } parameter_offsets_by_type;
-
-#if 0
-layout(binding = 11) readonly restrict buffer TypeFace {
-    TypeFace data[];
-} typefaces;
-#endif
-
-layout(binding = 0) uniform sampler2DArray glyph_atlas;
-
-void graphemeBufferSample(
-    GraphemeBuffer grapheme_buffer,
-    TypeFace typeface,
-    vec2 uv
-) {}

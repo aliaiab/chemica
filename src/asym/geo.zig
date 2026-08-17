@@ -603,7 +603,7 @@ pub fn circle(
             .transforms_begin = transforms_begin,
             .parameters_begin = parameters_begin,
             .instance_ids_begin = instance_ids_begin,
-        });
+        }) catch @panic("unreachable");
     } else {
         const circle_draw = group.draws_by_type.getPtr(.circle).last().?;
 

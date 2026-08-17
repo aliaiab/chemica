@@ -1366,7 +1366,7 @@ pub fn main(init: std.process.Init) !void {
         imgui.render();
 
         if (true) {
-            if (false) {
+            if (true) {
                 _ = asym.geo.box(.{
                     .id = .fromSrc(@src()),
                     .bounds = .{ 1, 1, 0 },
@@ -1390,7 +1390,7 @@ pub fn main(init: std.process.Init) !void {
                 });
             }
 
-            if (false) {
+            if (true) {
                 _ = asym.geo.circle(.{
                     .id = .fromSrc(@src()),
                     .radius = 10,
@@ -1433,8 +1433,13 @@ pub fn main(init: std.process.Init) !void {
 
             var fmt_buf: [1024]u8 = undefined;
 
-            const str = try std.fmt.bufPrint(&fmt_buf, "sin(t) = {:.2}", .{@sin(glfw.getTime())});
-            _ = str; // autofix
+            const str = try std.fmt.bufPrint(&fmt_buf, "Some math:\nsin(t) = {:.2}\ncos(t) = {:.2}\n", .{
+                @sin(glfw.getTime()),
+                @cos(glfw.getTime()),
+            });
+            const str_2 = try std.fmt.bufPrint(fmt_buf[str.len..], "Some times:\t = {:.2}", .{
+                (glfw.getTime()),
+            });
 
             const lorem_ipsum = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.";
             _ = lorem_ipsum; // autofix
@@ -1451,14 +1456,28 @@ pub fn main(init: std.process.Init) !void {
             ;
             _ = train_text; // autofix
             const elements_lyrics = @embedFile("assets/the_elements_lyrics.txt");
+            _ = elements_lyrics; // autofix
 
             if (true) {
                 asym.geo.text(.{
                     .id = .fromSrc(@src()),
-                    .string = elements_lyrics,
+                    .draw_state = .{},
+                    .string = str,
                     .colour = .red,
                     .transform = .{
-                        .position = .{ 0, 0, 0 },
+                        .position = .{ 0, 0.5, 0 },
+                        .scale = 0.2 + Static.text_scale * 0.003,
+                        .rotation = .{ 0, 0, 0, 1 },
+                    },
+                });
+
+                asym.geo.text(.{
+                    .id = .fromSrc(@src()),
+                    .draw_state = .{},
+                    .string = str_2,
+                    .colour = .red,
+                    .transform = .{
+                        .position = .{ 0, -0.3, 0 },
                         .scale = 0.2 + Static.text_scale * 0.003,
                         .rotation = .{ 0, 0, 0, 1 },
                     },

@@ -4,6 +4,11 @@
 
 #include "asym.glsl"
 
+#define SHEETMAP_TEXEL_SAMPLER
+#define SHEETMAP_BINDING_START 20
+#include "sheetmap.glsl"
+#include "sheetmap_ts_msdf_array.glsl"
+
 layout(location = 0) out vec4 colour;
 
 layout(location = 0) in Out
@@ -12,41 +17,8 @@ layout(location = 0) in Out
     vec4 colour;
     vec2 uv;
     flat uint draw_id;
+    flat uint instance_id;
 } vertex_in;
-
-float median(float r, float g, float b) {
-    return max(min(r, g), min(max(r, g), b));
-}
-
-const float pxRange = 8; // set to distance field's pixel range
-
-vec2 sqr(vec2 x) {
-    return x * x;
-} // squares vector components
-
-float calculateManualMipLevel(vec2 uv, vec2 textureSize) {
-    // Scale UVs to texel space
-    vec2 dx = dFdx(uv * textureSize);
-    vec2 dy = dFdy(uv * textureSize);
-
-    // Find the maximum squared length (or vector length) in screen space
-    float px = dot(dx, dx);
-    float py = dot(dy, dy);
-    float maxTexelChange = max(px, py);
-
-    // Mip level formula: log2(sqrt(maxTexelChange)) = 0.5 * log2(maxTexelChange)
-    float mipLevel = 0.5 * log2(maxTexelChange);
-
-    return max(mipLevel, 0.0);
-}
-
-float screenPxRange(vec2 texCoord) {
-    vec2 unitRange = vec2(pxRange) / vec2(textureSize(glyph_atlas, int(calculateManualMipLevel(texCoord, vec2(textureSize(glyph_atlas, 0))))));
-    // If inversesqrt is not available, use vec2(1.0)/sqrt
-    vec2 screenTexSize = inversesqrt(sqr(dFdx(texCoord)) + sqr(dFdy(texCoord)));
-    // Can also be approximated as screenTexSize = vec2(1.0)/fwidth(texCoord);
-    return max(0.5 * dot(unitRange, screenTexSize), 1.0);
-}
 
 void main() {
     DrawCommand draw = draws.data[vertex_in.draw_id];
@@ -69,73 +41,15 @@ void main() {
         {
             colour = vertex_in.colour;
 
-            bool reorder_x = false;
+            vec2 uv = vertex_in.uv;
 
-            vec2 texCoord = vertex_in.uv;
-            //texCoord.x = 1 - texCoord.x;
-            texCoord.y += uniforms.time * -0.25 * 0.1;
-            texCoord = texCoord - floor(texCoord);
+            SheetmapSampler sheetmap_sampler;
 
-            if (reorder_x) {
-                texCoord.x = 1 - texCoord.x;
-            }
+            sheetmap_sampler.typeface = 0;
+            sheetmap_sampler.background_colour = packUnorm4x8(vec4(1, 1, 1, 1));
+            sheetmap_sampler.foreground_colour = packUnorm4x8(vec4(0, 0, 0, 0));
 
-            GraphemeBuffer grapheme_buffer = grapheme_buffers.data[0];
-
-            texCoord.y = 1 - texCoord.y;
-            vec2 grapheme_buffer_loc = texCoord * vec2(grapheme_buffer.width, grapheme_buffer.height);
-            vec2 glyph_uv = grapheme_buffer_loc - floor(grapheme_buffer_loc);
-            uint grapheme_bin_index = uint(grapheme_buffer_loc.x) + uint(grapheme_buffer_loc.y) * grapheme_buffer.width;
-
-            GlyphQuadrat bin = glyph_quadrats.data[grapheme_buffer.buffer_begin + grapheme_bin_index];
-
-            uint glyph_index = bin.grapheme_slice;
-
-            GlyphMetric metrics = glyph_metrics.data[glyph_index];
-
-            texCoord = glyph_uv;
-            texCoord.y += 0.25;
-            //texCoord.y *= 4;
-            //texCoord.y = 1 - texCoord.y;
-            texCoord.y += metrics.bearing_y;
-
-            if (reorder_x) {
-                texCoord.x = 1 - texCoord.x;
-            }
-                
-            float glyph_deadspace = textureSize(glyph_atlas, 0).x - metrics.width;
-            glyph_deadspace *= 0.5;
-                
-            texCoord.x -= glyph_deadspace / textureSize(glyph_atlas, 0).x;
-            
-            //texCoord.x /= float(metrics.width) / float(textureSize(glyph_atlas, 0).x);
-            //texCoord.y /= float(metrics.height) / float(textureSize(glyph_atlas, 0).y);
-
-            vec3 msd = texture(glyph_atlas, vec3(texCoord, glyph_index)).rgb;
-            float sd = median(msd.r, msd.g, msd.b);
-            float screenPxDistance = screenPxRange(texCoord) * (sd - 0.5);
-            float opacity = clamp(screenPxDistance + 0.5, 0.0, 1.0);
-            vec4 bgColor = vec4(0, 0, 0, 1);
-            vec4 fgColor = vec4(1);
-
-            fgColor = vec4(0, 0, 0, 1);
-            bgColor = vec4(1);
-
-            if (opacity == 0) {}
-
-            colour = mix(bgColor, fgColor, opacity);
-                
-            //helium, and hafnium
-            
-            float border_width = 0.05;
-            bool is_border = glyph_uv.x < border_width || glyph_uv.x > (1 - border_width);
-            is_border = is_border || (glyph_uv.y > (1 - border_width) || glyph_uv.y < border_width );
-                
-            bool visualize_quadrats = false;
-            
-            if (is_border && visualize_quadrats) {
-                colour = vec4(1, 0, 0, 1);              
-            }
+            colour = sheetmapSampleTexel(CombinedSheetmapSampler(sheetmaps.data[vertex_in.instance_id], sheetmap_sampler), uv);
 
             break;
         }

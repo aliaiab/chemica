@@ -167,11 +167,6 @@ pub const AsymDescriptors = struct {
     materials: StorageBuffer(RuntimeArray(Material)),
     parameters: StorageBuffer(RuntimeArray(f32)),
     vertices: StorageBuffer(RuntimeArray([3]f32)),
-    grapheme_buffers: StorageBuffer(RuntimeArray(asym.GraphemeBuffer)),
-    grapheme_pidgeon_holes: StorageBuffer(RuntimeArray(asym.GraphemePidgeonHole)),
-    grapheme_instances: StorageBuffer(RuntimeArray(asym.GraphemeInstance)),
-    grapheme_materials: StorageBuffer(RuntimeArray(u32)),
-    glyph_metrics: StorageBuffer(RuntimeArray(asym.GlyphMetric)),
     transform_offsets_by_type: StorageBuffer(RuntimeArray(u32)),
     parameter_offsets_by_type: StorageBuffer(RuntimeArray(u32)),
 };
