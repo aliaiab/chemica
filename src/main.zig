@@ -1433,13 +1433,14 @@ pub fn main(init: std.process.Init) !void {
 
             var fmt_buf: [1024]u8 = undefined;
 
-            const str = try std.fmt.bufPrint(&fmt_buf, "Some math:\nsin(t) = {:.2}\ncos(t) = {:.2}\n", .{
+            const str = try std.fmt.bufPrint(&fmt_buf, "Some math:\nsin(t) = {:.2}\ncos(t) = {:.2}", .{
                 @sin(glfw.getTime()),
                 @cos(glfw.getTime()),
             });
             const str_2 = try std.fmt.bufPrint(fmt_buf[str.len..], "Some times:\t = {:.2}", .{
                 (glfw.getTime()),
             });
+            _ = str_2; // autofix
 
             const lorem_ipsum = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.";
             _ = lorem_ipsum; // autofix
@@ -1447,7 +1448,6 @@ pub fn main(init: std.process.Init) !void {
             _ = lorem; // autofix
 
             const test_text = "Images galore!\nShitehead revisited!\nSussssy!!!\nBakka!! Bum Bum\n    Poo!!\nWeeeeee!! HAHAHAHA!!!:D:D";
-            _ = test_text; // autofix
             const test_src = @embedFile("Simulation.zig");
             _ = test_src; // autofix
             const train_text =
@@ -1455,15 +1455,14 @@ pub fn main(init: std.process.Init) !void {
                 \\2nd 1918 Basingstoke         1918
             ;
             _ = train_text; // autofix
-            const elements_lyrics = @embedFile("assets/the_elements_lyrics.txt");
-            _ = elements_lyrics; // autofix
 
             if (true) {
                 asym.geo.text(.{
                     .id = .fromSrc(@src()),
                     .draw_state = .{},
                     .string = str,
-                    .colour = .red,
+                    .foreground_colour = .red,
+                    .background_colour = .white,
                     .transform = .{
                         .position = .{ 0, 0.5, 0 },
                         .scale = 0.2 + Static.text_scale * 0.003,
@@ -1474,8 +1473,9 @@ pub fn main(init: std.process.Init) !void {
                 asym.geo.text(.{
                     .id = .fromSrc(@src()),
                     .draw_state = .{},
-                    .string = str_2,
-                    .colour = .red,
+                    .string = test_text,
+                    .foreground_colour = .red,
+                    .background_colour = .white,
                     .transform = .{
                         .position = .{ 0, -0.3, 0 },
                         .scale = 0.2 + Static.text_scale * 0.003,

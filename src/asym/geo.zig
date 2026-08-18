@@ -42,6 +42,7 @@ pub const Colour = packed struct(u32) {
     pub const red: Colour = .{ .r = 255, .g = 0, .b = 0 };
     pub const green: Colour = .{ .r = 0, .g = 255, .b = 0 };
     pub const blue: Colour = .{ .r = 0, .g = 0, .b = 255 };
+    pub const white: Colour = .{ .r = 255, .g = 255, .b = 255, .a = 255 };
 };
 
 ///Represents the full scene produced from a set of commands
@@ -470,7 +471,8 @@ pub fn text(
     options: struct {
         id: InstanceId,
         draw_state: PipelineState = .{},
-        colour: Colour,
+        background_colour: Colour,
+        foreground_colour: Colour,
         string: []const u8,
         type: TextType = .utf8,
         type_face: TextTypeFaceHandle = .default,
@@ -510,7 +512,7 @@ pub fn text(
     });
 
     scene.transforms_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.transform) catch @panic("oom");
-    scene.materials_by_type.getPtr(primitive_type).append(context.arena.allocator(), .{ .colour = options.colour }) catch @panic("oom");
+    scene.materials_by_type.getPtr(primitive_type).append(context.arena.allocator(), .{ .colour = options.foreground_colour }) catch @panic("oom");
     group.parameters_by_type.getPtr(primitive_type).appendSlice(context.arena.allocator(), &bounds) catch @panic("oom");
     scene.instance_ids_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.id) catch @panic("oom");
 

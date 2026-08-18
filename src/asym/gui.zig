@@ -1,5 +1,7 @@
 //! Immediate mode graphical user interface built on top of asym.geo
 
+pub const Context = struct {};
+
 pub const WidgetId = enum(u32) {
     _,
 
@@ -92,4 +94,3 @@ pub const layout = struct {
 const gui = @This();
 const geo = @import("geo.zig");
 const std = @import("std");
-
