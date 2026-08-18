@@ -1372,9 +1372,9 @@ pub fn main(init: std.process.Init) !void {
                     .bounds = .{ 1, 1, 0 },
                     .colour = .green,
                     .transform = .{
-                        .position = .{ @floatCast(@cos(glfw.getTime())), 0, 0 },
+                        .translation = .{ .x = @floatCast(@cos(glfw.getTime())), .y = 0, .z = 0 },
                         .scale = 1,
-                        .rotation = .{ 0, 0, 0, 1 },
+                        .rotation = .identity,
                     },
                 });
 
@@ -1383,9 +1383,9 @@ pub fn main(init: std.process.Init) !void {
                     .bounds = .{ 1, 1, 0 },
                     .colour = .red,
                     .transform = .{
-                        .position = .{ @floatCast(@sin(glfw.getTime())), 1, 0 },
+                        .translation = .{ .x = @floatCast(@sin(glfw.getTime())), .y = 1, .z = 0 },
                         .scale = 1,
-                        .rotation = .{ 0, 0, 0, 1 },
+                        .rotation = .identity,
                     },
                 });
             }
@@ -1396,9 +1396,9 @@ pub fn main(init: std.process.Init) !void {
                     .radius = 10,
                     .colour = .blue,
                     .transform = .{
-                        .position = .{ @floatCast(@sin(glfw.getTime())), 0, 0 },
+                        .translation = .{ .x = @floatCast(@sin(glfw.getTime())), .y = 0, .z = 0 },
                         .scale = 1,
-                        .rotation = .{ 0, 0, 0, 1 },
+                        .rotation = .identity,
                     },
                 });
 
@@ -1407,9 +1407,9 @@ pub fn main(init: std.process.Init) !void {
                     .radius = 10,
                     .colour = .{ .r = 0, .g = 255, .b = 0, .a = 100 },
                     .transform = .{
-                        .position = .{ @floatCast(@cos(glfw.getTime())), 0, 0 },
+                        .translation = .{ .x = @floatCast(@cos(glfw.getTime())), .y = 0, .z = 0 },
                         .scale = 1,
-                        .rotation = .{ 0, 0, 0, 1 },
+                        .rotation = .identity,
                     },
                 });
 
@@ -1418,9 +1418,9 @@ pub fn main(init: std.process.Init) !void {
                     .radius = 10,
                     .colour = .red,
                     .transform = .{
-                        .position = .{ 0, 0.5, 0 },
+                        .translation = .{ .x = 0, .y = 0.5, .z = 0 },
                         .scale = 1,
-                        .rotation = .{ 0, 0, 0, 1 },
+                        .rotation = .identity,
                     },
                 });
             }
@@ -1464,9 +1464,9 @@ pub fn main(init: std.process.Init) !void {
                     .foreground_colour = .red,
                     .background_colour = .white,
                     .transform = .{
-                        .position = .{ 0, 0.5, 0 },
+                        .translation = .{ .x = 0, .y = 0.5, .z = 0 },
                         .scale = 0.2 + Static.text_scale * 0.003,
-                        .rotation = .{ 0, 0, 0, 1 },
+                        .rotation = .identity,
                     },
                 });
 
@@ -1477,9 +1477,9 @@ pub fn main(init: std.process.Init) !void {
                     .foreground_colour = .red,
                     .background_colour = .white,
                     .transform = .{
-                        .position = .{ 0, -0.3, 0 },
+                        .translation = .{ .x = 0, .y = -0.3, .z = 0 },
                         .scale = 0.2 + Static.text_scale * 0.003,
-                        .rotation = .{ 0, 0, 0, 1 },
+                        .rotation = .identity,
                     },
                 });
             }

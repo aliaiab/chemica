@@ -617,20 +617,7 @@ pub fn planeSegment() void {}
 
 pub fn bezierCurve() void {}
 
-pub const AffineTransform3D = extern struct {
-    position: [3]f32 = @splat(0),
-    ///Uniform scale
-    scale: f32 = 1,
-    ///Quaternion rotation
-    rotation: [4]f32 = .{ 0, 0, 0, 1 },
-
-    pub const identity: AffineTransform3D = .{
-        .position = @splat(0),
-        .scale = 1,
-        .rotation = .{ 0, 0, 0, 1 },
-    };
-};
-
+pub const AffineTransform3D = amath.AffineTransform(f32, 3);
 pub const AffineTransform2D = extern struct {
     position: [2]f32 = @splat(0),
     rotation_scale: [2]f32 = .{ 1, 0 },
@@ -641,4 +628,5 @@ pub const AffineTransform2D = extern struct {
     };
 };
 
+const amath = @import("lib").math;
 const std = @import("std");

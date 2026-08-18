@@ -79,15 +79,83 @@ pub fn demoWindow(id: WidgetId) void {
     }
 }
 
-pub const layout = struct {
-    pub fn anchor() Anchor {
-        return .{};
+pub const Layout = struct {
+    anchors: std.ArrayList(Anchor) = .empty,
+
+    pub fn init(
+        arena: std.mem.Allocator,
+        root_bounds: [2]f32,
+    ) !Layout {
+        var layout: Layout = .{};
+
+        try layout.anchors.append(arena, .{
+            .transform = .identity,
+            .bounds = root_bounds,
+        });
+
+        return layout;
+    }
+
+    pub fn createAnchor(
+        layout: *Layout,
+        parent_anchor: AnchorIndex,
+        anchor_data: Anchor,
+        arena: std.mem.Allocator,
+    ) !AnchorIndex {
+        const anchor_index: AnchorIndex = @fromBackingInt(@intCast(layout.anchors.items.len));
+
+        var actual_anchor_data: Anchor = anchor_data;
+
+        actual_anchor_data.parent = parent_anchor;
+
+        try layout.anchors.append(arena, anchor_data);
+
+        var parent_anchor_data: *Anchor = layout.anchors.items[@backingInt(parent_anchor)];
+
+        try parent_anchor_data.children.append(arena, anchor_index);
+
+        return anchor_index;
+    }
+
+    pub fn anchorData(layout: Layout, anchor: AnchorIndex) *Anchor {
+        return &layout.anchors.items[@backingInt(anchor)];
+    }
+
+    ///Extends the anchor bounds by extending to contain the extension bounds
+    pub fn extend(
+        layout: *Layout,
+        anchor: AnchorIndex,
+        position: [2]f32,
+        bounds: [2]f32,
+    ) void {
+        _ = position; // autofix
+        _ = layout; // autofix
+        _ = anchor; // autofix
+        _ = bounds; // autofix
+
+    }
+
+    pub fn resolveTransform(
+        layout: Layout,
+        anchor: AnchorIndex,
+    ) geo.AffineTransform3D {
+        const parent_transform = layout.resolveTransform(layout.anchorData(anchor).parent);
+        const transform = layout.anchorData(anchor).transform;
+
+        return .mul(parent_transform, transform);
     }
 
     pub const Anchor = struct {
-        pub fn deinit(self: Anchor) void {
-            _ = self; // autofix
-        }
+        transform: geo.AffineTransform3D,
+        bounds: [2]f32,
+        parent: AnchorIndex = .root,
+        children: std.ArrayList(AnchorIndex) = .empty,
+    };
+
+    pub const AnchorIndex = enum(u32) {
+        root = 0,
+        null = std.math.maxInt(u32),
+        _,
     };
 };
 
