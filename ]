@@ -155,6 +155,16 @@ pub const Layout = struct {
         children: std.ArrayList(AnchorIndex) = .empty,
     };
 
+    //Weave of Alia's Software - WoastWare (woah-sware)
+    //WoastWare Games
+    //woastware-gorse
+    //woastware-gfx
+    //woastware-audio
+    //woastware-phys
+    //woastware-geo
+
+    //the-woastware-engine
+
     pub const AnchorIndex = enum(u32) {
         root = 0,
         null = std.math.maxInt(u32),
