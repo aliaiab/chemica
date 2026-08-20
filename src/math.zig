@@ -1,14 +1,10 @@
 pub fn mulQuat(a: @Vector(4, f32), b: @Vector(4, f32)) @Vector(4, f32) {
-    var result: @Vector(4, f32) = undefined;
+    const lhs_rot: Rotor3(f32) = .cast(@as([4]f32, a));
+    const rhs_rot: Rotor3(f32) = .cast(@as([4]f32, b));
 
-    const lhs_w: @Vector(4, f32) = @splat(a[3]);
-    const rhs_w: @Vector(4, f32) = @splat(b[3]);
+    const res_rot: Rotor3(f32) = .mul(lhs_rot, rhs_rot);
 
-    result = lhs_w * b + rhs_w * a - zmath.cross3(a, b);
-
-    result[3] = a[3] * b[3] - zmath.dot3(a, b)[0];
-
-    return result;
+    return res_rot.toComponents().toArray();
 }
 
 ///Compute the nth root of x
@@ -76,6 +72,7 @@ pub const ValueType = enum {
             .float, .int, .comptime_int, .comptime_float => .scalar,
             .pointer => .of(std.meta.Child(T)),
             .enum_literal => .decl_literal,
+            .array => .vector,
             else => T.value_type,
         };
     }
@@ -129,8 +126,21 @@ pub const ValueType = enum {
     };
 };
 
-///Represents a linear algebra vector of dimension N
+///Represents a linear algebra vector of dimension N in the orthonormal basis
 pub fn Vec(dim: comptime_int, comptime T: type) type {
+    return VecBasis(
+        dim,
+        T,
+        .identity,
+    );
+}
+
+///Represents a linear algebra vector of dimension N with a basis
+pub fn VecBasis(
+    dim: comptime_int,
+    comptime T: type,
+    comptime basis_matrix: Matrix(T, dim, dim),
+) type {
     return extern struct {
         x: ComponentScalar(T, 0, dim) = 0,
         y: ComponentScalar(T, 1, dim) = 0,
@@ -156,6 +166,48 @@ pub fn Vec(dim: comptime_int, comptime T: type) type {
                 .w = self.w,
                 .trailing = self.trailing,
             };
+        }
+
+        pub fn cast(value: anytype) Self {
+            const value_value_type: ValueType = .of(@TypeOf(value));
+
+            if (@typeInfo(@TypeOf(value)) == .pointer) {
+                return .cast(value.*);
+            }
+
+            switch (value_value_type) {
+                .scalar => @compileError("Cannot cast from scalar to vector!"),
+                .vector => {
+                    return value;
+                },
+                .decl_literal => {
+                    return switch (value) {
+                        .e0 => if (dim > 0) .e0 else basisVectorUseError(.e0),
+                        .e1 => if (dim > 1) .e1 else basisVectorUseError(.e1),
+                        .e2 => if (dim > 2) .e2 else basisVectorUseError(.e2),
+                        .e3 => if (dim > 3) .e3 else basisVectorUseError(.e3),
+                        else => @compileError("Decl literal not supported!"),
+                    };
+                },
+                .rotor => return switch (@typeInfo(@TypeOf(value))) {
+                    .@"struct" => {
+                        return .{
+                            .x = value.x,
+                            .y = value.y,
+                            .z = value.z,
+                        };
+                    },
+                    else => value,
+                },
+                else => return switch (@typeInfo(@TypeOf(value))) {
+                    .pointer => value.*,
+                    else => value,
+                },
+            }
+        }
+
+        pub fn componentAt(self: Self, index: usize) T {
+            return self.toComponents().toArray()[index];
         }
 
         pub fn add(lhs: Self, rhs: Self) Self {
@@ -211,10 +263,10 @@ pub fn Vec(dim: comptime_int, comptime T: type) type {
         pub fn fromAny(any: anytype) Self {
             return switch (@typeInfo(@TypeOf(any))) {
                 .enum_literal => switch (any) {
-                    .e0 => .e0,
-                    .e1 => .e1,
-                    .e2 => .e2,
-                    .e3 => .e3,
+                    .e0 => if (dim > 0) .e0 else basisVectorUseError(.e0),
+                    .e1 => if (dim > 1) .e1 else basisVectorUseError(.e1),
+                    .e2 => if (dim > 2) .e2 else basisVectorUseError(.e2),
+                    .e3 => if (dim > 3) .e3 else basisVectorUseError(.e3),
                     else => @compileError("Decl literal not supported!"),
                 },
                 .pointer => any.*,
@@ -303,33 +355,31 @@ pub fn Vec(dim: comptime_int, comptime T: type) type {
 
         pub const zero: Self = .{};
 
-        ///The first standard basis vector
-        pub const e0: Self = standard_basis[0];
-        ///The second standard basis vector
-        pub const e1: Self = if (dim > 1) standard_basis[1] else .zero;
-        ///The third standard basis vector
-        pub const e2: Self = if (dim > 2) standard_basis[2] else .zero;
-        //The fourth standard basis vector
-        pub const e3: Self = if (dim > 3) standard_basis[3] else .zero;
+        ///The first basis vector
+        pub const e0: Self = if (dim > 0) basis[0] else basisVectorUseError(.e0);
+        ///The second basis vector
+        pub const e1: Self = if (dim > 1) basis[1] else basisVectorUseError(.e1);
+        ///The third basis vector
+        pub const e2: Self = if (dim > 2) basis[2] else basisVectorUseError(.e2);
+        //The fourth basis vector
+        pub const e3: Self = if (dim > 3) basis[3] else basisVectorUseError(.e3);
+        ///The fifth basis vector
+        pub const e4: Self = if (dim > 4) basis[4] else basisVectorUseError(.e4);
 
         ///The standard orthonormal basis
-        pub const standard_basis: [dim]Self = blk: {
-            var res: [dim]Self = @splat(.zero);
-
-            for (0..dim) |n| {
-                var comp_array: [dim]T = @splat(0);
-
-                comp_array[n] = 1;
-
-                res[n] = .fromComponents(.fromArray(comp_array));
-            }
-
-            break :blk res;
-        };
-
+        pub const basis: [dim]Self = basis_matrix.columns();
         pub const value_type: ValueType = .vector;
         pub const value_dim: comptime_int = dim;
         pub const FieldType = T;
+
+        fn basisVectorUseError(comptime basis_name: @EnumLiteral()) noreturn {
+            @compileError(
+                @tagName(basis_name) ++ " is not defined in " ++ std.fmt.comptimePrint(
+                    "{s}",
+                    .{@typeName(Self)},
+                ),
+            );
+        }
 
         const Self = @This();
     };
@@ -373,30 +423,42 @@ pub const Rotor2f32 = Rotor2(f32);
 pub const Rotor3f32 = Rotor3(f32);
 
 comptime {
-    var vec: Vec2f32 = .zero;
+    if (false) {
+        var vec: Vec2f32 = .zero;
 
-    vec = .e1;
-    vec = .add(.scale(.e1, 5), .e1);
-    vec = vec.add(.{ .x = 1, .y = 2 });
+        vec = .e1;
+        //vec = .add(.mul(.e1, 5), .e1);
+        vec = vec.add(.{ .x = 1, .y = 2 });
 
-    const vec3 = vec.toComponents().xyz();
-    _ = vec3; // autofix
+        const vec3 = vec.toComponents().xyz();
+        _ = vec3; // autofix
 
-    const rotation: Rotor2(f32) = .exp(turns(0.5));
+        const rot_angle: Angle(f32, .turns) = .{ .value = 0.5 };
 
-    const rot: Rotor2(f32) = vec.mul(.e2);
+        const rotation: Rotor2(f32) = .exp(rot_angle);
 
-    const rotated = rot.mul(vec);
-    const rotated_again = rotation.mul(rotated);
-    _ = rotated_again; // autofix
-    var z: Complex(f32) = .add(5, .i);
+        const rot: Rotor2(f32) = vec.mul(.e1);
 
-    z = .add(z, .i);
+        const rotated = rot.mul(vec);
+        const rotated_again = rotation.mul(rotated);
+        _ = rotated_again; // autofix
+        var z: Rotor2(f32) = .add(5, .i); //5 + i
 
-    const bivec = Vec2f32.e0.outer(.e1);
+        z = .mul(z, .i);
 
-    const bivec_area = @abs(bivec.norm());
-    _ = bivec_area; // autofix
+        @compileLog(z);
+        z = .mul(z, .i);
+
+        @compileLog(z);
+
+        const q: Quaternion(f32) = .cast(z);
+        _ = q; // autofix
+
+        const bivec = Vec2f32.e0.outer(.e1);
+
+        const bivec_area = @abs(bivec.norm());
+        _ = bivec_area; // autofix
+    }
 }
 
 ///Represents a bivector
@@ -486,6 +548,7 @@ pub fn Bivec(comptime T: type, dim: comptime_int) type {
         pub const e31: Self = Vec(T, dim).e3.outer(.e1);
 
         pub const value_type: ValueType = .bivector;
+        pub const value_dim: comptime_int = dim;
 
         const Self = @This();
     };
@@ -501,7 +564,7 @@ pub fn Complex(comptime T: type) type {
 ///Alias for Rotor(T, 3)
 pub fn Quaternion(comptime T: type) type {
     //TODO: add rotor handedness
-    return Rotor(T, 3);
+    return Rotor(3, T);
 }
 
 ///Storage for a named component (x, y, z, w, ect..)
@@ -589,10 +652,10 @@ pub fn VectorComponents(comptime T: type, dim: comptime_int) type {
         pub fn toArray(self: Self) [dim]T {
             var array: [dim]T = undefined;
 
-            array[0] = self.x;
-            array[1] = self.y;
-            array[2] = self.z;
-            array[3] = self.w;
+            if (dim > 0) array[0] = self.x;
+            if (dim > 1) array[1] = self.y;
+            if (dim > 2) array[2] = self.z;
+            if (dim > 3) array[3] = self.w;
 
             if (dim > 4) {
                 @memcpy(array[4..], &self.trailing.values);
@@ -813,6 +876,10 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
         pub fn cast(value: anytype) Self {
             const value_value_type: ValueType = .of(@TypeOf(value));
 
+            if (@typeInfo(@TypeOf(value)) == .pointer) {
+                return .cast(value.*);
+            }
+
             switch (value_value_type) {
                 .scalar => return fromScalar(value),
                 .vector => {
@@ -826,11 +893,30 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
                         else => comptime unreachable,
                     };
                 },
+                .rotor => return switch (@typeInfo(@TypeOf(value))) {
+                    .@"struct" => {
+                        if (@TypeOf(value) == Self) {
+                            return value;
+                        }
+
+                        return .{
+                            .a = value.a,
+                            .x = value.x,
+                            .y = value.y,
+                            .z = value.z,
+                        };
+                    },
+                    else => value,
+                },
                 else => return switch (@typeInfo(@TypeOf(value))) {
                     .pointer => value.*,
                     else => value,
                 },
             }
+        }
+
+        pub fn castTo(comptime ToType: type, value: anytype) ToType {
+            return .cast(value);
         }
 
         ///Returns the real part of the rotor (the scalar part)
@@ -868,7 +954,7 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
         }
 
         ///Returns the vector part of the rotor
-        pub fn vectorPtr(self: Self) *Vec(ValueType.dim(Bivec(T, dim)), T) {
+        pub fn vectorPtr(self: *Self) *Vec(ValueType.dim(Bivec(T, dim)), T) {
             if (dim <= 2) {
                 @compileError("Rotors of dimension 2 or less don't have a vector part");
             }
@@ -876,25 +962,27 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
             return @ptrCast(&self.x);
         }
 
-        ///Returns the rotor represented by the axis and an angle of rotation
-        pub fn axisAngle(angle: anytype, axis: Vec(dim, T)) Self {
-            const sin_cos = trig.euler(T, angle);
-            var result: Self = .{ .w = sin_cos.y };
-
-            result.vectorPtr().* = axis.scale(sin_cos.x);
-
-            return result;
+        //evaluates exp(angle)
+        //Angle can be a scalar, Angle, vector or rotor
+        pub fn exp(value: anytype) Self {
+            return switch (dim) {
+                1 => .{ .a = value },
+                2 => trig.euler(T, value),
+                3 => .mul(
+                    @exp(value.a),
+                    .add(
+                        trig.cos(T, value.norm()),
+                        value.vector().unit().mul(trig.sin(T, value.norm())),
+                    ),
+                ),
+                else => @compileError("Dim not supported"),
+            };
         }
 
-        //evaluates exp(angle i )
-        pub fn exp(angle: anytype) Self {
-            return trig.euler(T, angle);
-        }
-
-        ///Evaluates exp(rotor * angle_theta)
-        pub fn expTheta(rotor: Self, angle_theta: anytype) Self {
+        ///Evaluates exp(i*value)
+        pub fn expi(rotor: Self, value: anytype) Self {
+            _ = value; // autofix
             _ = rotor; // autofix
-            _ = angle_theta; // autofix
         }
 
         ///Scale the rotor by rhs
@@ -941,7 +1029,7 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
             const prod_value_type: ValueType = .of(Prod);
 
             const lhs_val: Self = .cast(lhs);
-            const rhs_val: Self = .cast(lhs);
+            const rhs_val: Self = .cast(rhs);
 
             switch (prod_value_type) {
                 .rotor => {
@@ -957,11 +1045,13 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
                         3 => {
                             var result: Self = undefined;
 
-                            result.w = lhs_val.a * rhs_val.a + lhs_val.vector().inner(rhs_val.vector());
+                            result.a = lhs_val.a * rhs_val.a + lhs_val.vector().inner(rhs_val.vector());
                             const lhs_v = lhs_val.vector();
                             const rhs_v = rhs_val.vector();
 
-                            result.vectorPtr().* = rhs_v.scale(lhs_val.a).add(lhs_v.scale(rhs_val.a)).add(lhs_v.outer(rhs_v));
+                            result.vectorPtr().* = rhs_v.scale(lhs_val.a).add(lhs_v.scale(rhs_val.a)).add(
+                                .fromComponents(lhs_v.outer(rhs_v).toComponents()),
+                            );
 
                             return result;
                         },
@@ -969,7 +1059,7 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
                     }
                 },
                 .vector => {
-                    return mul(lhs, Self.fromVector(rhs)).vector();
+                    return .cast(mul(lhs, Self.cast(rhs)));
                 },
                 else => @compileError(""),
             }
@@ -1096,6 +1186,7 @@ pub fn Multor(comptime T: type, dim: comptime_int) type {
     };
 }
 
+///Represents an mxn matrix over T
 pub fn Matrix(comptime T: type, m: comptime_int, comptime n: comptime_int) type {
     return extern struct {
         coeffs: [m * n]T,
@@ -1121,20 +1212,39 @@ pub fn Matrix(comptime T: type, m: comptime_int, comptime n: comptime_int) type 
             return .{ .coeffs = coeffs };
         }
 
-        pub fn row(lhs: Self, i: usize) Vec(T, m) {
-            return .{ .coeffs = lhs.coeffs[i * m .. i * m + m].* };
+        pub fn row(lhs: Self, i: usize) Vec(m, T) {
+            return .fromComponents(.fromArray(lhs.coeffs[i * m .. i * m + m].*));
         }
 
-        pub fn column(lhs: Self, j: usize) Vec(T, n) {
+        pub fn column(lhs: Self, j: usize) Vec(n, T) {
             var coeffs: [n]T = undefined;
 
             for (0..n) |i| {
-                coeffs[i] = lhs.row(i).coeffs[j];
+                coeffs[i] = lhs.row(i).componentAt(j);
             }
 
-            return .{
-                .coeffs = coeffs,
-            };
+            return .fromComponents(.fromArray(coeffs));
+        }
+
+        ///Returns the columns of the matrix
+        pub fn columns(lhs: Self) [m]Vec(n, T) {
+            var cols: [n]Vec(n, T) = undefined;
+
+            for (0..m) |j| {
+                cols[j] = lhs.column(j);
+            }
+
+            return cols;
+        }
+
+        ///Returns the rows of the matrix
+        pub fn rows(lhs: Self) [m]Vec(n, T) {
+            return @bitCast(lhs.coeffs);
+        }
+
+        ///Computes the transpose of the matrix
+        pub fn transpose(matrix: Self) Self {
+            return @bitCast(matrix.columns());
         }
 
         ///Multiply two matricies and return the result
@@ -1534,7 +1644,7 @@ pub const trig = struct {
         return @sin(angle.inRadians());
     }
 
-    ///Returns the vector (sin(angle), cos(angle))
+    ///Returns the rotor (sin(angle), cos(angle))
     pub fn euler(comptime T: type, angle: anytype) Rotor(2, T) {
         //TODO: compute sin and cos together
         return .{
@@ -1611,5 +1721,5 @@ pub fn SumType(
     return Lhs;
 }
 
-const zmath = @import("zmath");
+const math = @This();
 const std = @import("std");
