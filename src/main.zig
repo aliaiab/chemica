@@ -408,22 +408,24 @@ pub fn main(init: std.process.Init) !void {
 
             const angle_x = norm_delta_x * std.math.tau;
             const angle_y = norm_delta_y * std.math.tau;
+            _ = angle_y; // autofix
 
-            const rotation_x = zmath.quatFromAxisAngle(.{ 0, 1, 0, 0 }, -angle_x);
-            const rotation_y = zmath.quatFromAxisAngle(.{ 0, 0, 1, 0 }, angle_y);
-            const rotation = math.mulQuat(rotation_x, rotation_y);
+            //const rotation_x = zmath.quatFromAxisAngle(.{ 0, 1, 0, 0 }, -angle_x);
+            //const rotation_y = zmath.quatFromAxisAngle(.{ 0, 0, 1, 0 }, angle_y);
+            const rotaion_x: math.Quaternion(f32) = .exp((math.Quaternion(f32).i.mul(-angle_x)));
+            const rotaion_y: math.Quaternion(f32) = .exp((math.Quaternion(f32).j.mul(angle_x)));
+            const rotation: math.Quaternion(f32) = .mul(rotaion_x, rotaion_y);
 
-            var new_eye = zmath.rotate(rotation, .{
+            var new_eye: math.Vec3(f32) = .castFrom(math.Quaternion(f32), .mul(rotation, .{
                 camera.eye[0] - camera.target[0],
                 camera.eye[1] - camera.target[1],
                 camera.eye[2] - camera.target[2],
-                0,
-            });
+            }));
 
-            new_eye += .{ camera.target[0], camera.target[1], camera.target[2], 0 };
+            new_eye = .add(new_eye, .{ camera.target[0], camera.target[1], camera.target[2] });
 
             if (window.getMouseButton(.right) != .release and !imgui.isAnyItemActive() and !imguizmo.ImGuizmo_IsUsing()) {
-                camera.eye = .{ new_eye[0], new_eye[1], new_eye[2] };
+                camera.eye = .cast(.{ new_eye[0], new_eye[1], new_eye[2] });
             }
 
             const zoom_factor: @Vector(3, f32) = @splat(std.math.clamp(mouse_scroll, -1, 1));
