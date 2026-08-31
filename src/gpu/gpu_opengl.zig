@@ -4,6 +4,10 @@ var context: struct {
     proc_table: ?gl.ProcTable = null,
     pipeline_descriptor_mappings: std.ArrayList(DescriptorHeapMapping) = .empty,
     arena: std.mem.Allocator = undefined,
+    texture_handles: std.ArrayList(u32) = .empty,
+    buffer_handles: std.ArrayList(u32) = .empty,
+    next_buffer_handle: u32 = 0,
+    next_texture_handle: u32 = 0,
     buffers: std.ArrayList(BufferView) = .empty,
     unmapped_buffers: std.AutoArrayHashMapUnmanaged(u32, void) = .empty,
     ///Since we don't support the fixed function vertex input assembly stage, we just use a global empty vertex array
@@ -87,13 +91,22 @@ pub fn memAlloc(
 ) std.mem.Allocator.Error![]u8 {
     switch (memory_type) {
         .gpu => {
-            var buffer: u32 = 0;
 
             //const underlying_size: u32 = @intCast(size + (alignment.toByteUnits() - 1));
             const underlying_size: u32 = @intCast(size);
             std.debug.assert(size != 0);
 
-            gl.CreateBuffers(1, @ptrCast(&buffer));
+            if (context.next_buffer_handle >= context.buffer_handles.items.len) {
+                try context.buffer_handles.appendNTimes(context.arena, 0, 20);
+                const buffers = context.buffer_handles.items[context.next_buffer_handle..].ptr;
+                gl.CreateBuffers(
+                    @intCast(context.buffer_handles.items[context.next_buffer_handle..].len),
+                    buffers,
+                );
+            }
+            defer context.next_buffer_handle += 1;
+            const buffer: u32 = context.buffer_handles.items[context.next_buffer_handle];
+
             gl.NamedBufferStorage(
                 buffer,
                 underlying_size,
@@ -149,16 +162,28 @@ pub fn memCopy(
 ) void {
     _ = command_buffer; // autofix
     const buffer_view = translateSliceToBufferView(dest_gpu);
+    const src_buffer_view = translateSliceToBufferView(src_gpu);
 
     if (buffer_view.api_handle != 0) {
-        gl.NamedBufferSubData(
-            buffer_view.api_handle,
-            @intCast(buffer_view.offset),
-            @intCast(src_gpu.len),
-            src_gpu.ptr,
-        );
+        if (src_buffer_view.api_handle != 0) {
+            gl.CopyNamedBufferSubData(
+                src_buffer_view.api_handle,
+                buffer_view.api_handle,
+                @intCast(src_buffer_view.offset),
+                @intCast(buffer_view.offset),
+                @intCast(src_gpu.len),
+            );
+        } else {
+            gl.NamedBufferSubData(
+                buffer_view.api_handle,
+                @intCast(buffer_view.offset),
+                @intCast(src_gpu.len),
+                src_gpu.ptr,
+            );
+        }
     } else {
-        //TODO: glCopyBufferSubData
+        //TODO: readback/cpu-cpu memcopy
+        @panic("TODO: unimplemened");
     }
 }
 
@@ -182,7 +207,7 @@ pub fn memSet(
         1 => gl.RED_INTEGER,
         2 => gl.RED_INTEGER,
         4 => gl.RED_INTEGER,
-        8 => gl.RG,
+        8 => gl.RG_INTEGER,
         else => unreachable,
     };
 
@@ -513,11 +538,13 @@ pub fn createTexture(
     }, 1, @ptrCast(&texture_handle));
 
     const gl_format: u32 = switch (description.format) {
+        .none => @panic("Format not supported!"),
         .rgba8_unorm32 => gl.RGBA8,
         .rgb8_unorm24 => gl.RGB8,
         .r32_u32 => gl.R32UI,
         .r16_u16 => gl.R16UI,
-        else => @panic(""),
+        .depth_f32 => gl.DEPTH_COMPONENT32F,
+        .depth_stencil_u24_u8 => gl.DEPTH24_STENCIL8,
     };
 
     const default_sampler_filter: i32 = switch (description.format) {

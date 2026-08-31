@@ -241,7 +241,6 @@ pub const Context = struct {
             .binding_first = 16,
             .heap_offset = 0,
             .heap_array_stride = @sizeOf(gpu.TextureDescriptor),
-
             .sampler_binding_count = 16,
             .sampler_binding_first = 0,
             .sampler_heap_offset = 0,
