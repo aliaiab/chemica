@@ -42,7 +42,7 @@ pub fn main(init: std.process.Init) !void {
 
     const content_scale = imgui.cimgui.cImGui_ImplGlfw_GetContentScaleForMonitor(@ptrCast(glfw.getPrimaryMonitor()));
 
-    const window = try glfw.createWindow(
+    var window = try glfw.createWindow(
         @intFromFloat(640 * content_scale),
         @intFromFloat(480 * content_scale),
         "Chemica",
@@ -69,67 +69,20 @@ pub fn main(init: std.process.Init) !void {
     //imgui.cimgui.ImGuiStyle_ScaleAllSizes(imgui.getStyle(), content_scale);
     //imgui.cimgui.ImGui_ScaleWindowsInViewport(@ptrCast(imgui.cimgui.ImGui_GetMainViewport()), 1 / content_scale);
 
-    var simulation: Simulation = try .init(
-        &gpu_context,
-        arena,
-        @bitCast(window.getSize()),
-    );
-    defer simulation.deinit(arena);
+    var voxel_materials: std.ArrayList(Simulation.VoxelMaterial) = .empty;
+    var voxel_materials_visual: std.ArrayList(Simulation.VoxelMaterialVisual) = .empty;
 
     var voxel_material_names: std.ArrayList([]const u8) = .empty;
 
-    try simulation.voxel_materials.append(arena, .{
-        .heat_conductivity = 0,
-    });
-    try simulation.voxel_materials_visual.append(arena, .{});
-    try voxel_material_names.append(arena, "Air");
-
-    try simulation.voxel_materials.append(arena, .{
-        .heat_conductivity = 0.5,
-    });
-    try simulation.voxel_materials_visual.append(arena, .{
-        .albedo = packUnorm4x8(.{ 0.89, 0.79, 0.55, 1.0 }),
-    });
-    try voxel_material_names.append(arena, "Sand");
-
-    try simulation.voxel_materials.append(arena, .{
-        .heat_conductivity = 1,
-        .melting_point = 1000,
-    });
-    try simulation.voxel_materials_visual.append(arena, .{
-        .albedo = packUnorm4x8(.{ 0.29, 0.29, 0.29, 1.0 }),
-    });
-    try voxel_material_names.append(arena, "Stone");
-
-    try simulation.voxel_materials.append(arena, .{
-        .heat_conductivity = 0.9,
-        .melting_point = 0,
-        .density = 0.5,
-    });
-    try simulation.voxel_materials_visual.append(arena, .{
-        .albedo = packUnorm4x8(.{ 0.17, 0.56, 0.82, 0.19 }),
-    });
-    try voxel_material_names.append(arena, "Water");
-
-    try simulation.voxel_materials.append(arena, .{
-        .heat_conductivity = 3,
-        .melting_point = 3000,
-        .boiling_point = 4000,
-    });
-    try simulation.voxel_materials_visual.append(arena, .{
-        .albedo = 0xff1d2971,
-    });
-    try voxel_material_names.append(arena, "Copper");
-
     if (true) {
-        simulation.voxel_materials.clearAndFree(arena);
-        simulation.voxel_materials_visual.clearAndFree(arena);
+        voxel_materials.clearAndFree(arena);
+        voxel_materials_visual.clearAndFree(arena);
         voxel_material_names.clearAndFree(arena);
 
-        try simulation.voxel_materials.append(arena, .{
+        try voxel_materials.append(arena, .{
             .heat_conductivity = 0,
         });
-        try simulation.voxel_materials_visual.append(arena, .{});
+        try voxel_materials_visual.append(arena, .{});
         try voxel_material_names.append(arena, "Air");
 
         const materials_file_source = @embedFile("assets/pbr_materials.json");
@@ -164,7 +117,7 @@ pub fn main(init: std.process.Init) !void {
 
         for (materials_json.data) |material| {
             try voxel_material_names.append(arena, material.name);
-            try simulation.voxel_materials_visual.append(arena, .{
+            try voxel_materials_visual.append(arena, .{
                 .albedo = packUnorm4x8(
                     .{
                         material.color[0].color[0],
@@ -181,7 +134,7 @@ pub fn main(init: std.process.Init) !void {
                 }),
                 .refractive_index = material.ior,
             });
-            try simulation.voxel_materials.append(arena, .{
+            try voxel_materials.append(arena, .{
                 .density = material.density[0],
             });
         }
@@ -192,6 +145,27 @@ pub fn main(init: std.process.Init) !void {
     for (voxel_material_names_ptrs, voxel_material_names.items) |*ptr, name| {
         ptr.* = name.ptr;
     }
+
+    var simulation: Simulation = try .init(
+        &gpu_context,
+        arena,
+        @bitCast(window.getSize()),
+        voxel_materials,
+        voxel_materials_visual,
+    );
+    defer simulation.deinit(arena);
+
+    const gpu_graphics_queue = gpu.createQueue(gpu_context.gpu_device, .{
+        .raster = true,
+        .compute = true,
+        .transfer = true,
+    });
+    defer gpu.destroyQueue(gpu_graphics_queue);
+
+    gpu_context.graphics_queue = gpu_graphics_queue;
+
+    const gpu_swapchain = gpu.createSwapchain(window);
+    defer gpu.destroySwapchain(gpu_swapchain);
 
     imguiStyleSetup();
 
@@ -313,10 +287,6 @@ pub fn main(init: std.process.Init) !void {
         sample_scenes_zon[i] = @embedFile(path);
     };
 
-    gpu_context.beginFrame();
-
-    var enable_transform_gizmo: bool = false;
-
     if (false) {
         for (sample_scenes_zon, sample_scenes_zon_paths) |sample_scene_zon, path| {
             const sample_scene = try sample_scenes.addOne(arena);
@@ -372,9 +342,15 @@ pub fn main(init: std.process.Init) !void {
 
         imgui.impl.glfw.newFrame();
 
-        gpu_context.beginFrame();
-
         asym_geo_context.beginSubmission();
+
+        const swapchain_texture = gpu.swapchainObtainTexture(gpu_swapchain);
+
+        gpu_context.swapchain_texture = swapchain_texture;
+        gpu_context.beginFrame();
+        simulation.gpu_sim.command_buffer = gpu_context.command_buffer;
+
+        var enable_transform_gizmo: bool = false;
 
         if (imgui.cimgui.ImGui_IsKeyPressed(imgui.cimgui.ImGuiKey_T)) {
             enable_transform_gizmo = !enable_transform_gizmo;
@@ -408,24 +384,22 @@ pub fn main(init: std.process.Init) !void {
 
             const angle_x = norm_delta_x * std.math.tau;
             const angle_y = norm_delta_y * std.math.tau;
-            _ = angle_y; // autofix
 
-            //const rotation_x = zmath.quatFromAxisAngle(.{ 0, 1, 0, 0 }, -angle_x);
-            //const rotation_y = zmath.quatFromAxisAngle(.{ 0, 0, 1, 0 }, angle_y);
-            const rotaion_x: math.Quaternion(f32) = .exp((math.Quaternion(f32).i.mul(-angle_x)));
-            const rotaion_y: math.Quaternion(f32) = .exp((math.Quaternion(f32).j.mul(angle_x)));
-            const rotation: math.Quaternion(f32) = .mul(rotaion_x, rotaion_y);
+            const rotation_x = zmath.quatFromAxisAngle(.{ 0, 1, 0, 0 }, -angle_x);
+            const rotation_y = zmath.quatFromAxisAngle(.{ 0, 0, 1, 0 }, angle_y);
+            const rotation = math.mulQuat(rotation_x, rotation_y);
 
-            var new_eye: math.Vec3(f32) = .castFrom(math.Quaternion(f32), .mul(rotation, .{
+            var new_eye = zmath.rotate(rotation, .{
                 camera.eye[0] - camera.target[0],
                 camera.eye[1] - camera.target[1],
                 camera.eye[2] - camera.target[2],
-            }));
+                0,
+            });
 
-            new_eye = .add(new_eye, .{ camera.target[0], camera.target[1], camera.target[2] });
+            new_eye += .{ camera.target[0], camera.target[1], camera.target[2], 0 };
 
             if (window.getMouseButton(.right) != .release and !imgui.isAnyItemActive() and !imguizmo.ImGuizmo_IsUsing()) {
-                camera.eye = .cast(.{ new_eye[0], new_eye[1], new_eye[2] });
+                camera.eye = .{ new_eye[0], new_eye[1], new_eye[2] };
             }
 
             const zoom_factor: @Vector(3, f32) = @splat(std.math.clamp(mouse_scroll, -1, 1));
@@ -1497,7 +1471,20 @@ pub fn main(init: std.process.Init) !void {
             typeface_textures,
         );
 
-        if (false) {
+        gpu.swapchainPresent(
+            gpu_context.command_buffer,
+            gpu_swapchain,
+        );
+
+        gpu_context.endFrame();
+
+        gpu.queueSubmit(
+            gpu_graphics_queue,
+            &.{gpu_context.command_buffer},
+            &.{},
+        );
+
+        if (true) {
             if (@import("builtin").os.tag != .macos) {
                 imgui.impl.opengl3.renderDrawData(imgui.getDrawData());
             } else {
@@ -1508,8 +1495,6 @@ pub fn main(init: std.process.Init) !void {
                 );
             }
         }
-
-        gpu_context.endFrame();
 
         glfw.swapBuffers(window);
     }

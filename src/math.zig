@@ -1,3 +1,12 @@
+pub fn mulQuat(a: @Vector(4, f32), b: @Vector(4, f32)) @Vector(4, f32) {
+    const lhs_rot: Rotor3(f32) = .fromComponents(.fromArray(@as([4]f32, a)));
+    const rhs_rot: Rotor3(f32) = .fromComponents(.fromArray(@as([4]f32, b)));
+
+    const res_rot: Rotor3(f32) = .mul(lhs_rot, rhs_rot);
+
+    return res_rot.toComponents().toArray();
+}
+
 ///Compute the nth root of x
 pub fn rootn(comptime T: type, x: T, n: T) T {
     return expn(T, reciprocal(T, n), x);
@@ -64,13 +73,6 @@ pub const ValueType = enum {
             .pointer => .of(std.meta.Child(T)),
             .enum_literal => .decl_literal,
             .array => .vector,
-            .@"struct" => blk: {
-                if (@hasDecl(T, "value_type")) {
-                    break :blk T.value_type;
-                }
-
-                break :blk .vector;
-            },
             else => T.value_type,
         };
     }
@@ -93,7 +95,6 @@ pub const ValueType = enum {
         return switch (@typeInfo(T)) {
             .int, .float => 1,
             .pointer => dim(std.meta.Child(T)),
-            .@"struct" => @typeInfo(T).@"struct".field_types.len,
             else => T.value_dim,
         };
     }
@@ -102,7 +103,6 @@ pub const ValueType = enum {
         return switch (@typeInfo(T)) {
             .int, .float => T,
             .pointer => FieldType(std.meta.Child(T)),
-            .@"struct" => |struct_info| struct_info.field_types[0],
             else => T.FieldType,
         };
     }
@@ -182,10 +182,6 @@ pub fn VecBasis(
                         return .fromComponents(.fromArray(value));
                     }
 
-                    if (@typeInfo(@TypeOf(value)) == .@"struct" and @typeInfo(@TypeOf(value)).@"struct".is_tuple) {
-                        return .fromComponents(.fromArray(value));
-                    }
-
                     return value;
                 },
                 .decl_literal => {
@@ -212,10 +208,6 @@ pub fn VecBasis(
                     else => value,
                 },
             }
-        }
-
-        pub fn castFrom(comptime Type: type, value: Type) Self {
-            return .cast(value);
         }
 
         pub fn componentAt(self: Self, index: usize) T {
@@ -288,8 +280,8 @@ pub fn VecBasis(
 
         ///Computes the inner product of lhs and rhs
         pub fn inner(lhs: anytype, rhs: anytype) T {
-            const actual_lhs: Self = .cast(lhs);
-            const actual_rhs: Self = .cast(rhs);
+            const actual_lhs = fromAny(lhs);
+            const actual_rhs = fromAny(rhs);
             return actual_lhs.toComponents().inner(actual_rhs.toComponents());
         }
 
@@ -330,21 +322,11 @@ pub fn VecBasis(
         ) ProductType(@TypeOf(lhs), @TypeOf(rhs)) {
             const Prod = ProductType(@TypeOf(lhs), @TypeOf(rhs));
 
-            const prod_value_type: ValueType = comptime .of(Prod);
-            const lhs_value_type: ValueType = comptime .of(@TypeOf(lhs));
-            const rhs_value_type: ValueType = comptime .of(@TypeOf(rhs));
+            const prod_value_type: ValueType = .of(Prod);
 
             switch (prod_value_type) {
                 .vector => unreachable,
                 .rotor => {
-                    if (lhs_value_type == .scalar) {
-                        return .fromComponents(rhs.toComponents().scale(lhs));
-                    }
-
-                    if (rhs_value_type == .scalar) {
-                        return .fromComponents(lhs.toComponents().scale(rhs));
-                    }
-
                     var result: Rotor(dim, T) = undefined;
 
                     result.a = lhs.inner(rhs);
@@ -354,7 +336,7 @@ pub fn VecBasis(
                         result.vectorPtr().* = lhs.outer(rhs).vector();
                     }
 
-                    return result.vector();
+                    return result;
                 },
                 else => comptime unreachable,
             }
@@ -994,12 +976,12 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
             return switch (dim) {
                 1 => .{ .a = value },
                 2 => trig.euler(T, value),
-                3 => Self.mul(
-                    Self.add(
+                3 => .mul(
+                    @exp(value.a),
+                    .add(
                         trig.cos(T, value.norm()),
                         value.vector().unit().mul(trig.sin(T, value.norm())),
                     ),
-                    @exp(value.a),
                 ),
                 else => @compileError("Dim not supported"),
             };
@@ -1024,7 +1006,7 @@ pub fn Rotor(dim: comptime_int, comptime T: type) type {
             const rhs_value_type: ValueType = .of(@TypeOf(rhs));
             _ = rhs_value_type; // autofix
 
-            const sum_value_type: ValueType = comptime .of(Sum);
+            const sum_value_type: ValueType = .of(Sum);
 
             switch (sum_value_type) {
                 .rotor => {
@@ -1488,7 +1470,6 @@ pub fn Angle(comptime T: type, comptime angle_tag: AngleType) type {
         pub const one_turn: Self = .cast(tag, turns(1));
 
         pub const value_type: ValueType = .angle;
-        pub const ValueT = T;
 
         const Self = @This();
     };
@@ -1680,12 +1661,12 @@ pub const analysis = struct {};
 pub const trig = struct {
     ///Returns the cosine of angle
     pub fn cos(comptime T: type, angle: anytype) T {
-        return @cos(angleRadians(angle));
+        return @cos(angle.inRadians());
     }
 
     ///Returns the sin of angle
     pub fn sin(comptime T: type, angle: anytype) T {
-        return @sin(angleRadians(angle));
+        return @sin(angle.inRadians());
     }
 
     ///Returns the rotor (sin(angle), cos(angle))
@@ -1696,59 +1677,26 @@ pub const trig = struct {
             .x = sin(T, angle),
         };
     }
-
-    pub fn angleRadians(value: anytype) AngleValue(@TypeOf(value)) {
-        return switch (@typeInfo(@TypeOf(value))) {
-            .@"struct" => value.inRadians(),
-            else => return angleValue(value),
-        };
-    }
-
-    pub fn angleValue(value: anytype) AngleValue(@TypeOf(value)) {
-        return switch (@typeInfo(@TypeOf(value))) {
-            .@"struct" => value.value,
-            else => value,
-        };
-    }
-
-    pub fn AngleValue(comptime T: type) type {
-        return switch (@typeInfo(T)) {
-            .@"struct" => T.ValueType,
-            else => T,
-        };
-    }
 };
-
-fn ProductTypeReturnValue(comptime T: type) type {
-    if (@typeInfo(T) == .pointer) {
-        return std.meta.Child(T);
-    }
-
-    if (@typeInfo(T) == .@"struct" and @typeInfo(T).@"struct".is_tuple) {
-        return Vec(@typeInfo(T).@"struct".field_types.len, @typeInfo(T).@"struct".field_types[0]);
-    }
-
-    return T;
-}
 
 ///Returns the type that should be returns when multiplying values of type Lhs, and Rhs respectively
 pub fn ProductType(
     comptime Lhs: type,
     comptime Rhs: type,
 ) type {
-    const lhs_type: ValueType = comptime .of(Lhs);
-    const rhs_type: ValueType = comptime .of(Rhs);
+    const lhs_type: ValueType = .of(Lhs);
+    const rhs_type: ValueType = .of(Rhs);
 
-    if (ProductTypeReturnValue(Lhs) == ProductTypeReturnValue(Rhs)) {
-        return ProductTypeReturnValue(Rhs);
+    if (Lhs == Rhs) {
+        return Lhs;
     }
 
     if (lhs_type == .rotor and rhs_type == .rotor) {
-        return ProductTypeReturnValue(Rhs);
+        return Rhs;
     }
 
     if (lhs_type == .rotor and rhs_type == .vector) {
-        return ProductTypeReturnValue(Rhs);
+        return Rhs;
     }
 
     if (lhs_type == .matrix and rhs_type == .vector) {
@@ -1760,18 +1708,18 @@ pub fn ProductType(
     }
 
     if (lhs_type == .vector and rhs_type == .scalar) {
-        return ProductTypeReturnValue(Lhs);
+        return Lhs;
     }
 
     if (lhs_type == .scalar and rhs_type == .vector) {
-        return ProductTypeReturnValue(Rhs);
+        return Rhs;
     }
 
     if (lhs_type == .vector and rhs_type == .decl_literal) {
         return Rotor(ValueType.dim(Lhs), ValueType.FieldType(Lhs));
     }
 
-    return ProductTypeReturnValue(Lhs);
+    return Lhs;
 }
 
 ///Returns the type that should be returns when adding values of type Lhs, and Rhs respectively
@@ -1789,14 +1737,6 @@ pub fn SumType(
 
     if (lhs_type == .scalar and rhs_type == .rotor) {
         return Rhs;
-    }
-
-    if (lhs_type == .vector and rhs_type == .scalar) {
-        return Rotor(3, Scalar);
-    }
-
-    if (lhs_type == .scalar and rhs_type == .vector) {
-        return Rotor(3, Scalar);
     }
 
     if (lhs_type == .scalar and rhs_type == .decl_literal) {

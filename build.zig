@@ -40,7 +40,9 @@ pub fn build(b: *std.Build) !void {
         .api = .gl,
         .version = .@"4.6",
         .profile = .core,
-        .extensions = &.{},
+        .extensions = &.{
+            .EXT_mesh_shader,
+        },
     });
 
     const freetype_dep = b.dependency("freetype", .{
@@ -343,11 +345,9 @@ fn compileShader(
 
     const install_path = b.addInstallFile(generated_file, source_basename);
 
-    if (mode != .debug) {
-        exe_step.root_module.addImport(output_path, b.createModule(.{
-            .root_source_file = output_file_path,
-        }));
-    }
+    exe_step.root_module.addImport(output_path, b.createModule(.{
+        .root_source_file = output_file_path,
+    }));
 
     exe_step.step.dependOn(&install_path.step);
 

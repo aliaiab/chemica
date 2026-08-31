@@ -1,31 +1,27 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 
+#include "buffers.glsl"
+
+layout(std430, binding = buffer_binding_start + 13) restrict buffer VoxelMaterials
+{
+    uint16_t uVoxelMaterials[];
+};
+
+layout(std430, binding = buffer_binding_start + 14) restrict buffer VoxelTemperature
+{
+    float uVoxelTemperatures[];
+};
+
+layout(std430, binding = buffer_binding_start + 15) restrict buffer DeviationBuffer {
+    int8_t deviation_buffer[];
+};
+
 #include "common.glsl"
 
 const int KERNEL_SIZE = 8;
 
 layout(local_size_x = KERNEL_SIZE, local_size_y = KERNEL_SIZE, local_size_z = KERNEL_SIZE) in;
-
-layout(std430, binding = 0) restrict readonly buffer Input
-{
-    float uInput[];
-};
-
-layout(std430, binding = 1) restrict buffer Output
-{
-    float uOutput[];
-};
-
-layout(std430, binding = 2) restrict readonly buffer Materials
-{
-    VoxelMaterial uMaterials[];
-};
-
-layout(std430, binding = 4) restrict readonly buffer VoxelMaterials
-{
-    uint16_t voxel_materials[];
-};
 
 layout(std430, binding = 32) restrict buffer TotalEnergyBuffer {
     int total_energy;
@@ -55,28 +51,30 @@ void main()
     int temperatureSolidCount = 0;
     float accumulatedTemperature = 0;
 
-    float currentTemperature = uInput[index];
+    float currentTemperature = loadVoxelTemperature(ivec3(position));
 
-    VoxelMaterial material = uMaterials[uint(voxel_materials[index])];
+    VoxelMaterial material = uMaterials[loadVoxelMaterial(ivec3(position))];
 
     uint occluded_faces = 0;
     float heat_differential = 0;
     float temperature_differential = 0;
 
-    float specific_heat_capacity = uMaterials[voxel_materials[index]].heat_capacity;
-    float voxel_mass = VOXEL_MOLARITY * uMaterials[voxel_materials[index]].molar_mass;
+    float specific_heat_capacity = uMaterials[loadVoxelMaterial(ivec3(position))].heat_capacity;
+    float voxel_mass = VOXEL_MOLARITY * uMaterials[loadVoxelMaterial(ivec3(position))].molar_mass;
 
     for (int i = 0; i < neighbours.length(); i++)
     {
+        ivec3 neighbour_pos = neighbours[i];
         int neighbourIndex = (int(position.x) + neighbours[i].x) + int(uSize.x) * (int(position.y) + neighbours[i].y) + int(uSize.x) * int(uSize.y) * (int(position.z) + neighbours[i].z);
 
         if (all(greaterThanEqual(position + neighbours[i], ivec3(0))) && all(lessThan(position + neighbours[i], uSize)))
         {
-            float difference = float(uInput[neighbourIndex]) - currentTemperature;
+            float neighbour_temp = loadVoxelTemperature(neighbour_pos);
+            float difference = neighbour_temp - currentTemperature;
 
-            float interface_conductivity = uMaterials[uint(voxel_materials[neighbourIndex])].heat_conductivity;
+            float interface_conductivity = uMaterials[loadVoxelMaterial(neighbour_pos)].heat_conductivity;
 
-            if (voxel_materials[neighbourIndex] == 0) {
+            if (loadVoxelMaterial(neighbour_pos) == 0) {
                 continue;
             }
 
@@ -84,10 +82,10 @@ void main()
 
             heat_differential += interface_conductivity * (VOXEL_FACE_AREA / (VOXEL_SIDE_LENGTH)) * difference * dt;
 
-            accumulatedTemperature += uInput[neighbourIndex];
+            accumulatedTemperature += neighbour_temp;
             temperatureSolidCount += 1;
 
-            if (uint(voxel_materials[neighbourIndex]) != 0) {
+            if (loadVoxelMaterial(neighbour_pos) != 0) {
                 occluded_faces += 1;
             }
         }
@@ -96,7 +94,7 @@ void main()
     float stefan_boltzman_constant = 5.67e-8;
 
     float radiation_rate = stefan_boltzman_constant * pow(currentTemperature, 4) * 0.016;
-    float radiation_factor = uMaterials[voxel_materials[index]].thermal_emissivity * (neighbours.length() - float(occluded_faces)) * VOXEL_FACE_AREA;
+    float radiation_factor = uMaterials[loadVoxelMaterial(ivec3(position))].thermal_emissivity * (neighbours.length() - float(occluded_faces)) * VOXEL_FACE_AREA;
 
     if (enable_radiative_cooling) {
         heat_differential += -radiation_rate * radiation_factor;
@@ -104,8 +102,9 @@ void main()
 
     temperature_differential = (heat_differential / specific_heat_capacity) / voxel_mass * 0.1;
 
-    uOutput[index] = uInput[index] + temperature_differential;
+    float result_temperature = currentTemperature + temperature_differential;
+    result_temperature = max(0, result_temperature);
 
-    atomicAdd(total_energy, int(uOutput[index] * specific_heat_capacity * voxel_mass));
-    uOutput[index] = max(0, uOutput[index]);
+    storeVoxelTemperature(ivec3(position), result_temperature);
+    atomicAdd(total_energy, int(result_temperature * specific_heat_capacity * voxel_mass));
 }

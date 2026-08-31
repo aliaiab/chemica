@@ -30,58 +30,6 @@ struct VoxelMaterialVisual
     float refractive_index;
 };
 
-#if 0
-layout(std430, binding = 24) restrict buffer VoxelChunkPalleteMemory
-{
-    uint16_t voxel_chunk_pallete_memory[];
-};
-#endif
-
-layout(std430, binding = 31) restrict buffer VoxelPalleteCounters
-{
-    int voxel_pallete_counters[];
-};
-
-layout(std430, binding = 26) restrict buffer VoxelChunkTemperatureMemory
-{
-    float16_t voxel_chunk_temperature_memory[];
-};
-
-struct VoxelChunkAllocator {
-    int next_allocator;
-
-    uint pallete_memory_start;
-    uint pallete_counters_start;
-    uint bit_buffer_memory_start;
-    uint temperature_buffer_start;
-    uint deviation_buffer_start;
-
-    //TODO: seperate this into a seperate struct as these are only accessed when allocating
-    //Bit sets containing whether an allocation is free or not
-    uint memory_allocated_bits;
-};
-
-layout(std430, binding = 27) restrict coherent buffer VoxelAllocatorBuffer
-{
-    VoxelChunkAllocator voxel_allocators[];
-};
-
-layout(std430, binding = 28) restrict coherent buffer VoxelAllocatorBins {
-    //Indexed by bit count - 1
-    //Contains indices into voxel_allocators
-    int voxel_allocator_bin[15];
-    uint allocators_bump;
-    uint voxel_temperature_bump;
-    uint voxel_pallete_bump;
-    uint voxel_pallete_counters_bump;
-    uint voxel_bit_buffer_bump;
-    //Index of the chunk grid used as input (t0), 0 or 1,
-    //output_chunk_grid = 1 - input_chunk_grid
-    uint input_chunk_grid;
-    uvec3 chunk_grid_size;
-    uint allocation_lock;
-};
-
 //TODO: make this a specialization constant
 #define VOXELS_IN_A_METRE 500.0f
 //The side length of a voxel in metres
@@ -101,16 +49,6 @@ layout(std430, binding = 28) restrict coherent buffer VoxelAllocatorBins {
 
 #define ChunkAllocation uint
 
-struct ChunkBufferAllocation {
-    ChunkAllocation allocation;
-    uint bit_count;
-};
-
-layout(std430, binding = 29) restrict coherent buffer VoxelChunkBufferAllocation
-{
-    ChunkBufferAllocation voxel_chunks_allocation[];
-};
-
 int bitScanForward(uint x) {
     x = x & -x;
 
@@ -124,37 +62,6 @@ int bitScanForward(uint x) {
     return count;
 }
 
-struct AffineTransform3D {
-    //TODO: store inverse position, inverse rotation and inverse scale(maybe)
-    vec3 position;
-    float uniform_scale;
-    //Quaternion rotation
-    vec4 rotation;
-};
-
-layout(std140, binding = 0) uniform Uniforms
-{
-    //Rendering Parameters
-    mat4 uModel;
-    mat4 uView;
-    mat4 uProjection;
-
-    //Simulation Parameters
-    uvec3 uSize;
-    ivec3 uBaseVelocity;
-    uint substep_index;
-
-    //CSG parameters
-    AffineTransform3D root_transform;
-    ivec3 csg_bounding_min;
-    ivec3 csg_bounding_max;
-    float delta_time;
-    uvec2 window_size;
-    bool enable_radiative_cooling;
-    uint renderer_mode;
-    uint sdf_texture_root;
-};
-
 #define RENDERER_MODE_PBR 0
 #define RENDERER_MODE_ALBEDO 1
 #define RENDERER_MODE_ROUGHNESS 2
@@ -165,18 +72,6 @@ layout(std140, binding = 0) uniform Uniforms
 #define RENDERER_MODE_DEVIATION 7
 #define RENDERER_MODE_TEMPERATURE 8
 #define RENDERER_MODE_RAY_STEPS 9
-
-bool isInBounds(ivec3 position) {
-    return all(greaterThanEqual(position, ivec3(0))) && all(lessThan(position, uSize));
-}
-
-bool isInBoundsInclusive(ivec3 position) {
-    return all(greaterThanEqual(position, ivec3(0))) && all(lessThanEqual(position, uSize));
-}
-
-bool isInBlock(ivec3 local_position) {
-    return all(greaterThanEqual(local_position, ivec3(0))) && all(lessThan(local_position, ivec3(2)));
-}
 
 struct PointLight {
     vec3 position;
@@ -192,6 +87,25 @@ struct SpotLight {
     float inner_angle;
     float outer_angle;
 };
+
+#include "buffers.glsl"
+
+layout(std430, binding = buffer_binding_start + 16) restrict readonly buffer Materials
+{
+    VoxelMaterial uMaterials[];
+};
+
+bool isInBounds(ivec3 position) {
+    return all(greaterThanEqual(position, ivec3(0))) && all(lessThan(position, uSize));
+}
+
+bool isInBoundsInclusive(ivec3 position) {
+    return all(greaterThanEqual(position, ivec3(0))) && all(lessThanEqual(position, uSize));
+}
+
+bool isInBlock(ivec3 local_position) {
+    return all(greaterThanEqual(local_position, ivec3(0))) && all(lessThan(local_position, ivec3(2)));
+}
 
 int newAllocator(uint bit_count) {
     uint allocator = atomicAdd(allocators_bump, 1);
@@ -267,30 +181,7 @@ void voxelChunkFree(ChunkAllocation allocation) {
 #define VOXEL_HEAP_MODE VOXEL_HEAP_MODE_3D_TEXTURE
 #define USE_CHUNKING 1
 
-uniform layout(binding = 0, r16ui) restrict uimage3D voxel_bit_buffer_texture;
-uniform layout(binding = 1, r32ui) restrict uimage3D voxel_chunk_allocations_image;
-//Stores positions as linearized indicies into the flat space of the voxel bit buffer image
-uniform layout(binding = 2, r32ui) restrict uimage3D voxel_chunk_positions_image;
-
-uniform layout(binding = 3, r32ui) restrict uimage3D voxel_temperature_image;
-uniform layout(binding = 4, r8ui) restrict uimage3D voxel_deviation_image;
-
-uniform layout(binding = 10) usampler3D voxel_bit_buffer_sampler;
-uniform layout(binding = 11) usampler3D voxel_chunk_positions_sampler;
-uniform layout(binding = 12) sampler3D voxel_temperature_sampler;
-uniform layout(binding = 13) isampler3D voxel_deviation_sampler;
-
-#if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
-layout(std430, binding = 35) restrict buffer VoxelHeapBitBuffer
-{
-    uint16_t voxel_heap_bit_buffer[];
-};
-
-layout(std430, binding = 36) restrict buffer VoxelChunkPositionsBuffer
-{
-    uint voxel_chunk_positions_buffer[];
-};
-#endif
+#include "samplers.glsl"
 
 uint voxelChunkHeapIndexFromHeapPosition(ivec3 heap_position) {
     ivec3 brickmap_size = imageSize(voxel_bit_buffer_texture) / CHUNK_SIZE;
@@ -408,7 +299,7 @@ uint loadVoxelMaterialHeapPos(ivec3 heap_pos) {
     }
 
     #ifdef DISABLE_CHUNKING
-    return uVoxelMaterials[voxelHeapIndexFromHeapPosition(heap_pos)];
+    return uVoxelMaterials[simulation_read_offset + voxelHeapIndexFromHeapPosition(heap_pos)];
     #endif
 
     #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
@@ -432,7 +323,7 @@ float loadVoxelTemperatureHeapPos(ivec3 heap_pos) {
     }
 
     #ifdef DISABLE_CHUNKING
-    return uVoxelTemperatures[mortonEncode(heap_pos)];
+    return uVoxelTemperatures[simulation_read_offset + mortonEncode(heap_pos)];
     #endif
 
     #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
@@ -456,7 +347,7 @@ int loadVoxelDeviationHeapPos(ivec3 heap_pos) {
     }
 
     #ifdef DISABLE_CHUNKING
-    return out_deviation_buffer[mortonEncode(heap_pos)];
+    return deviation_buffer[simulation_read_offset + mortonEncode(heap_pos)];
     #endif
 
     #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
@@ -481,5 +372,35 @@ void storeVoxel(ivec3 pos, uint material_index) {
     #else
 
     imageStore(voxel_bit_buffer_texture, heap_pos, uvec4(material_index));
+    #endif
+}
+
+void storeVoxelTemperature(ivec3 pos, float temperature) {
+    ivec3 heap_pos = voxelWorldPosToHeapPos(pos);
+
+    #ifdef DISABLE_CHUNKING
+    uVoxelTemperatures[simulation_write_offset + mortonEncode(heap_pos)] = temperature;
+    return;
+    #endif
+
+    #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
+    voxel_chunk_temperature_memory[voxelHeapIndexFromHeapPosition(heap_pos)] = temperature;
+    #else
+
+    #endif
+}
+
+void storeVoxelDeviation(ivec3 pos, int deviation) {
+    ivec3 heap_pos = voxelWorldPosToHeapPos(pos);
+
+    #ifdef DISABLE_CHUNKING
+    deviation_buffer[simulation_write_offset + mortonEncode(heap_pos)] = int8_t(deviation);
+    return;
+    #endif
+
+    #if VOXEL_HEAP_MODE == VOXEL_HEAP_MODE_SSBO
+    deviatio[voxelHeapIndexFromHeapPosition(heap_pos)] = material_index;
+    #else
+
     #endif
 }

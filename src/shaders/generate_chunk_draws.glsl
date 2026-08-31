@@ -10,11 +10,11 @@ const int KERNEL_SIZE = 8;
 
 layout(local_size_x = KERNEL_SIZE, local_size_y = KERNEL_SIZE, local_size_z = KERNEL_SIZE) in;
 
-layout(binding = 40) restrict writeonly buffer OutIndices {
+layout(binding = buffer_binding_start + 9) restrict writeonly buffer OutIndices {
     uint16_t out_indices[];
 };
 
-layout(binding = 41) restrict writeonly buffer OutVertices {
+layout(binding = buffer_binding_start + 10) restrict writeonly buffer OutVertices {
     vec4 out_vertices[];
 };
 
@@ -25,11 +25,11 @@ struct DrawArraysIndirectCommand {
     uint base_instance;
 };
 
-layout(binding = 42) restrict coherent buffer OutDraws {
+layout(binding = buffer_binding_start + 11) restrict coherent buffer OutDraws {
     DrawArraysIndirectCommand out_draws[];
 };
 
-layout(binding = 43) restrict coherent buffer OutBounds {
+layout(binding = buffer_binding_start + 12) coherent buffer SimBounds {
     ivec3 sim_bounds_min;
     ivec3 sim_bounds_max;
 };

@@ -2,16 +2,27 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
+#include "buffers.glsl"
+
+layout(std430, binding = buffer_binding_start + 13) restrict buffer VoxelMaterials
+{
+    uint16_t uVoxelMaterials[];
+};
+
+layout(std430, binding = buffer_binding_start + 14) restrict buffer VoxelTemperature
+{
+    float uVoxelTemperatures[];
+};
+
+layout(std430, binding = buffer_binding_start + 15) restrict buffer DeviationBuffer {
+    int8_t deviation_buffer[];
+};
+
 #include "common.glsl"
 
 const int KERNEL_SIZE = 8;
 
 layout(local_size_x = KERNEL_SIZE, local_size_y = KERNEL_SIZE, local_size_z = KERNEL_SIZE) in;
-
-layout(std430, binding = 2) restrict readonly buffer Materials
-{
-    VoxelMaterial uMaterials[];
-};
 
 layout(std430, binding = 4) restrict readonly buffer InVoxelMaterials
 {

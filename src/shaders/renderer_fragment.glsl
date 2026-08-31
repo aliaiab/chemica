@@ -3,22 +3,25 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
-layout(std430, binding = 1) restrict readonly buffer VoxelMaterials
+#include "buffers.glsl"
+
+layout(std430, binding = buffer_binding_start + 13) restrict buffer VoxelMaterials
 {
     uint16_t uVoxelMaterials[];
 };
 
-layout(std430, binding = 2) restrict readonly buffer VoxelTemperature
+layout(std430, binding = buffer_binding_start + 14) restrict buffer VoxelTemperature
 {
     float uVoxelTemperatures[];
 };
 
-layout(std430, binding = 21) restrict buffer OutDeviationBuffer {
-    int8_t out_deviation_buffer[];
+layout(std430, binding = buffer_binding_start + 15) restrict buffer DeviationBuffer {
+    int8_t deviation_buffer[];
 };
 
 #define DISABLE_CHUNKING
 #include "common.glsl"
+
 #include "pbr.glsl"
 
 layout(location = 0) in Out
@@ -31,22 +34,15 @@ layout(early_fragment_tests) in;
 
 layout(location = 0) out vec4 aColor;
 
-layout(std430, binding = 0) restrict readonly buffer Materials
-{
-    VoxelMaterial uMaterials[];
-};
-
-layout(std430, binding = 23) restrict readonly buffer VoxelMaterialsVisual {
+layout(std430, binding = buffer_binding_start + 17) restrict readonly buffer VoxelMaterialsVisual {
     VoxelMaterialVisual voxel_materials_visual[];
 };
 
-layout(binding = 22) uniform sampler2D environment_fetchVoxel;
-
-layout(std430, binding = 22) restrict readonly buffer PointLights {
+layout(std430, binding = buffer_binding_start + 18) restrict readonly buffer PointLights {
     PointLight point_lights[];
 };
 
-layout(std430, binding = 32) restrict readonly buffer SpotLights {
+layout(std430, binding = buffer_binding_start + 19) restrict readonly buffer SpotLights {
     SpotLight spot_lights[];
 };
 
@@ -171,6 +167,11 @@ vec3 getTemperatureVisColour(float kelvin) {
     }
 }
 
+layout(binding = buffer_binding_start + 12) readonly buffer SimBounds {
+    ivec3 sim_bounds_min;
+    ivec3 sim_bounds_max;
+};
+
 struct RayCastResult {
     uint voxel_index;
     //How far along the ray is the hit
@@ -290,11 +291,6 @@ float raycastVoxels(
 }
 
 int ray_iter_count = 0;
-
-layout(binding = 43) restrict coherent buffer OutBounds {
-    ivec3 sim_bounds_min;
-    ivec3 sim_bounds_max;
-};
 
 float raycastVoxelsOld(
     in uint medium_material,

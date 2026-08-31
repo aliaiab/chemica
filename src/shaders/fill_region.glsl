@@ -2,22 +2,24 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
+#include "buffers.glsl"
+
 const int KERNEL_SIZE = 8;
 
 layout(local_size_x = KERNEL_SIZE, local_size_y = KERNEL_SIZE, local_size_z = KERNEL_SIZE) in;
 
-layout(std430, binding = 4) restrict buffer InVoxelMaterials
+layout(std430, binding = buffer_binding_start + 13) restrict buffer VoxelMaterials
 {
-    uint16_t in_voxel_lattice[];
+    uint16_t uVoxelMaterials[];
 };
 
-layout(std430, binding = 0) restrict buffer TemperatureInput
+layout(std430, binding = buffer_binding_start + 14) restrict buffer VoxelTemperature
 {
-    float in_temperature[];
+    float uVoxelTemperatures[];
 };
 
-layout(std430, binding = 20) restrict buffer InDeviationBuffer {
-    int8_t in_deviation_buffer[];
+layout(std430, binding = buffer_binding_start + 15) restrict buffer DeviationBuffer {
+    int8_t deviation_buffer[];
 };
 
 #include "sdf.glsl"
@@ -64,6 +66,8 @@ void main() {
 
     while (voxel_chunks_allocation[chunk_index].allocation == 0xffffffff) {}
 
+    imageStore(voxel_chunk_positions_image, chunk_pos, uvec4(NULL_HEAP_INDEX));
+
     vec3 position = vec3(position_int) + 0.5;
 
     SDFResult3D field = evaluateSDF(sdf_texture_root, position, vec3(0), vec3(128));
@@ -76,7 +80,7 @@ void main() {
     random.r = clamp(random.r, 0, 1);
 
     if (field.sdf_gradient.x < 0) {
-        in_voxel_lattice[mortonEncode(position_int)] = uint16_t(field.material);
+        storeVoxel(position_int, field.material);
 
         if (true) {
             voxel_chunks_allocation[chunk_index].bit_count = 1;
@@ -123,30 +127,14 @@ void main() {
         //in_temperature[index] = 1000;
         //in_temperature[index] = 0;
         //in_temperature[index] = max(0, 1500 + 1000 * transform_scale * sin(-field.signed_distance * 5));
-        in_temperature[mortonEncode(position_int)] = 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25);
-
-        if (false) {
-            float u = argInTurns(transformed_point.x, transformed_point.z);
-            // float v = argInTurns(transformed_point.x, transformed_point.y);
-            float v = 10 / abs(max(1, transformed_point.y));
-
-            // float v = 1;
-
-            in_temperature[index] = 273 + 200 + 100 * (u * v);
-            // in_temperature[index] = 273 + 200 + 1000 * sin(30 * u);
-            // in_temperature[index] = 273;
-        }
+        storeVoxelTemperature(position_int, 273 + 200 + 400 * cos(transformed_point.x * 0.25) + 400 * sin(transformed_point.y * 0.25));
 
         float position_variation = random.r;
-        in_deviation_buffer[mortonEncode(position_int)] = int8_t(position_variation * 255);
+        //storeVoxelDeviation(position_int, position_variation * 255);
     }
     else {
-        if (false && (any(equal(position_int, csg_bounding_min)) || any(equal(position_int, csg_bounding_max)))) {
-            in_voxel_lattice[index] = uint16_t(1);
-            float position_variation = random.r;
-            in_deviation_buffer[index] = int8_t(position_variation * 255);
-        }
         barrier();
         storeVoxel(position_int, 0);
+        storeVoxelTemperature(position_int, 0);
     }
 }

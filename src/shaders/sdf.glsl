@@ -130,19 +130,19 @@ struct SdfElement3D {
     uint16_t children_count;
 };
 
-layout(std430, binding = 60) restrict readonly buffer SdfElements3D {
+layout(std430, binding = buffer_binding_start + 20) restrict readonly buffer SdfElements3D {
     SdfElement3D sdf_elements_3d[];
 };
 
-layout(std430, binding = 61) restrict readonly buffer SdfElements3DTransforms {
+layout(std430, binding = buffer_binding_start + 21) restrict readonly buffer SdfElements3DTransforms {
     AffineTransform3D sdf_elements_3d_transforms[];
 };
 
-layout(std430, binding = 62) restrict readonly buffer SdfElement3DParamBuffer {
+layout(std430, binding = buffer_binding_start + 22) restrict readonly buffer SdfElement3DParamBuffer {
     float sdf_elements_3d_params[];
 };
 
-layout(std430, binding = 63) restrict readonly buffer SdfElements3DBounds {
+layout(std430, binding = buffer_binding_start + 23) restrict readonly buffer SdfElements3DBounds {
     vec3 sdf_elements_3d_bounds[];
 };
 

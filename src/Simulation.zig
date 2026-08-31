@@ -30,12 +30,16 @@ pub fn init(
     context: *gpu.Context,
     arena: std.mem.Allocator,
     window_size: [2]u32,
+    voxel_materials: std.ArrayList(VoxelMaterial),
+    voxel_materials_visual: std.ArrayList(VoxelMaterialVisual),
 ) !Simulation {
     var sim: Simulation = .{
         .width = 128,
         .height = 128,
         .depth = 128,
         .window_size = window_size,
+        .voxel_materials = voxel_materials,
+        .voxel_materials_visual = voxel_materials_visual,
     };
 
     sim.gpu_sim = try .init(context, sim, arena);
@@ -64,6 +68,8 @@ pub fn update(sim: *Simulation, scene_root_index: u32) void {
         .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
         .renderer_view_type = sim.renderer_view_type,
         .sdf_texture_root = scene_root_index,
+        .simulation_read_offset = 0,
+        .simulation_write_offset = @intCast(sim.gpu_sim.simulation_material_buffer.len / 2),
     };
 
     sim.gpu_sim.update(sim, shader_uniforms);
@@ -93,6 +99,8 @@ pub fn render(
         .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
         .renderer_view_type = sim.renderer_view_type,
         .sdf_texture_root = scene_root_index,
+        .simulation_read_offset = 0,
+        .simulation_write_offset = @intCast(sim.gpu_sim.simulation_material_buffer.len / 2),
     };
 
     sim.gpu_sim.render(

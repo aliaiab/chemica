@@ -82,6 +82,8 @@ pub const ShaderUniforms = extern struct {
     enable_radiative_cooling: u32,
     renderer_view_type: RendererViewType,
     sdf_texture_root: u32 = 0,
+    simulation_read_offset: u32,
+    simulation_write_offset: u32,
 };
 
 pub const RendererViewType = enum(u32) {

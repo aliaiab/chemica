@@ -34,35 +34,37 @@ struct Material {
     uint colour;
 };
 
-layout(binding = 0) readonly restrict buffer Uniforms {
+const uint asym_binding_start = 70;
+
+layout(binding = asym_binding_start) readonly restrict buffer Uniforms {
     mat4 view_projection;
     float time;
 } uniforms;
 
-layout(binding = 1) readonly restrict buffer Draws {
+layout(binding = asym_binding_start + 1) readonly restrict buffer Draws {
     DrawCommand data[];
 } draws;
 
-layout(binding = 2) readonly restrict buffer Transforms {
+layout(binding = asym_binding_start + 2) readonly restrict buffer Transforms {
     AffineTransform3D data[];
 } transforms;
 
-layout(binding = 3) readonly restrict buffer Materials {
+layout(binding = asym_binding_start + 3) readonly restrict buffer Materials {
     Material data[];
 } materials;
 
-layout(binding = 4) readonly restrict buffer Parameters {
+layout(binding = asym_binding_start + 4) readonly restrict buffer Parameters {
     float data[];
 } parameters;
 
-layout(binding = 5) readonly restrict buffer Vertices {
+layout(binding = asym_binding_start + 5) readonly restrict buffer Vertices {
     vec3 data[];
 } vertices;
 
-layout(binding = 6) readonly restrict buffer TransformOffsetsByType {
+layout(binding = asym_binding_start + 6) readonly restrict buffer TransformOffsetsByType {
     uint data[];
 } transform_offsets_by_type;
 
-layout(binding = 7) readonly restrict buffer ParameterOffsetsByType {
+layout(binding = asym_binding_start + 7) readonly restrict buffer ParameterOffsetsByType {
     uint data[];
 } parameter_offsets_by_type;
