@@ -34,7 +34,7 @@ struct Material {
     uint colour;
 };
 
-const uint asym_binding_start = 70;
+const uint asym_binding_start = 16 + 70;
 
 layout(binding = asym_binding_start) readonly restrict buffer Uniforms {
     mat4 view_projection;

@@ -5,7 +5,8 @@
 #include "asym.glsl"
 
 #define SHEETMAP_TEXEL_SAMPLER
-#define SHEETMAP_BINDING_START 20
+#define SHEETMAP_BINDING_START 16 + 80
+#define SHEETMAP_SAMPLER_START 10
 #include "sheetmap.glsl"
 #include "sheetmap_ts_msdf_array.glsl"
 

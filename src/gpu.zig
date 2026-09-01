@@ -250,6 +250,24 @@ pub fn readTextureSliceDescriptorIntoHeap(
     });
 }
 
+///Copies the sampler descriptor into the descriptor heap at offset
+///Returns the offset end (offset + sizeof(descriptor))
+pub fn readTextureSliceSamplerDescriptorIntoHeap(
+    texture: *Texture,
+    slice: TextureSliceDescription,
+    sampler: TextureSamplerDescription,
+    descriptor_heap: *DescriptorHeap,
+    offset: usize,
+) usize {
+    return backendCall(@src(), .{
+        texture,
+        slice,
+        sampler,
+        descriptor_heap,
+        offset,
+    });
+}
+
 ///Copies the memory descriptor into the descriptor heap at offset
 ///Returns the offset end (offset + sizeof(descriptor))
 pub fn readSliceBytesDescriptorIntoHeap(
@@ -393,19 +411,6 @@ pub fn setStateScissor(
     });
 }
 
-///Sets the push data for the current pipeline
-pub fn setStatePushData(
-    command_buffer: *CommandBuffer,
-    comptime T: type,
-    push_data: T,
-) void {
-    return backendCall(@src(), .{
-        command_buffer,
-        T,
-        push_data,
-    });
-}
-
 ///Place a synchronisation barrier
 pub fn barrier(
     command_buffer: *CommandBuffer,
@@ -463,8 +468,7 @@ pub fn dispatchCompute(
 }
 
 pub const DispatchRasterDrawOptions = struct {
-    command_stride: usize,
-    command_offset: usize,
+    command_stride: usize = @sizeOf(RasterDrawCommand),
 };
 
 ///Dispatch a set of raster draw commands
@@ -825,6 +829,16 @@ pub const TextureDescription = struct {
         array_2d,
         array_cube,
         cube,
+    };
+};
+
+pub const TextureSamplerDescription = struct {
+    filter_minification: Filter,
+    filter_magnification: Filter,
+
+    pub const Filter = enum {
+        nearest,
+        linear,
     };
 };
 

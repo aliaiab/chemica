@@ -85,7 +85,6 @@ pub const Context = struct {
     asym_uniforms_buffer: [][2][4][4]f32,
     gizmo_draw_buffer: []asym.geo.DrawCommand,
     gizmo_vertex_buffer: []u8,
-    gizmo_uniform_buffer: u32,
     asym_transforms_buffer: []asym.geo.AffineTransform3D,
     asym_materials_buffer: []asym.geo.Material,
     asym_parameters_buffer: []f32,
@@ -206,9 +205,7 @@ pub const Context = struct {
             .gpu,
         );
 
-        const sheetmap_binding = 20;
-
-        _ = shtmap; // autofix
+        const sheetmap_binding = 80;
 
         _ = gpu.readSliceDescriptorIntoHeap(
             context.asym_grapheme_buffers,
@@ -284,13 +281,13 @@ pub const Context = struct {
         );
 
         _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_materials_buffer,
+            context.asym_transforms_buffer,
             context.descriptor_heap,
             (asym_binding_start + 2) * @sizeOf(gpu.TextureDescriptor),
         );
 
         _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_transforms_buffer,
+            context.asym_materials_buffer,
             context.descriptor_heap,
             (asym_binding_start + 3) * @sizeOf(gpu.TextureDescriptor),
         );
@@ -443,6 +440,12 @@ pub const Context = struct {
             },
         );
 
+        _ = gpu.readDescriptorTextureIntoHeap(
+            texture_handle,
+            context.sampler_heap,
+            10 * @sizeOf(gpu.TextureDescriptor),
+        );
+
         const commands = gpu.queueStartCommandRecording(context.graphics_queue);
 
         for (sdfs, glyph_metrics, 0..) |*maybe_data, *metrics, glyph_index| {
@@ -456,6 +459,7 @@ pub const Context = struct {
             if (data.pixels.len == 0) {
                 continue;
             }
+
             metrics.width = @floatFromInt(data.metrics.width);
             metrics.height = @floatFromInt(data.metrics.height);
             metrics.advance = @floatCast(data.metrics.advance);
@@ -489,7 +493,7 @@ pub const Context = struct {
             .gpu,
         );
 
-        const sheetmap_binding = 20;
+        const sheetmap_binding = 80;
 
         _ = gpu.readSliceDescriptorIntoHeap(
             context.asym_glyph_metrics_buffer,
@@ -713,10 +717,9 @@ pub const Context = struct {
 
                 gpu.dispatchRasterDraw(
                     command_buffer,
-                    @as([*]gpu.RasterDrawCommand, @ptrCast(context.gizmo_draw_buffer.ptr))[0 .. context.gizmo_draw_buffer.len / 2],
+                    @as([*]gpu.RasterDrawCommand, @ptrCast(context.gizmo_draw_buffer[0..].ptr))[0..draw_buffer_offset],
                     .{
                         .command_stride = @sizeOf(asym.geo.DrawCommand),
-                        .command_offset = draw_buffer_offset * @sizeOf(asym.geo.DrawCommand),
                     },
                 );
             }
@@ -1465,10 +1468,7 @@ pub const Simulation = struct {
                     .first_instance = 0,
                 },
             },
-            .{
-                .command_stride = @sizeOf(gpu.RasterDrawCommand),
-                .command_offset = 0,
-            },
+            .{},
         );
 
         gpu.setStatePipeline(sim.command_buffer, sim.shaders.depth_prepass_shader);
@@ -1492,10 +1492,7 @@ pub const Simulation = struct {
         gpu.dispatchRasterDraw(
             sim.command_buffer,
             sim.simulation_draws_buffer,
-            .{
-                .command_stride = @sizeOf(gpu.RasterDrawCommand),
-                .command_offset = 0,
-            },
+            .{},
         );
 
         gpu.setStatePipeline(sim.command_buffer, sim.shaders.gizmo_shader);
@@ -1505,10 +1502,7 @@ pub const Simulation = struct {
         gpu.dispatchRasterDraw(
             sim.command_buffer,
             sim.simulation_draws_buffer,
-            .{
-                .command_stride = @sizeOf(gpu.RasterDrawCommand),
-                .command_offset = 0,
-            },
+            .{},
         );
 
         gpu.setStatePolygonMode(sim.command_buffer, .fill);
@@ -1550,10 +1544,7 @@ pub const Simulation = struct {
                     .first_instance = 0,
                 },
             },
-            .{
-                .command_stride = @sizeOf(gpu.RasterDrawCommand),
-                .command_offset = 0,
-            },
+            .{},
         );
 
         if (render_texture) |_| {

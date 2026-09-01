@@ -3,7 +3,7 @@ struct TexelSamplerMsdfArray {
     float pixel_range;
 };
 
-const uint sheetmap_msdf_array_binding = sheetmap_binding_end + 1;
+const uint sheetmap_msdf_array_binding = sheetmap_sampler_binding_start;
 
 layout(binding = sheetmap_msdf_array_binding) uniform sampler2DArray sheetmap_msdf_array;
 
@@ -87,7 +87,7 @@ vec4 sheetmapSampleGlyphTexel(
     if (opacity == 0) {}
 
     colour = mix(bgColor, fgColor, opacity);
-    
+
     //helium, and
     //There's
 

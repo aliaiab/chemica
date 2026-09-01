@@ -91,7 +91,6 @@ pub fn memAlloc(
 ) std.mem.Allocator.Error![]u8 {
     switch (memory_type) {
         .gpu => {
-
             //const underlying_size: u32 = @intCast(size + (alignment.toByteUnits() - 1));
             const underlying_size: u32 = @intCast(size);
             std.debug.assert(size != 0);
@@ -750,7 +749,7 @@ pub fn setStatePipeline(
 
     var heap_start: usize = heap_mapping.heap_offset;
 
-    for (heap_mapping.binding_first..heap_mapping.binding_count) |binding_index| {
+    for (heap_mapping.binding_first..heap_mapping.binding_first + heap_mapping.binding_count) |binding_index| {
         var descriptor_ptr_many: [*]Descriptor = @ptrCast(@alignCast(cmd_buffer_data.descriptor_heap));
         descriptor_ptr_many += heap_start;
         const descriptor_ptr = &descriptor_ptr_many[0];
@@ -770,7 +769,7 @@ pub fn setStatePipeline(
 
     heap_start = heap_mapping.sampler_heap_offset;
 
-    for (heap_mapping.sampler_binding_first..heap_mapping.sampler_binding_count) |binding_index| {
+    for (heap_mapping.sampler_binding_first..heap_mapping.sampler_binding_first + heap_mapping.sampler_binding_count) |binding_index| {
         var descriptor_ptr_many: [*]Descriptor = @ptrCast(@alignCast(cmd_buffer_data.sampler_descriptor_heap));
         descriptor_ptr_many += heap_start;
         const descriptor_ptr = &descriptor_ptr_many[0];
@@ -1033,17 +1032,6 @@ pub fn setStateScissor(
     }
 }
 
-pub fn setStatePushData(
-    command_buffer: *CommandBuffer,
-    comptime T: type,
-    push_data: T,
-) void {
-    _ = command_buffer; // autofix
-    _ = push_data; // autofix
-
-    @panic("");
-}
-
 pub fn barrier(
     command_buffer: *CommandBuffer,
     ///No need to supply stages to opengl barriers
@@ -1233,7 +1221,7 @@ pub fn dispatchRasterDraw(
         gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, buffer_view.api_handle);
         gl.MultiDrawArraysIndirect(
             draw_mode,
-            buffer_view.offset + options.command_offset,
+            buffer_view.offset,
             @intCast(commands.len),
             @intCast(options.command_stride),
         );

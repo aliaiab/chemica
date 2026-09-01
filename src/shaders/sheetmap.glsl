@@ -2,9 +2,15 @@
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
 #ifdef SHEETMAP_BINDING_START
-const uint sheetmap_sheetmaps_binding = SHEETMAP_BINDING_START;
+const uint sheetmap_binding_start = SHEETMAP_BINDING_START;
 #else
-const uint sheetmap_sheetmaps_binding = 0;
+const uint sheetmap_binding_start = 0;
+#endif
+
+#ifdef SHEETMAP_SAMPLER_BINDING_START
+const uint sheetmap_sampler_binding_start = SHEETMAP_SAMPLER_BINDING_START;
+#else
+const uint sheetmap_sampler_binding_start = 10;
 #endif
 
 #ifdef SHEETMAP_BINDING_STRIDE
@@ -12,11 +18,6 @@ const uint sheetmap_binding_stride = SHEETMAP_BINDING_STRIDE;
 #else
 const uint sheetmap_binding_stride = 1;
 #endif
-
-const uint sheetmap_quadrats_binding = sheetmap_sheetmaps_binding + sheetmap_binding_stride;
-const uint sheetmap_lines_binding = sheetmap_quadrats_binding + sheetmap_binding_stride;
-
-const uint sheetmap_binding_end = sheetmap_lines_binding;
 
 struct Sheetmap {
     uint quadrat_buffer_begin;
@@ -52,7 +53,7 @@ struct CombinedSheetmapSampler {
     SheetmapSampler sheetmap_sampler;
 };
 
-layout(binding = sheetmap_sheetmaps_binding) readonly restrict buffer Sheetmaps {
+layout(binding = sheetmap_binding_start) readonly restrict buffer Sheetmaps {
     Sheetmap data[];
 } sheetmaps;
 
@@ -61,7 +62,7 @@ struct SheetmapQuadrat {
     uint grapheme_slice;
 };
 
-layout(binding = sheetmap_quadrats_binding) readonly restrict buffer SheetmapQuadrats {
+layout(binding = sheetmap_binding_start + 1) readonly restrict buffer SheetmapQuadrats {
     SheetmapQuadrat data[];
 } sheetmap_quadrats;
 
@@ -77,7 +78,7 @@ struct GraphemeLine {
     uint8_t bins_length;
 };
 
-layout(binding = sheetmap_quadrats_binding + 1) readonly restrict buffer GlyphLines {
+layout(binding = sheetmap_binding_start + 2) readonly restrict buffer GlyphLines {
     GraphemeLine data[];
 } grapheme_lines;
 
@@ -89,7 +90,7 @@ struct GlyphKerning {
     float16_t kern;
 };
 
-layout(binding = sheetmap_quadrats_binding + 2) readonly restrict buffer GlyphInstances {
+layout(binding = sheetmap_binding_start + 3) readonly restrict buffer GlyphInstances {
     Glyph data[];
 } glyphs;
 
@@ -97,7 +98,7 @@ struct GraphemeMaterial {
     uint colour;
 };
 
-layout(binding = sheetmap_quadrats_binding + 3) readonly restrict buffer GraphemeMaterialBuffers {
+layout(binding = sheetmap_binding_start + 4) readonly restrict buffer GraphemeMaterialBuffers {
     GraphemeMaterial data[];
 } grapheme_materials;
 
@@ -118,7 +119,7 @@ struct SheetmapTypeface {
     float line_gap;
 };
 
-layout(binding = sheetmap_quadrats_binding + 4) readonly restrict buffer GlyphMetrics {
+layout(binding = sheetmap_binding_start + 5) readonly restrict buffer GlyphMetrics {
     GlyphMetric data[];
 } glyph_metrics;
 
