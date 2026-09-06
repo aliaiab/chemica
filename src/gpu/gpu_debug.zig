@@ -1,7 +1,52 @@
-//! Empty or stub implementation of the gpu api, copy this to start implementing the api for a backend or layer
-//! To implement a layer, remove all the panics and set all the return types to void (layers don't return anything)
+//! The debugging layer for validation and command buffer replay
 
-var context: struct {} = .{};
+var context: struct {
+    arena: std.mem.Allocator = undefined,
+    allocations: std.ArrayList(Allocation) = .empty,
+    command_buffers: std.AutoArrayHashMapUnmanaged(*CommandBuffer, CommandBufferData) = .empty,
+} = .{};
+
+const Allocation = struct {
+    base: usize,
+    size: usize,
+    memory_type: gpu.mem.Allocator.MemoryType,
+};
+
+const CommandBufferData = struct {
+    descriptor_heap: ?*DescriptorHeap = null,
+    sampler_descriptor_heap: ?*DescriptorHeap = null,
+    pipeline: ?*Pipeline = null,
+    depth_stencil_state: ?DepthStencilState = null,
+    blend_state: ?BlendState = null,
+    viewport: ?[4]f32 = null,
+    scissor: ?[4]u32 = null,
+    commands: std.ArrayList(Command) = .empty,
+    command_timestamps: std.ArrayList(*gpu.debug.TimestampQuery) = .empty,
+    obtain_profile: bool = true,
+
+    pub const Command = union(enum) {
+        set_state_descriptor_heap: struct { descriptor_heap: *DescriptorHeap },
+        set_state_pipeline: struct { pipeline: *Pipeline },
+        set_state_depth_stencil: struct { state: DepthStencilState },
+        set_state_blend: struct { state: BlendState },
+        set_state_viewport: struct { viewport: [4]f32 },
+        set_state_scissor: struct { scissor: [4]u32 },
+    };
+};
+
+pub fn memAlloc(
+    size: usize,
+    alignment: std.mem.Alignment,
+    memory_type: mem.Allocator.MemoryType,
+) std.mem.Allocator.Error!void {
+    _ = size; // autofix
+    _ = alignment; // autofix
+    _ = memory_type; // autofix
+}
+
+pub fn memFree(memory: []u8) void {
+    _ = memory; // autofix
+}
 
 pub fn memCopy(
     command_buffer: *CommandBuffer,
@@ -11,7 +56,6 @@ pub fn memCopy(
     _ = command_buffer; // autofix
     _ = dest_gpu; // autofix
     _ = src_gpu; // autofix
-    @panic("");
 }
 
 pub fn selectDevice(
@@ -20,19 +64,16 @@ pub fn selectDevice(
 ) DeviceSelectionError!*Device {
     _ = arena; // autofix
     _ = options; // autofix
-    @panic("");
 }
 
 pub fn freeDevice(device: Device) void {
     _ = device; // autofix
-    @panic("");
 }
 
 pub fn setStateDevice(
     device: *Device,
 ) void {
     _ = device; // autofix
-    @panic("");
 }
 
 pub fn createRasterVertexPipeline(
@@ -45,7 +86,6 @@ pub fn createRasterVertexPipeline(
     _ = fragment_ir; // autofix
     _ = descriptor_mapping; // autofix
     _ = description; // autofix
-    @panic("");
 }
 
 pub fn createRasterMeshPipeline(
@@ -58,8 +98,6 @@ pub fn createRasterMeshPipeline(
     _ = fragment_ir; // autofix
     _ = descriptor_mapping; // autofix
     _ = description; // autofix
-
-    @panic("");
 }
 
 pub fn createComputePipeline(
@@ -68,15 +106,12 @@ pub fn createComputePipeline(
 ) *Pipeline {
     _ = compute_ir; // autofix
     _ = descriptor_mapping; // autofix
-
-    @panic("");
 }
 
 pub fn freePipeline(
     pipeline: *Pipeline,
 ) void {
     _ = pipeline; // autofix
-    @panic("");
 }
 
 pub fn getPipelineMachineCode(
@@ -85,8 +120,6 @@ pub fn getPipelineMachineCode(
 ) []const u8 {
     _ = pipeline; // autofix
     _ = allocator; // autofix
-
-    @panic("");
 }
 
 pub fn setPipelineMachineCodeEntries(
@@ -95,8 +128,6 @@ pub fn setPipelineMachineCodeEntries(
 ) void {
     _ = entries; // autofix
     _ = data; // autofix
-
-    @panic("");
 }
 
 pub fn getPipelineMachineCodeEntries(
@@ -107,8 +138,6 @@ pub fn getPipelineMachineCodeEntries(
     _ = allocator; // autofix
     _ = entries; // autofix
     _ = data; // autofix
-
-    @panic("");
 }
 
 pub fn textureMemoryDescription(
@@ -116,7 +145,6 @@ pub fn textureMemoryDescription(
 ) TextureMemoryDescription {
     _ = description; // autofix
 
-    @panic("");
 }
 
 pub fn createTexture(
@@ -126,7 +154,6 @@ pub fn createTexture(
     _ = description; // autofix
     _ = memory; // autofix
 
-    @panic("");
 }
 
 pub fn readDescriptorTexture(
@@ -134,7 +161,6 @@ pub fn readDescriptorTexture(
 ) TextureDescriptor {
     _ = texture; // autofix
 
-    @panic("");
 }
 
 pub fn readDescriptorTextureIntoHeap(
@@ -146,15 +172,12 @@ pub fn readDescriptorTextureIntoHeap(
     _ = heap; // autofix
     _ = offset; // autofix
 
-    @panic("");
 }
 
 pub fn createDescriptorHeap(
     size: usize,
 ) !*DescriptorHeap {
     _ = size; // autofix
-
-    @panic("");
 }
 
 pub fn setStateDescriptorHeap(
@@ -163,18 +186,6 @@ pub fn setStateDescriptorHeap(
 ) void {
     _ = command_buffer; // autofix
     _ = heap; // autofix
-
-    @panic("");
-}
-
-pub fn setStateSamplerDescriptorHeap(
-    command_buffer: *CommandBuffer,
-    heap: *DescriptorHeap,
-) void {
-    _ = command_buffer; // autofix
-    _ = heap; // autofix
-
-    @panic("");
 }
 
 pub fn setStatePipeline(
@@ -183,8 +194,6 @@ pub fn setStatePipeline(
 ) void {
     _ = command_buffer; // autofix
     _ = pipeline; // autofix
-
-    @panic("");
 }
 
 pub fn setStateDepthStencil(
@@ -193,8 +202,6 @@ pub fn setStateDepthStencil(
 ) void {
     _ = command_buffer; // autofix
     _ = state; // autofix
-
-    @panic("");
 }
 
 pub fn setStateBlend(
@@ -203,24 +210,22 @@ pub fn setStateBlend(
 ) void {
     _ = command_buffer; // autofix
     _ = state; // autofix
-
-    @panic("");
 }
 
 pub fn setStateViewport(
+    command_buffer: *CommandBuffer,
     viewport: [4]f32,
 ) void {
+    _ = command_buffer; // autofix
     _ = viewport; // autofix
-
-    @panic("");
 }
 
 pub fn setStateScissor(
+    command_buffer: *CommandBuffer,
     scissor: [4]u32,
 ) void {
+    _ = command_buffer; // autofix
     _ = scissor; // autofix
-
-    @panic("");
 }
 
 pub fn barrier(
@@ -233,62 +238,72 @@ pub fn barrier(
     _ = before; // autofix
     _ = after; // autofix
     _ = hazards; // autofix
-
-    @panic("");
 }
 
 pub fn signalAfter(
     command_buffer: *CommandBuffer,
 ) void {
     _ = command_buffer; // autofix
-
-    @panic("");
 }
 
 pub fn signalBefore(
     command_buffer: *CommandBuffer,
 ) void {
     _ = command_buffer; // autofix
-
-    @panic("");
 }
 
 pub fn rasterPassBegin(
     command_buffer: *CommandBuffer,
     description: RasterPassDescription,
 ) void {
-    _ = command_buffer; // autofix
     _ = description; // autofix
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    const timestamp = gpu.placeCommandTimestampQuery(command_buffer);
 
-    @panic("");
+    command_buffer_data.command_timestamps.append(
+        context.arena,
+        timestamp,
+    ) catch @panic("oom");
 }
 
 pub fn rasterPassEnd(
     command_buffer: *CommandBuffer,
 ) void {
-    _ = command_buffer; // autofix
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    const timestamp = gpu.placeCommandTimestampQuery(command_buffer);
 
-    @panic("");
+    command_buffer_data.command_timestamps.append(
+        context.arena,
+        timestamp,
+    ) catch @panic("oom");
 }
 
 pub fn dispatchCompute(
     command_buffer: *CommandBuffer,
     commands: []const ComputeCommand,
 ) void {
-    _ = command_buffer; // autofix
     _ = commands; // autofix
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    const timestamp = gpu.placeCommandTimestampQuery(command_buffer);
 
-    @panic("");
+    command_buffer_data.command_timestamps.append(
+        context.arena,
+        timestamp,
+    ) catch @panic("oom");
 }
 
 pub fn dispatchRasterDraw(
     command_buffer: *CommandBuffer,
     commands: []const RasterDrawCommand,
 ) void {
-    _ = command_buffer; // autofix
     _ = commands; // autofix
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    const timestamp = gpu.placeCommandTimestampQuery(command_buffer);
 
-    @panic("");
+    command_buffer_data.command_timestamps.append(
+        context.arena,
+        timestamp,
+    ) catch @panic("oom");
 }
 
 pub fn dispatchRasterDrawMeshes(
@@ -297,14 +312,12 @@ pub fn dispatchRasterDrawMeshes(
 ) void {
     _ = command_buffer; // autofix
     _ = commands; // autofix
-    @panic("");
 }
 
 pub fn dispatchTraceRays(
     command_buffer: *CommandBuffer,
 ) void {
     _ = command_buffer; // autofix
-    @panic("");
 }
 
 pub fn buildAccelerationStructures(
@@ -313,7 +326,6 @@ pub fn buildAccelerationStructures(
 ) void {
     _ = command_buffer; // autofix
     _ = description; // autofix
-    @panic("");
 }
 
 pub fn createQueue(
@@ -322,36 +334,38 @@ pub fn createQueue(
 ) *Queue {
     _ = device; // autofix
     _ = capabilities; // autofix
-    @panic("");
 }
 
-pub fn destroyQueue() void {
-    @panic("");
-}
+pub fn destroyQueue() void {}
 
 pub fn queueStartCommandRecording(
-    queue: Queue,
-) *CommandBuffer {
+    queue: *Queue,
+    return_value: *CommandBuffer,
+) void {
+    _ = return_value; // autofix
     _ = queue; // autofix
-    @panic("");
+    const cmd_buffer = std.heap.smp_allocator.create(CommandBufferData) catch @panic("oom");
+    cmd_buffer.* = .{
+        .commands = .empty,
+    };
+
+    return @ptrCast(cmd_buffer);
 }
 
 pub fn queueEndCommandRecording(
     command_buffer: *CommandBuffer,
 ) void {
     _ = command_buffer; // autofix
-    @panic("");
+
 }
 
 pub fn queueSubmit(
-    queue: Queue,
+    queue: *Queue,
     command_buffers: []*CommandBuffer,
-    semaphores: []*Semaphore,
 ) void {
-    _ = semaphores; // autofix
     _ = queue; // autofix
     _ = command_buffers; // autofix
-    @panic("");
+
 }
 
 test {

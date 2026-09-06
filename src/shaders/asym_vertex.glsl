@@ -54,20 +54,20 @@ void main() {
     switch (draw.primitive_type) {
         case PrimitiveType_circle:
         {
-            vertex_position = vec3(triangle_vertices[gl_VertexID], 0);
+            vertex_position = vec3(triangle_vertices[gl_VertexIndex], 0);
             break;
         }
         case PrimitiveType_box:
         {
-            vertex_position = vec3(quad_vertices[quad_indices[gl_VertexID]], 0);
+            vertex_position = vec3(quad_vertices[quad_indices[gl_VertexIndex]], 0);
             break;
         }
         case PrimitiveType_text:
         {
-            vertex_position = vec3(quad_vertices[quad_indices[gl_VertexID]], 0);
-            vertex_out.uv = quad_uv[quad_indices[gl_VertexID]];
+            vertex_position = vec3(quad_vertices[quad_indices[gl_VertexIndex]], 0);
+            vertex_out.uv = quad_uv[quad_indices[gl_VertexIndex]];
 
-            uint parameters_begin = type_parameter_offset + draw.parameters_begin + gl_InstanceID * 2;
+            uint parameters_begin = type_parameter_offset + draw.parameters_begin + gl_InstanceIndex * 2;
 
             float bounds_x = parameters.data[parameters_begin];
             float bounds_y = parameters.data[parameters_begin + 1];
@@ -79,9 +79,9 @@ void main() {
         }
         default:
         {
-            vertex_position = vec3(triangle_vertices[gl_VertexID], 0);
-            vertex_position = vec3(quad_vertices[quad_indices[gl_VertexID]], 0);
-            vertex_out.uv = quad_uv[quad_indices[gl_VertexID]];
+            vertex_position = vec3(triangle_vertices[gl_VertexIndex], 0);
+            vertex_position = vec3(quad_vertices[quad_indices[gl_VertexIndex]], 0);
+            vertex_out.uv = quad_uv[quad_indices[gl_VertexIndex]];
 
             break;
         }
@@ -90,10 +90,10 @@ void main() {
     //vertex_out.position = vec3(uniforms.view_projection * vec4(vertex_position, 1.0));
 
     vertex_out.position = vec3(vec4(vertex_position, 1.0));
-    vertex_out.instance_id = gl_InstanceID;
+    vertex_out.instance_id = gl_InstanceIndex;
 
-    Material material = materials.data[draw.materials_begin + gl_InstanceID];
-    AffineTransform3D transform = transforms.data[transform_offsets_by_type.data[draw.primitive_type] + draw.transforms_begin + gl_InstanceID];
+    Material material = materials.data[draw.materials_begin + gl_InstanceIndex];
+    AffineTransform3D transform = transforms.data[transform_offsets_by_type.data[draw.primitive_type] + draw.transforms_begin + gl_InstanceIndex];
 
     vertex_out.colour = unpackUnorm4x8(material.colour);
 

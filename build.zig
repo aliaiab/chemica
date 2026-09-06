@@ -83,6 +83,7 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("zigimg", zigimg.module("zigimg"));
     main_module.addImport("lib", root_module);
     main_module.addImport("msdf-zig", mist_dep.module("msdf-zig"));
+    main_module.linkSystemLibrary("vulkan", .{ .weak = true });
 
     // Get the (lazy) path to vk.xml:
     const registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml");
@@ -149,6 +150,7 @@ pub fn build(b: *std.Build) !void {
         .files = &.{
             "ImGuizmo.cpp",
             "guizmo.cpp",
+            "gpu/c.cpp",
             "stb_image.c",
             "imgui_style.cpp",
         },
@@ -200,30 +202,38 @@ pub fn build(b: *std.Build) !void {
     glsl_compiler.root_module.addImport("glslang", glslang_zig.module("glslang-zig"));
     glsl_compiler.root_module.addImport("glslang_c", glslang_zig.module("c_interface"));
 
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/thermal_compute.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/renderer_vertex.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/renderer_fragment.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/fill_region.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/grain_simulation.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/env_map_fragment.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/env_map_vertex.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/generate_chunk_draws.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/gizmo_shader_vertex.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/gizmo_shader_fragment.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/depth_prepass_fragment.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/sdf_renderer_fragment.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .compute, "src/shaders/sdf_texture_compute.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .vertex, "src/shaders/asym_vertex.glsl");
-    _ = compileShader(b, glsl_compiler, root_module, target, optimize, exe, .fragment, "src/shaders/asym_fragment.glsl");
+    const shader_start_module = b.createModule(.{
+        .root_source_file = b.path("src/shaders/start.zig"),
+    });
+
+    shader_start_module.addImport("lib", root_module);
+
+    const renderer_shader_module = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/thermal_compute.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/fill_region.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/grain_simulation.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/generate_chunk_draws.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/env_map_renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/env_map_renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/gizmo_renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/gizmo_renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/asym_renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/asym_renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/sdf_renderer.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/sdf_texture.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/depth_prepass.zig");
+
+    exe.root_module.addImport("renderer_shader", renderer_shader_module);
 
     exe.is_linking_libcpp = true;
 
     b.installArtifact(exe);
 }
 
-fn compileShader(
+fn compileZigShader(
     b: *std.Build,
-    glsl_compiler: *std.Build.Step.Compile,
+    start_module: *std.Build.Module,
     shader_lib_module: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     mode: std.builtin.OptimizeMode,
@@ -234,151 +244,65 @@ fn compileShader(
         compute,
     },
     source: []const u8,
-) void {
+) *std.Build.Module {
     const source_basename = std.fs.path.stem(source);
 
     const output_path = std.mem.concat(b.allocator, u8, &.{
         source_basename,
+        "_",
+        @tagName(shader_type),
         ".spv",
     }) catch @panic("");
+    const options = b.addOptions();
 
-    const type_string: []const u8 = switch (shader_type) {
-        .vertex => "vert",
-        .fragment => "frag",
-        .compute => "comp",
-    };
-    _ = type_string; // autofix
+    options.addOption(@TypeOf(shader_type), "shader_module_type", shader_type);
 
-    const output_file = b.addWriteFile(output_path, &.{});
-    var output_file_path = output_file.add(output_path, &.{});
-
-    var compile_shader_step: *std.Build.Step = undefined;
-
-    if (std.mem.containsAtLeast(u8, source, 1, ".zig")) {
-        const compile_zig_shader = b.addObject(.{
-            .name = source_basename,
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(source),
-                .optimize = mode,
-                .target = b.resolveTargetQuery(.{
-                    .cpu_arch = .spirv64,
-                    .cpu_model = .{ .explicit = &std.Target.spirv.cpu.generic },
-                    .cpu_features_add = std.Target.spirv.featureSet(&[_]std.Target.spirv.Feature{
-                        .v1_4,
-                        .image_query,
-                    }),
-                    .os_tag = .opengl,
-                    .ofmt = .spirv,
+    const compile_zig_shader = b.addObject(.{
+        .name = std.fs.path.stem(output_path),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(source),
+            .optimize = mode,
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .spirv64,
+                .cpu_model = .{ .explicit = &std.Target.spirv.cpu.generic },
+                .cpu_features_add = std.Target.spirv.featureSet(&[_]std.Target.spirv.Feature{
+                    .v1_4,
+                    .image_query,
                 }),
-                .imports = &.{
-                    .{ .name = "lib", .module = shader_lib_module },
-                },
+                .os_tag = .vulkan,
+                .ofmt = .spirv,
             }),
-            .use_llvm = false,
-            .use_lld = false,
-        });
-        compile_shader_step = &compile_zig_shader.step;
-        const zig_shader_spv = b.createModule(.{ .root_source_file = compile_zig_shader.getEmittedBin() });
-        _ = zig_shader_spv; // autofix
-
-        output_file_path = compile_zig_shader.getEmittedBin();
-
-        const spirv_cross_cmd = b.addSystemCommand(&.{
-            "spirv-cross",
-            "--force-temporary",
-            "--version",
-            "330",
-            "--no-es",
-            "--extension",
-            "GL_EXT_shader_image_load_store",
-            "--extension",
-            "GL_ARB_shader_storage_buffer_object",
-            "--disable-storage-image-qualifier-deduction",
-        });
-
-        if (false) {
-            const spirv_opt_cmd = b.addSystemCommand(&.{
-                "spirv-opt",
-            });
-            spirv_opt_cmd.addFileArg2(output_file_path, .{});
-            spirv_opt_cmd.addArg("-o");
-
-            const temp_file = b.addTempFiles();
-
-            const opt_output_path = temp_file.add(output_path, &.{});
-
-            spirv_opt_cmd.addFileArg2(opt_output_path, .{});
-
-            output_file_path = opt_output_path;
-
-            spirv_cross_cmd.step.dependOn(&spirv_opt_cmd.step);
-        }
-
-        spirv_cross_cmd.addFileArg2(output_file_path, .{});
-        spirv_cross_cmd.addFileInput(output_file_path);
-
-        const path = std.mem.concat(b.allocator, u8, &.{ source_basename, ".glsl" }) catch @panic("");
-        const install_step = b.addInstallFile(spirv_cross_cmd.captureStdOut(.{}), path);
-
-        exe_step.step.dependOn(&install_step.step);
-    } else {
-        const compile_shader = b.addRunArtifact(glsl_compiler);
-
-        compile_shader.addArg(@tagName(mode));
-        compile_shader.addArg(@tagName(shader_type));
-        compile_shader.addArg(source);
-        compile_shader.addFileArg2(output_file_path, .{});
-        compile_shader.addFileInput(b.path(source));
-        compile_shader_step = &compile_shader.step;
-
-        b.install_tls.step.dependOn(&compile_shader.step);
-
-        exe_step.step.dependOn(&compile_shader.step);
-    }
-
-    const get_path_step = b.addSystemCommand(&.{
-        "echo",
+            .imports = &.{
+                .{ .name = "lib", .module = shader_lib_module },
+                .{ .name = "shader_start", .module = start_module },
+                .{ .name = "shader_options", .module = options.createModule() },
+            },
+        }),
+        .use_llvm = false,
+        .use_lld = false,
     });
+    var compile_shader_step: *std.Build.Step = undefined;
+    compile_shader_step = &compile_zig_shader.step;
+    const output_file_path = compile_zig_shader.getEmittedBin();
 
-    get_path_step.addFileArg(output_file_path);
-    const generated_file = get_path_step.captureStdOut(.{});
-
-    const install_path = b.addInstallFile(generated_file, source_basename);
+    const val = b.addSystemCommand(&.{"spirv-val"});
+    val.addFileArg(output_file_path);
 
     exe_step.root_module.addImport(output_path, b.createModule(.{
         .root_source_file = output_file_path,
     }));
+    //exe_step.step.dependOn(&val.step);
 
-    exe_step.step.dependOn(&install_path.step);
-
-    if (target.result.os.tag == .macos) {
-        const msl_output_path = std.mem.concat(b.allocator, u8, &.{
-            source_basename,
-            ".msl",
-        }) catch @panic("");
-
-        const msl_output_path_install = b.pathJoin(&.{ "zig-out/bin/", msl_output_path });
-
-        const convert_to_msl = b.addSystemCommand(&.{
-            "spirv-cross",
-        });
-
-        convert_to_msl.addFileArg(output_file_path);
-
-        convert_to_msl.addArgs(&.{
-            "--msl",
-            "--msl-version",
-            "20300",
-            "--output",
-            msl_output_path_install,
-        });
-        convert_to_msl.step.dependOn(compile_shader_step);
-
-        convert_to_msl.addFileInput(b.path(output_path));
-        exe_step.step.dependOn(&convert_to_msl.step);
-    }
-    b.getInstallStep().dependOn(&install_path.step);
-    b.default_step.dependOn(&install_path.step);
+    return b.createModule(.{
+        .root_source_file = b.path(source),
+        .optimize = mode,
+        .target = target,
+        .imports = &.{
+            .{ .name = "lib", .module = shader_lib_module },
+            .{ .name = "shader_start", .module = start_module },
+            .{ .name = "shader_options", .module = options.createModule() },
+        },
+    });
 }
 
 fn addIncludePathsToTranslateC(translate_c: *std.Build.Step.TranslateC, lib: *std.Build.Step.Compile) void {

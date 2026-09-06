@@ -65,6 +65,9 @@ pub fn main(init: std.process.Init) !void {
     var gpu_context = try gpu.Context.init(arena, window, init.io);
     defer gpu_context.deinit();
 
+    var gpu_start_timestamp: ?*gpu.debug.TimestampQuery = null;
+    var gpu_end_timestamp: ?*gpu.debug.TimestampQuery = null;
+
     //imgui.getStyle()._MainScale = content_scale;
     //imgui.cimgui.ImGuiStyle_ScaleAllSizes(imgui.getStyle(), content_scale);
     //imgui.cimgui.ImGui_ScaleWindowsInViewport(@ptrCast(imgui.cimgui.ImGui_GetMainViewport()), 1 / content_scale);
@@ -154,15 +157,6 @@ pub fn main(init: std.process.Init) !void {
         voxel_materials_visual,
     );
     defer simulation.deinit(arena);
-
-    const gpu_graphics_queue = gpu.createQueue(gpu_context.gpu_device, .{
-        .raster = true,
-        .compute = true,
-        .transfer = true,
-    });
-    defer gpu.destroyQueue(gpu_graphics_queue);
-
-    gpu_context.graphics_queue = gpu_graphics_queue;
 
     const gpu_swapchain = gpu.createSwapchain(window);
     defer gpu.destroySwapchain(gpu_swapchain);
@@ -349,6 +343,29 @@ pub fn main(init: std.process.Init) !void {
         gpu_context.swapchain_texture = swapchain_texture;
         gpu_context.beginFrame();
         simulation.gpu_sim.command_buffer = gpu_context.command_buffer;
+
+        var gpu_start_time: ?u64 = if (gpu_start_timestamp) |timestamp| gpu.queryTimestampValue(timestamp) orelse null else null;
+        var gpu_end_time: ?u64 = if (gpu_end_timestamp) |timestamp| gpu.queryTimestampValue(timestamp) orelse null else null;
+
+        while (gpu_start_time == null and gpu_start_timestamp != null) {
+            gpu_start_time = gpu.queryTimestampValue(gpu_start_timestamp.?);
+        }
+
+        while (gpu_end_time == null and gpu_end_timestamp != null) {
+            gpu_end_time = gpu.queryTimestampValue(gpu_end_timestamp.?);
+        }
+
+        if (gpu_start_time != null) {
+            gpu_start_timestamp = null;
+        }
+
+        if (gpu_end_time != null) {
+            gpu_end_timestamp = null;
+        }
+
+        if (gpu_start_timestamp == null or gpu.queryTimestampValue(gpu_start_timestamp.?) != null) {
+            gpu_start_timestamp = gpu.placeCommandTimestampQuery(gpu_context.command_buffer);
+        }
 
         var enable_transform_gizmo: bool = false;
 
@@ -948,6 +965,10 @@ pub fn main(init: std.process.Init) !void {
 
                 imgui.text("Performance Stats", .{});
 
+                imgui.text("GPU Time {}\n", .{
+                    @as(f64, @floatFromInt((gpu_end_time orelse 0) -| (gpu_start_time orelse 0))) / @as(f64, @floatFromInt(std.time.ns_per_ms)),
+                });
+
                 imgui.separator(.{});
 
                 const total_primary_rays: f32 = @floatFromInt(simulation.ray_stats.total_primary_rays);
@@ -1478,8 +1499,12 @@ pub fn main(init: std.process.Init) !void {
 
         gpu_context.endFrame();
 
+        if (gpu_end_timestamp == null or gpu.queryTimestampValue(gpu_start_timestamp.?) != null) {
+            gpu_end_timestamp = gpu.placeCommandTimestampQuery(gpu_context.command_buffer);
+        }
+
         gpu.queueSubmit(
-            gpu_graphics_queue,
+            .{},
             &.{gpu_context.command_buffer},
             &.{},
         );

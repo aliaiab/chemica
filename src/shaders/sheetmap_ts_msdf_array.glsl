@@ -42,7 +42,7 @@ float median(float r, float g, float b) {
 }
 
 vec4 sheetmapSampleGlyphTexelLod(
-    CombinedSheetmapSampler sampler,
+    CombinedSheetmapSampler sheetmap_sampler,
     Glyph glyph,
     vec2 uv,
     uint lod
@@ -51,7 +51,7 @@ vec4 sheetmapSampleGlyphTexelLod(
 }
 
 vec4 sheetmapSampleGlyphTexel(
-    CombinedSheetmapSampler sampler,
+    CombinedSheetmapSampler sheetmap_sampler,
     Glyph glyph,
     vec2 uv
 ) {
@@ -81,8 +81,8 @@ vec4 sheetmapSampleGlyphTexel(
     float sd = median(msd.r, msd.g, msd.b);
     float screenPxDistance = screenPxRange(texCoord) * (sd - 0.5);
     float opacity = clamp(screenPxDistance + 0.5, 0.0, 1.0);
-    vec4 bgColor = unpackUnorm4x8(sampler.sheetmap_sampler.background_colour);
-    vec4 fgColor = unpackUnorm4x8(sampler.sheetmap_sampler.foreground_colour);
+    vec4 bgColor = unpackUnorm4x8(sheetmap_sampler.sheetmap_sampler.background_colour);
+    vec4 fgColor = unpackUnorm4x8(sheetmap_sampler.sheetmap_sampler.foreground_colour);
 
     if (opacity == 0) {}
 

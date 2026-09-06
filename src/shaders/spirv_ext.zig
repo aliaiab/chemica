@@ -1,3 +1,79 @@
+pub const SamplerHeap = struct {
+    samplers_2d: [*]addrspace(.constant) const extern struct {
+        data: @SpirvType(.{ .runtime_array = USampler2D }),
+    },
+
+    pub inline fn imageSize(
+        self: SamplerHeap,
+        index: Index,
+    ) @Vector(3, u32) {
+        _ = self; // autofix
+        _ = index; // autofix
+        return @splat(0);
+    }
+
+    pub inline fn imageSample(
+        self: SamplerHeap,
+        index: Index,
+        uv: @Vector(2, f32),
+    ) @Vector(4, f32) {
+        _ = uv; // autofix
+        _ = self; // autofix
+        _ = index; // autofix
+        return @splat(0);
+    }
+
+    pub inline fn imageFetch(
+        self: SamplerHeap,
+        index: Index,
+        location: @Vector(3, i32),
+    ) @Vector(4, f32) {
+        _ = location; // autofix
+        _ = self; // autofix
+        _ = index; // autofix
+        return @splat(0);
+    }
+
+    pub inline fn imageStore(
+        self: SamplerHeap,
+        index: Index,
+        location: @Vector(3, i32),
+        texel: @Vector(4, f32),
+    ) void {
+        _ = texel; // autofix
+        _ = location; // autofix
+        _ = self; // autofix
+        _ = index; // autofix
+    }
+
+    pub const Index = enum(u32) {
+        null = std.math.maxInt(u32),
+        _,
+    };
+
+    pub const USampler2D = @SpirvType(.{ .sampled_image = UImage2DSampled });
+
+    pub const UImage2DSampled = @SpirvType(.{ .image = .{
+        .usage = .{ .sampled = u32 },
+        .format = .unknown,
+        .dim = .@"2d",
+        .depth = .not_depth,
+        .arrayed = false,
+        .multisampled = false,
+        .access = .unknown,
+    } });
+
+    pub const UImage2D = @SpirvType(.{ .image = .{
+        .usage = .{ .storage = u32 },
+        .format = .rgba8_unorm,
+        .dim = .@"2d",
+        .depth = .not_depth,
+        .arrayed = false,
+        .multisampled = false,
+        .access = .unknown,
+    } });
+};
+
 /// The type of `sampled_image` must be a pointer to a SPIR-V sampled image.
 pub inline fn imageSampleImplicitLod(
     sampled_image: anytype,
@@ -175,23 +251,110 @@ fn ImageCoordinate(Image: type, Element: type) type {
     if (dim == 1) return Element else return @Vector(dim, Element);
 }
 
-///Takes a struct type containing spirv resources and computes bindings for them automatically
-pub fn externBindings(comptime T: type) T {
-    var desc: T = undefined;
-
-    inline for (std.meta.fieldNames(T), std.meta.fieldTypes(T), 0..) |field_name, field_type, binding| {
-        @field(desc, field_name) = @extern(field_type, .{
-            .name = field_name,
-            .decoration = .{
-                .descriptor = .{
-                    .binding = binding,
-                    .set = 0,
-                },
-            },
-        });
-    }
-
-    return desc;
+pub inline fn atomicAdd(
+    ptr: *addrspace(.physical_storage_buffer) u32,
+    operand: u32,
+    scope: std.spirv.Scope,
+    semantics: std.spirv.MemorySemantics,
+) u32 {
+    return asm volatile (
+        \\%res = OpAtomicIAdd %Type %pointer %scope %sem %operand
+        : [res] "" (-> u32),
+        : [Type] "t" (u32),
+          [pointer] "" (ptr),
+          [scope] "" (@as(u32, @backingInt(scope))),
+          [sem] "" (@as(u32, @bitCast(semantics))),
+          [operand] "" (operand),
+    );
 }
+
+pub inline fn atomicMin(
+    comptime T: type,
+    ptr: *addrspace(.physical_storage_buffer) T,
+    operand: T,
+    scope: std.spirv.Scope,
+    semantics: std.spirv.MemorySemantics,
+) T {
+    return asm volatile (
+        \\%res = OpAtomicSMin %Type %pointer %scope %sem %operand
+        : [res] "" (-> T),
+        : [Type] "t" (T),
+          [pointer] "" (ptr),
+          [scope] "" (@as(u32, @backingInt(scope))),
+          [sem] "" (@as(u32, @bitCast(semantics))),
+          [operand] "" (operand),
+    );
+}
+
+pub inline fn atomicMax(
+    comptime T: type,
+    ptr: *addrspace(.physical_storage_buffer) T,
+    operand: T,
+    scope: std.spirv.Scope,
+    semantics: std.spirv.MemorySemantics,
+) T {
+    return asm volatile (
+        \\%res = OpAtomicSMax %Type %pointer %scope %sem %operand
+        : [res] "" (-> T),
+        : [Type] "t" (T),
+          [pointer] "" (ptr),
+          [scope] "" (@as(u32, @backingInt(scope))),
+          [sem] "" (@as(u32, @bitCast(semantics))),
+          [operand] "" (operand),
+    );
+}
+
+pub fn GpuPointer(comptime T: type) type {
+    return extern struct {
+        address: u64,
+
+        pub const ChildType = T;
+
+        pub fn toPointer(self: @This()) *addrspace(address_space) T {
+            return @ptrFromInt(self.address);
+        }
+
+        pub fn toPointerMulti(self: @This()) [*]addrspace(address_space) T {
+            return @ptrFromInt(self.address);
+        }
+
+        pub fn toConstPointer(self: @This()) *addrspace(address_space) const T {
+            return @ptrFromInt(self.address);
+        }
+
+        pub fn toConstPointerMulti(self: @This()) [*]addrspace(address_space) const T {
+            return @ptrFromInt(self.address);
+        }
+
+        const address_space: std.builtin.AddressSpace = switch (@import("builtin").cpu.arch) {
+            .spirv32, .spirv64 => .physical_storage_buffer,
+            else => std.builtin.AddressSpace.generic,
+        };
+    };
+}
+
+pub fn GpuSlice(comptime T: type) type {
+    return extern struct {
+        address: u64,
+        length: u64,
+
+        pub fn toPointer(self: @This()) []addrspace(address_space) T {
+            return GpuPointer(T).toPointerMulti(.{ .address = self.address })[0..self.length];
+        }
+
+        pub fn toConstPointer(self: @This()) []addrspace(address_space) const T {
+            return GpuPointer(T).toPointerMulti(.{ .address = self.address })[0..self.length];
+        }
+
+        const address_space: std.builtin.AddressSpace = switch (@import("builtin").cpu.arch) {
+            .spirv32, .spirv64 => .physical_storage_buffer,
+            else => std.builtin.AddressSpace.generic,
+        };
+
+        pub const ChildType = T;
+    };
+}
+
+pub const draw_index = @extern(*addrspace(.input) u32, .{ .name = "draw_index" });
 
 const std = @import("std");

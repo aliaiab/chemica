@@ -144,7 +144,7 @@ pub const Context = struct {
 
         const env_map_des: gpu.TextureDescription = .{
             .dimensions = .{ @intCast(env_map_width), @intCast(env_map_height), 1 },
-            .format = .rgb8_unorm24,
+            .format = .rgba8_unorm32,
         };
 
         const env_map_mem_desc = gpu.textureMemoryDescription(env_map_des);
@@ -155,9 +155,15 @@ pub const Context = struct {
             env_map_mem_desc.memory_type,
         );
 
-        @memcpy(tex_memory, env_map_data[0..@intCast(env_map_width * env_map_height * @sizeOf([3]u8))]);
+        const upload_cmds = gpu.queueStartCommandRecording(.{});
+        defer gpu.queueSubmit(.{}, &.{upload_cmds}, &.{});
 
         const env_map_texture = gpu.createTexture(env_map_des, tex_memory);
+
+        gpu.memCopyToTexture(upload_cmds, env_map_texture, .{
+            .dimensions = env_map_des.dimensions,
+            .format = .rgba8_unorm32,
+        }, tex_memory, env_map_data[0..@intCast(env_map_width * env_map_height * @sizeOf([3]u8))]);
 
         const descriptor_heap_memory_info = gpu.descriptorHeapMemoryDescription(@sizeOf(gpu.TextureDescriptor) * 2048);
         const sampler_descriptor_heap_memory_info = gpu.descriptorHeapMemoryDescription(@sizeOf(gpu.TextureDescriptor) * 2048);
@@ -167,14 +173,12 @@ pub const Context = struct {
             descriptor_heap_memory_info.size,
             descriptor_heap_memory_info.memory_type,
         );
-        @memset(descriptor_heap_mem, 0);
 
         const sampler_descriptor_heap_mem = try context.gpu_gpa.alloc(
             u8,
             sampler_descriptor_heap_memory_info.size,
             sampler_descriptor_heap_memory_info.memory_type,
         );
-        @memset(sampler_descriptor_heap_mem, 0);
 
         context.descriptor_heap = try gpu.createDescriptorHeap(descriptor_heap_mem);
         context.sampler_heap = try gpu.createDescriptorHeap(sampler_descriptor_heap_mem);
@@ -205,110 +209,21 @@ pub const Context = struct {
             .gpu,
         );
 
-        const sheetmap_binding = 80;
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_grapheme_buffers,
-            context.descriptor_heap,
-            sheetmap_binding * @sizeOf(gpu.TextureDescriptor),
-        );
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_grapheme_pigeon_hole_buffers,
-            context.descriptor_heap,
-            (sheetmap_binding + 1) * @sizeOf(gpu.TextureDescriptor),
-        );
-        _ = gpu.readSliceDescriptorIntoHeap(
-            &.{},
-            context.descriptor_heap,
-            (sheetmap_binding + 2) * @sizeOf(gpu.TextureDescriptor),
-        );
-        _ = gpu.readSliceDescriptorIntoHeap(
-            &.{},
-            context.descriptor_heap,
-            (sheetmap_binding + 3) * @sizeOf(gpu.TextureDescriptor),
-        );
-        _ = gpu.readSliceDescriptorIntoHeap(
-            &.{},
-            context.descriptor_heap,
-            (sheetmap_binding + 4) * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        const desc_mapping: gpu.DescriptorHeapMapping = .{
-            .binding_count = 80,
-            .binding_first = 16,
-            .heap_offset = 0,
-            .heap_array_stride = @sizeOf(gpu.TextureDescriptor),
-            .sampler_binding_count = 16,
-            .sampler_binding_first = 0,
-            .sampler_heap_offset = 0,
-            .sampler_heap_array_stride = @sizeOf(gpu.TextureDescriptor),
-        };
-        context.descriptor_mapping = desc_mapping;
-
         try context.loadRasterVertexPipeline(
             arena,
-            "env_map_vertex.spv",
-            "env_map_fragment.spv",
+            "env_map_renderer_vertex.spv",
+            "env_map_renderer_fragment.spv",
             &context.shaders.env_map_shader,
-            desc_mapping,
         );
 
         try context.loadRasterVertexPipeline(
             arena,
-            "asym_vertex.spv",
-            "asym_fragment.spv",
+            "asym_renderer_vertex.spv",
+            "asym_renderer_fragment.spv",
             &context.shaders.gizmo_shader,
-            desc_mapping,
         );
-
-        try imgui.impl.opengl3.init(.{});
-        try imgui.impl.glfw.initForOpenGL(window, .{});
 
         context.watcher_thread = try std.Thread.spawn(.{}, watcherThread, .{context.shaders_watcher});
-
-        const asym_binding_start = 70;
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_uniforms_buffer,
-            context.descriptor_heap,
-            asym_binding_start * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.gizmo_draw_buffer,
-            context.descriptor_heap,
-            (asym_binding_start + 1) * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_transforms_buffer,
-            context.descriptor_heap,
-            (asym_binding_start + 2) * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_materials_buffer,
-            context.descriptor_heap,
-            (asym_binding_start + 3) * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_parameters_buffer,
-            context.descriptor_heap,
-            (asym_binding_start + 4) * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.gizmo_vertex_buffer,
-            context.descriptor_heap,
-            (asym_binding_start + 5) * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_parameter_offsets_by_type_buffer,
-            context.descriptor_heap,
-            (asym_binding_start + 6) * @sizeOf(gpu.TextureDescriptor),
-        );
 
         return context;
     }
@@ -321,7 +236,7 @@ pub const Context = struct {
     pub fn beginFrame(
         context: *Context,
     ) void {
-        context.command_buffer = gpu.queueStartCommandRecording(context.graphics_queue);
+        context.command_buffer = gpu.queueStartCommandRecording(.{});
 
         const command_buffer = context.command_buffer;
 
@@ -340,10 +255,7 @@ pub const Context = struct {
             },
         });
 
-        gpu.setStateDescriptorHeap(command_buffer, context.descriptor_heap);
         gpu.setStateSamplerDescriptorHeap(command_buffer, context.sampler_heap);
-
-        imgui.impl.opengl3.newFrame();
 
         const framebuffer_size = context.window.getFramebufferSize();
 
@@ -436,6 +348,7 @@ pub const Context = struct {
         const texture_handle, const texture_mem = try context.gpu_gpa.allocTexture(
             .{
                 .dimensions = .{ max_width, max_height, @intCast(typeface.codepoints_to_glyph.count()) },
+                .format = .rgba8_unorm32,
                 .type = .array_2d,
             },
         );
@@ -446,7 +359,7 @@ pub const Context = struct {
             10 * @sizeOf(gpu.TextureDescriptor),
         );
 
-        const commands = gpu.queueStartCommandRecording(context.graphics_queue);
+        const commands = gpu.queueStartCommandRecording(.{});
 
         for (sdfs, glyph_metrics, 0..) |*maybe_data, *metrics, glyph_index| {
             if (maybe_data.* == null) {
@@ -481,6 +394,7 @@ pub const Context = struct {
                         data.metrics.height,
                         1,
                     },
+                    .format = .rgba8_unorm32,
                 },
                 texture_mem,
                 data.pixels,
@@ -493,14 +407,6 @@ pub const Context = struct {
             .gpu,
         );
 
-        const sheetmap_binding = 80;
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            context.asym_glyph_metrics_buffer,
-            context.descriptor_heap,
-            (sheetmap_binding + 5) * @sizeOf(gpu.TextureDescriptor),
-        );
-
         gpu.mem.copy(
             commands,
             @import("lib").shaders.common.asym.GlyphMetric,
@@ -510,7 +416,7 @@ pub const Context = struct {
 
         gpu.queueEndCommandRecording(commands);
         gpu.queueSubmit(
-            context.graphics_queue,
+            .{},
             &.{commands},
             &.{},
         );
@@ -717,6 +623,7 @@ pub const Context = struct {
 
                 gpu.dispatchRasterDraw(
                     command_buffer,
+                    &.{},
                     @as([*]gpu.RasterDrawCommand, @ptrCast(context.gizmo_draw_buffer[0..].ptr))[0..draw_buffer_offset],
                     .{
                         .command_stride = @sizeOf(asym.geo.DrawCommand),
@@ -732,15 +639,20 @@ pub const Context = struct {
         comptime vertex_ir_path: []const u8,
         comptime fragment_ir_path: []const u8,
         pipeline: **gpu.Pipeline,
-        descriptor_mapping: gpu.DescriptorHeapMapping,
     ) !void {
         _ = context; // autofix
         _ = arena; // autofix
         pipeline.* = gpu.createRasterVertexPipeline(
             @embedFile(vertex_ir_path),
             @embedFile(fragment_ir_path),
-            descriptor_mapping,
-            .{},
+            .{
+                .color_targets = &.{.{
+                    .format = .rgba8_unorm32,
+                    .write_mask = 0xff,
+                }},
+                .depth_format = .depth_stencil_u24_u8,
+                .stencil_format = .depth_stencil_u24_u8,
+            },
         );
     }
 
@@ -749,13 +661,11 @@ pub const Context = struct {
         arena: std.mem.Allocator,
         comptime compute_path: []const u8,
         pipeline: **gpu.Pipeline,
-        descriptor_mapping: gpu.DescriptorHeapMapping,
     ) !void {
         _ = context; // autofix
         _ = arena; // autofix
         pipeline.* = gpu.createComputePipeline(
             @embedFile(compute_path),
-            descriptor_mapping,
         );
     }
 };
@@ -806,6 +716,9 @@ pub const Simulation = struct {
     voxel_heap_bit_buffer: []u32 = undefined,
     voxel_positions_buffer: []u32 = undefined,
 
+    simulation_state: *@import("lib").shaders.common.SimulationState = undefined,
+    simulation_rendering_state: *@import("lib").shaders.common.SimulationRenderingState = undefined,
+
     scene_thumbnails: std.StringHashMapUnmanaged(?*Texture) = .empty,
     scene_2d_texture: ?*Texture = null,
     scene_2d_texture_width: u32 = 0,
@@ -847,54 +760,46 @@ pub const Simulation = struct {
             "renderer_vertex.spv",
             "renderer_fragment.spv",
             &gpu_sim.shaders.renderer_program,
-            context.descriptor_mapping,
         );
 
         try context.loadComputePipeline(
             arena,
-            "thermal_compute.spv",
+            "thermal_compute_compute.spv",
             &gpu_sim.shaders.thermal_shader,
-            context.descriptor_mapping,
         );
         try context.loadComputePipeline(
             arena,
-            "grain_simulation.spv",
+            "grain_simulation_compute.spv",
             &gpu_sim.shaders.grain_simulation_shader,
-            context.descriptor_mapping,
         );
         gpu_sim.shaders.simulation_shader = gpu_sim.shaders.grain_simulation_shader;
         try context.loadComputePipeline(
             arena,
-            "fill_region.spv",
+            "fill_region_compute.spv",
             &gpu_sim.shaders.fill_region_shader,
-            context.descriptor_mapping,
         );
         try context.loadComputePipeline(
             arena,
-            "generate_chunk_draws.spv",
+            "generate_chunk_draws_compute.spv",
             &gpu_sim.shaders.generate_chunk_draws,
-            context.descriptor_mapping,
         );
         try context.loadComputePipeline(
             arena,
             "sdf_texture_compute.spv",
             &gpu_sim.shaders.sdf_texture_compute,
-            context.descriptor_mapping,
         );
         try context.loadRasterVertexPipeline(
             arena,
-            "gizmo_shader_vertex.spv",
-            "gizmo_shader_fragment.spv",
+            "gizmo_renderer_vertex.spv",
+            "gizmo_renderer_fragment.spv",
             &gpu_sim.shaders.gizmo_shader,
-            context.descriptor_mapping,
         );
 
         try context.loadRasterVertexPipeline(
             arena,
-            "gizmo_shader_vertex.spv",
+            "gizmo_renderer_vertex.spv",
             "depth_prepass_fragment.spv",
             &gpu_sim.shaders.depth_prepass_shader,
-            context.descriptor_mapping,
         );
 
         try context.loadRasterVertexPipeline(
@@ -902,7 +807,6 @@ pub const Simulation = struct {
             "renderer_vertex.spv",
             "depth_prepass_fragment.spv",
             &gpu_sim.shaders.bounds_depth_prepass_shader,
-            context.descriptor_mapping,
         );
 
         try context.loadRasterVertexPipeline(
@@ -910,7 +814,6 @@ pub const Simulation = struct {
             "renderer_vertex.spv",
             "sdf_renderer_fragment.spv",
             &gpu_sim.shaders.raymarched_sdf_shader,
-            context.descriptor_mapping,
         );
 
         gpu_sim.scene_2d_texture, _ = try context.gpu_gpa.allocTexture(.{
@@ -944,9 +847,12 @@ pub const Simulation = struct {
         gpu_sim.simulation_bounds_buffer = try context.gpu_gpa.alloc([4]u32, 2, .gpu);
         gpu_sim.ray_stats_buffer = try context.gpu_gpa.create(RayStats, .gpu);
 
-        const upload_cmds = gpu.queueStartCommandRecording(context.graphics_queue);
+        gpu_sim.simulation_state = try context.gpu_gpa.create(@import("lib").shaders.common.SimulationState, .gpu);
+        gpu_sim.simulation_rendering_state = try context.gpu_gpa.create(@import("lib").shaders.common.SimulationRenderingState, .gpu);
+
+        const upload_cmds = gpu.queueStartCommandRecording(.{});
         defer gpu.queueSubmit(
-            context.graphics_queue,
+            .{},
             &.{upload_cmds},
             &.{},
         );
@@ -983,6 +889,7 @@ pub const Simulation = struct {
             .{
                 .dimensions = @splat(16 * brick_map_width),
                 .mode = .read_write,
+                .format = .r16_u16,
             },
             context.sampler_heap,
             0 * @sizeOf(gpu.TextureDescriptor),
@@ -993,6 +900,7 @@ pub const Simulation = struct {
             .{
                 .dimensions = @splat(brick_map_width),
                 .mode = .read_write,
+                .format = .r32_u32,
             },
             context.sampler_heap,
             1 * @sizeOf(gpu.TextureDescriptor),
@@ -1003,6 +911,7 @@ pub const Simulation = struct {
             .{
                 .dimensions = @splat(brick_map_width),
                 .mode = .read_write,
+                .format = .r16_u16,
             },
             context.sampler_heap,
             2 * @sizeOf(gpu.TextureDescriptor),
@@ -1018,145 +927,6 @@ pub const Simulation = struct {
             gpu_sim.voxel_chunk_positions_texture,
             context.sampler_heap,
             6 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.uniform_buffer,
-            context.descriptor_heap,
-            0 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_pallete_counters_buffer,
-            context.descriptor_heap,
-            1 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_temperature_memory_buffer,
-            context.descriptor_heap,
-            2 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_allocator_buffer,
-            context.descriptor_heap,
-            3 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_allocator_bins_buffer,
-            context.descriptor_heap,
-            4 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_allocator_buffer,
-            context.descriptor_heap,
-            5 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_heap_bit_buffer,
-            context.descriptor_heap,
-            6 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_positions_buffer,
-            context.descriptor_heap,
-            7 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_pallete_memory_buffer,
-            context.descriptor_heap,
-            8 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.simulation_vertex_buffer,
-            context.descriptor_heap,
-            10 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.simulation_draws_buffer,
-            context.descriptor_heap,
-            11 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.simulation_bounds_buffer,
-            context.descriptor_heap,
-            12 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.simulation_material_buffer,
-            context.descriptor_heap,
-            13 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.simulation_temperature_buffer,
-            context.descriptor_heap,
-            14 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.simulation_deviation_buffer,
-            context.descriptor_heap,
-            15 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_materials_buffer,
-            context.descriptor_heap,
-            16 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.voxel_materials_visual_buffer,
-            context.descriptor_heap,
-            17 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.point_light_buffer,
-            context.descriptor_heap,
-            18 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        //spot lights
-        _ = gpu.readSliceDescriptorIntoHeap(
-            &.{},
-            context.descriptor_heap,
-            19 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.sdf_elements_3d_buffer,
-            context.descriptor_heap,
-            20 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.sdf_elements_3d_transforms_buffer,
-            context.descriptor_heap,
-            21 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.sdf_elements_3d_params_buffer,
-            context.descriptor_heap,
-            22 * @sizeOf(gpu.TextureDescriptor),
-        );
-
-        _ = gpu.readSliceDescriptorIntoHeap(
-            gpu_sim.sdf_elements_3d_bounds_buffer,
-            context.descriptor_heap,
-            23 * @sizeOf(gpu.TextureDescriptor),
         );
 
         const voxel_allocator_bins: VoxelAllocatorBins = .{
@@ -1271,6 +1041,7 @@ pub const Simulation = struct {
 
             gpu.dispatchCompute(
                 gpu_sim.command_buffer,
+                &.{},
                 &.{
                     .{
                         .workgroup_count_x = sim.width / 8,
@@ -1306,6 +1077,9 @@ pub const Simulation = struct {
             gpu.dispatchCompute(
                 gpu_sim.command_buffer,
                 &.{
+                    gpu_sim.simulation_state,
+                },
+                &.{
                     .{
                         .workgroup_count_x = sim.width / 8,
                         .workgroup_count_y = sim.height / 8,
@@ -1336,6 +1110,7 @@ pub const Simulation = struct {
             gpu.setStatePipeline(gpu_sim.command_buffer, gpu_sim.shaders.grain_simulation_shader);
             gpu.dispatchCompute(
                 gpu_sim.command_buffer,
+                &.{},
                 &.{
                     .{
                         .workgroup_count_x = sim.width / 8,
@@ -1372,6 +1147,7 @@ pub const Simulation = struct {
 
         gpu.dispatchCompute(
             gpu_sim.command_buffer,
+            &.{},
             &.{
                 .{
                     .workgroup_count_x = (sim.width / chunk_size) / 8,
@@ -1460,6 +1236,7 @@ pub const Simulation = struct {
 
         gpu.dispatchRasterDraw(
             sim.command_buffer,
+            &.{},
             &.{
                 .{
                     .count = 36,
@@ -1491,6 +1268,11 @@ pub const Simulation = struct {
 
         gpu.dispatchRasterDraw(
             sim.command_buffer,
+            &.{
+                sim.vertex_buffer.ptr,
+                sim.simulation_state,
+                sim.simulation_rendering_state,
+            },
             sim.simulation_draws_buffer,
             .{},
         );
@@ -1501,6 +1283,7 @@ pub const Simulation = struct {
 
         gpu.dispatchRasterDraw(
             sim.command_buffer,
+            &.{},
             sim.simulation_draws_buffer,
             .{},
         );
@@ -1536,6 +1319,7 @@ pub const Simulation = struct {
 
         gpu.dispatchRasterDraw(
             sim.command_buffer,
+            &.{},
             &.{
                 .{
                     .count = 36,
@@ -1562,7 +1346,6 @@ pub const Simulation = struct {
     ) !?*Texture {
         sim.csg_dirty = true;
 
-        gpu.setStateDescriptorHeap(gpu_sim.command_buffer, context.descriptor_heap);
         gpu.setStateSamplerDescriptorHeap(gpu_sim.command_buffer, context.sampler_heap);
 
         gpu.mem.copy(
@@ -1652,7 +1435,7 @@ pub const Simulation = struct {
         const dispatch_width = try std.math.divCeil(u32, width, 8);
         const dispatch_height = try std.math.divCeil(u32, height, 8);
 
-        gpu.dispatchCompute(gpu_sim.command_buffer, &.{
+        gpu.dispatchCompute(gpu_sim.command_buffer, &.{}, &.{
             .{
                 .workgroup_count_x = dispatch_width,
                 .workgroup_count_y = dispatch_height,
@@ -1699,6 +1482,8 @@ const VoxelChunksAllocation = extern struct {
     allocation: u32,
     bit_count: u32,
 };
+
+const renderer_shader = @import("renderer_shader");
 
 const SdfElement3D = @import("Simulation.zig").SdfElement3D;
 

@@ -90,6 +90,10 @@ struct SpotLight {
 
 #include "buffers.glsl"
 
+layout(push_constant) uniform PushData {
+    uint64_t ptr;
+} push_data;
+
 layout(std430, binding = buffer_binding_start + 16) restrict readonly buffer Materials
 {
     VoxelMaterial uMaterials[];

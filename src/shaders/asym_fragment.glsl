@@ -6,7 +6,7 @@
 
 #define SHEETMAP_TEXEL_SAMPLER
 #define SHEETMAP_BINDING_START 16 + 80
-#define SHEETMAP_SAMPLER_START 10
+#define SHEETMAP_SAMPLER_BINDING_START 10
 #include "sheetmap.glsl"
 #include "sheetmap_ts_msdf_array.glsl"
 
@@ -48,7 +48,7 @@ void main() {
 
             sheetmap_sampler.typeface = 0;
             sheetmap_sampler.background_colour = packUnorm4x8(vec4(1, 1, 1, 1));
-            sheetmap_sampler.foreground_colour = packUnorm4x8(vec4(0, 0, 0, 0));
+            sheetmap_sampler.foreground_colour = packUnorm4x8(vec4(0, 0, 0, 1));
 
             colour = sheetmapSampleTexel(CombinedSheetmapSampler(sheetmaps.data[vertex_in.instance_id], sheetmap_sampler), uv);
 

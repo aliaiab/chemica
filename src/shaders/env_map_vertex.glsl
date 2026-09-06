@@ -45,7 +45,7 @@ vec3 vertex_positions[36] = vec3[36](
     );
 
 void main() {
-    localPos = (vertex_positions[gl_VertexID] - vec3(0.5)) * 1000;
+    localPos = (vertex_positions[gl_VertexIndex] - vec3(0.5)) * 1000;
 
     mat4 rot_view = mat4(mat3(uView));
 

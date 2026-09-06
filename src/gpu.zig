@@ -2,7 +2,7 @@
 pub fn selectDevice(
     options: DeviceSelectionOptions,
     arena: std.mem.Allocator,
-) DeviceSelectionError!*Device {
+) !*Device {
     return backendCall(@src(), .{
         options,
         arena,
@@ -83,20 +83,11 @@ pub fn memClearTexture(
     dest_gpu: []u8,
     src_gpu: []const u8,
 ) void {
-    _ = command_buffer; // autofix
-    _ = dest_texture; // autofix
-    _ = dest_gpu; // autofix
-    _ = src_gpu; // autofix
-}
-
-///Sets the function level debug information
-pub fn setFunctionDebugInfo(
-    src: std.lang.SourceLocation,
-    debug_info: debug.Info,
-) void {
     return backendCall(@src(), .{
-        src,
-        debug_info,
+        command_buffer,
+        dest_texture,
+        dest_gpu,
+        src_gpu,
     });
 }
 
@@ -111,13 +102,11 @@ pub fn setStateDevice(
 pub fn createRasterVertexPipeline(
     vertex_ir: []const u8,
     fragment_ir: []const u8,
-    descriptor_mapping: DescriptorHeapMapping,
     description: RasterPipelineDescription,
 ) *Pipeline {
     return backendCall(@src(), .{
         vertex_ir,
         fragment_ir,
-        descriptor_mapping,
         description,
     });
 }
@@ -126,13 +115,11 @@ pub fn createRasterVertexPipeline(
 pub fn createRasterMeshPipeline(
     mesh_ir: []const u8,
     fragment_ir: []const u8,
-    descriptor_mapping: DescriptorHeapMapping,
     description: RasterPipelineDescription,
 ) *Pipeline {
     return backendCall(@src(), .{
         mesh_ir,
         fragment_ir,
-        descriptor_mapping,
         description,
     });
 }
@@ -140,11 +127,9 @@ pub fn createRasterMeshPipeline(
 ///Create a compute pipeline
 pub fn createComputePipeline(
     compute_ir: []const u8,
-    descriptor_mapping: DescriptorHeapMapping,
 ) *Pipeline {
     return backendCall(@src(), .{
         compute_ir,
-        descriptor_mapping,
     });
 }
 
@@ -268,38 +253,6 @@ pub fn readTextureSliceSamplerDescriptorIntoHeap(
     });
 }
 
-///Copies the memory descriptor into the descriptor heap at offset
-///Returns the offset end (offset + sizeof(descriptor))
-pub fn readSliceBytesDescriptorIntoHeap(
-    memory: []const u8,
-    descriptor_heap: *DescriptorHeap,
-    offset: usize,
-) usize {
-    return backendCall(@src(), .{
-        memory,
-        descriptor_heap,
-        offset,
-    });
-}
-
-pub fn readSliceDescriptorIntoHeap(
-    memory: anytype,
-    descriptor_heap: *DescriptorHeap,
-    offset: usize,
-) usize {
-    return readSliceBytesDescriptorIntoHeap(
-        switch (@typeInfo(@TypeOf(memory))) {
-            .pointer => |ptr_info| switch (ptr_info.size) {
-                .slice => std.mem.sliceAsBytes(memory),
-                .one, .many, .c => std.mem.asBytes(memory),
-            },
-            else => @compileError("Type unsupported!"),
-        },
-        descriptor_heap,
-        offset,
-    );
-}
-
 pub fn descriptorHeapMemoryDescription(
     size: usize,
 ) ResourceMemoryDescription {
@@ -310,17 +263,6 @@ pub fn createDescriptorHeap(
     memory: []u8,
 ) !*DescriptorHeap {
     return backendCall(@src(), .{memory});
-}
-
-///Sets the current descriptor heap to be used by subsequent commands
-pub fn setStateDescriptorHeap(
-    command_buffer: *CommandBuffer,
-    descriptor_heap: *DescriptorHeap,
-) void {
-    return backendCall(@src(), .{
-        command_buffer,
-        descriptor_heap,
-    });
 }
 
 ///Sets the current sampler descriptor heap to be used by subsequent commands
@@ -360,6 +302,17 @@ pub fn setStateDepthStencil(
 pub fn setStateBlend(
     command_buffer: *CommandBuffer,
     state: BlendState,
+) void {
+    return backendCall(@src(), .{
+        command_buffer,
+        state,
+    });
+}
+
+///Sets the rasterization state for the current/following raster pass
+pub fn setStateRasterization(
+    command_buffer: *CommandBuffer,
+    state: RasterizationState,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
@@ -459,10 +412,12 @@ pub fn rasterPassEnd(
 ///Dispatch a set of compute commands
 pub fn dispatchCompute(
     command_buffer: *CommandBuffer,
+    root_data: []const *anyopaque,
     commands: []const ComputeCommand,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
+        root_data,
         commands,
     });
 }
@@ -474,11 +429,14 @@ pub const DispatchRasterDrawOptions = struct {
 ///Dispatch a set of raster draw commands
 pub fn dispatchRasterDraw(
     command_buffer: *CommandBuffer,
+    ///Slice of root pointers that are passed to the pipeline
+    root_data: []const *anyopaque,
     commands: []const RasterDrawCommand,
     options: DispatchRasterDrawOptions,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
+        root_data,
         commands,
         options,
     });
@@ -487,14 +445,14 @@ pub fn dispatchRasterDraw(
 ///Dispatch a set of raster draw commands
 pub fn dispatchRasterDrawIndexed(
     command_buffer: *CommandBuffer,
+    root_data: []const *anyopaque,
     commands: []const RasterDrawCommand,
-    comptime IndexType: type,
-    indices: []IndexType,
+    indices: []u8,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
+        root_data,
         commands,
-        IndexType,
         indices,
     });
 }
@@ -502,10 +460,12 @@ pub fn dispatchRasterDrawIndexed(
 ///Dispatch a set of raster mesh draw commands
 pub fn dispatchRasterDrawMeshes(
     command_buffer: *CommandBuffer,
+    root_data: []const *anyopaque,
     commands: []const RasterDrawMeshesCommand,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
+        root_data,
         commands,
     });
 }
@@ -513,8 +473,12 @@ pub fn dispatchRasterDrawMeshes(
 ///Dispatch a set of trace rays commands
 pub fn dispatchTraceRays(
     command_buffer: *CommandBuffer,
+    root_data: []const *anyopaque,
 ) void {
-    return backendCall(@src(), .{command_buffer});
+    return backendCall(@src(), .{
+        root_data,
+        command_buffer,
+    });
 }
 
 ///Build a ray tracing acceleration structure
@@ -528,26 +492,9 @@ pub fn buildAccelerationStructures(
     });
 }
 
-///Create a queue with the specified capabilities
-pub fn createQueue(
-    device: *Device,
-    capabilities: QueueCapabilities,
-) *Queue {
-    return backendCall(@src(), .{
-        device,
-        capabilities,
-    });
-}
-
-pub fn destroyQueue(
-    queue: *Queue,
-) void {
-    return backendCall(@src(), .{queue});
-}
-
 ///Returns a fresh, transient command buffer from the queue, ready to have command encoded into it
 pub fn queueStartCommandRecording(
-    queue: *Queue,
+    queue: Queue,
 ) *CommandBuffer {
     return backendCall(@src(), .{queue});
 }
@@ -561,7 +508,7 @@ pub fn queueEndCommandRecording(
 
 ///Submit command buffers to a queue for execution
 pub fn queueSubmit(
-    queue: *Queue,
+    queue: Queue,
     command_buffers: []const *CommandBuffer,
     ///Semaphores to signal when each respective command buffer completes
     signal_semaphores: []const *Semaphore,
@@ -570,6 +517,37 @@ pub fn queueSubmit(
         queue,
         command_buffers,
         signal_semaphores,
+    });
+}
+
+///Waits for the device to idle
+pub fn waitIdle() void {
+    return backendCall(@src(), .{});
+}
+
+///Waits for the specified queue to idle
+pub fn queueWaitIdle(queue: Queue) void {
+    return backendCall(@src(), .{
+        queue,
+    });
+}
+
+///Places a performance timestamp query for command_buffer
+pub fn placeCommandTimestampQuery(
+    command_buffer: *CommandBuffer,
+) *debug.TimestampQuery {
+    return backendCall(@src(), .{
+        command_buffer,
+    });
+}
+
+///Queries the result value of a timestamp query, returns null if the value is not available
+///The result is an implementation specific timestamp in nanoseconds
+pub fn queryTimestampValue(
+    query: *debug.TimestampQuery,
+) ?u64 {
+    return backendCall(@src(), .{
+        query,
     });
 }
 
@@ -606,7 +584,6 @@ pub fn swapchainPresent(
 pub const Device = opaque {};
 pub const Texture = opaque {};
 pub const Pipeline = opaque {};
-pub const Queue = opaque {};
 pub const CommandBuffer = opaque {};
 pub const Semaphore = opaque {};
 pub const DescriptorHeap = opaque {};
@@ -619,6 +596,13 @@ pub const BufferDescriptor = packed struct(u64) {
 
 pub const TextureDescriptor = packed struct(u256) {
     value: u256,
+};
+
+pub const Queue = packed struct(u4) {
+    compute: bool = true,
+    raster: bool = true,
+    transfer: bool = true,
+    present: bool = true,
 };
 
 pub const PolygonMode = enum(u2) {
@@ -679,6 +663,11 @@ pub const BlendState = packed struct(u26) {
         src_alpha,
         one_minus_src_alpha,
     };
+};
+
+pub const RasterizationState = packed struct {
+    fill_mode: PolygonMode,
+    cull_mode: RasterPipelineDescription.Cull,
 };
 
 pub const CompareOp = enum(u4) {
@@ -764,21 +753,21 @@ pub const RasterPassDescription = struct {
 
     pub const ColorAttachment = struct {
         texture: *Texture,
-        clear: [4]f32,
+        clear: ?[4]f32 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .store,
     };
 
     pub const DepthAttachment = struct {
         texture: *Texture,
-        clear: f32,
+        clear: ?f32 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .discard,
     };
 
     pub const StencilAttachment = struct {
         texture: *Texture,
-        clear: u8,
+        clear: ?u8 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .discard,
     };
@@ -813,13 +802,14 @@ pub const TextureDescription = struct {
     layer_count: u32 = 1,
     sample_count: u32 = 1,
     format: ImageFormat = .rgba8_unorm32,
+    usage: Usage = .{ .sampled = true },
 
-    pub const Usage = enum {
-        sampled,
-        storage,
-        colour_attachment,
-        depth_stencil_attachment,
-        depth_attachment,
+    pub const Usage = packed struct {
+        sampled: bool = false,
+        storage: bool = false,
+        color_attachment: bool = false,
+        depth_stencil_attachment: bool = false,
+        depth_attachment: bool = false,
     };
 
     pub const Type = enum(u3) {
@@ -848,8 +838,10 @@ pub const TextureSliceDescription = struct {
     dimensions: [3]u32,
     mip_start: u32 = 0,
     layer_start: u32 = 0,
+    layer_count: u32 = 0,
     ///The mode which determines how the texture can be used by a pipeline
     mode: Mode = .sampled,
+    format: ImageFormat,
 
     pub const Mode = enum {
         sampled,
@@ -893,12 +885,6 @@ pub const ComputeCommand = extern struct {
     workgroup_count_z: u32 = 1,
 };
 
-pub const QueueCapabilities = packed struct {
-    transfer: bool = true,
-    compute: bool = true,
-    raster: bool = true,
-};
-
 pub const AccelerationStructureBuildDescription = struct {};
 
 pub const PipelineMachineCodeEntry = extern struct {
@@ -922,19 +908,19 @@ pub const mem = struct {
         ///The actual device address
         address: u48,
         ///Implementation specific allocation index
-        allocation_index: u16,
+        allocation_handle: u16,
     };
 
-    ///Converts a gpu pointer to a host pointer
-    pub fn toHostPointer(pointer: anytype) @TypeOf(pointer) {
+    ///Converts a gpu pointer to a cpu/gpu accessible pointer
+    pub fn toAccessiblePointer(pointer: anytype) @TypeOf(pointer) {
         var gpu_ptr: GpuPointerData = @bitCast(@intFromPtr(pointer));
-        gpu_ptr.allocation_index = 0;
+        gpu_ptr.allocation_handle = 0;
         return @ptrFromInt(@backingInt(gpu_ptr));
     }
 
-    ///Converts a gpu slice to a host writable slice
-    pub fn toHostSlice(slice: anytype) @TypeOf(slice) {
-        return toHostPointer(slice.ptr)[0..slice.len];
+    ///Converts a gpu slice to a cpu/gpu accessible slice
+    pub fn toAccessibleSlice(slice: anytype) @TypeOf(slice) {
+        return toAccessiblePointer(slice.ptr)[0..slice.len];
     }
 
     pub inline fn copySingle(
@@ -985,11 +971,13 @@ pub const mem = struct {
         dest_gpu: []T,
         src_gpu: []const T,
     ) void {
-        _ = dest_texture; // autofix
-        _ = dest_slice; // autofix
-        _ = command_buffer; // autofix
-        _ = dest_gpu; // autofix
-        _ = src_gpu; // autofix
+        gpu.memCopyToTexture(
+            command_buffer,
+            dest_texture,
+            dest_slice,
+            dest_gpu,
+            src_gpu,
+        );
     }
 
     ///Represents a gpu allocator
@@ -1331,6 +1319,8 @@ pub const debug = struct {
             names: [][:0]const u8,
         };
     };
+
+    pub const TimestampQuery = opaque {};
 };
 
 inline fn backendCall(
@@ -1339,11 +1329,13 @@ inline fn backendCall(
 ) (@typeInfo(@TypeOf(@field(backend, src.fn_name))).@"fn".return_type orelse void) {
     _ = layerCall(layer, src.fn_name, args);
 
-    return @call(
+    const return_value = @call(
         .always_inline,
         @field(backend, src.fn_name),
         args,
     );
+
+    return return_value;
 }
 
 inline fn layerCall(comptime call_layer: type, comptime function_name: []const u8, args: anytype) void {
@@ -1376,24 +1368,23 @@ const layer_none = struct {};
 
 const backend = switch (@import("builtin").os.tag) {
     .macos => @compileError("metal api not yet supported!"),
-    .linux, .windows => @import("gpu/gpu_opengl.zig"),
+    .linux, .windows => @import("gpu/gpu_vulkan.zig"),
     else => @compileError("Os not supported!"),
 };
 
 pub const Simulation = switch (@import("builtin").os.tag) {
-    .macos => @import("gpu/metal.zig").Simulation,
-    else => if (!use_vulkan) @import("renderer.zig").Simulation else @import("gpu/vulkan.zig").Simulation,
+    else => @import("renderer.zig").Simulation,
 };
 
 pub const Context = switch (@import("builtin").os.tag) {
-    .macos => @import("gpu/metal.zig").Context,
-    else => if (!use_vulkan) @import("renderer.zig").Context else @import("gpu/vulkan.zig").Context,
+    else => @import("renderer.zig").Context,
 };
 
 test {
     _ = std.testing.refAllDecls(@This());
 }
 
+pub const use_opengl = false;
 pub const use_vulkan = false;
 
 const gpu = @This();

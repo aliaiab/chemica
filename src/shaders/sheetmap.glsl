@@ -147,21 +147,21 @@ void sheetmapStoreGlyph(
 #ifdef SHEETMAP_TEXEL_SAMPLER
 
 vec4 sheetmapSampleGlyphTexelLod(
-    CombinedSheetmapSampler sampler,
+    CombinedSheetmapSampler sheetmap_sampler,
     Glyph glyph,
     vec2 uv,
     uint lod
 );
 
 vec4 sheetmapSampleGlyphTexel(
-    CombinedSheetmapSampler sampler,
+    CombinedSheetmapSampler sheetmap_sampler,
     Glyph glyph,
     vec2 uv
 );
 
 //Sample a texel from the sheetmap at uv at the specified level of detail
 vec4 sheetmapSampleTexelLod(
-    CombinedSheetmapSampler sheetmap,
+    CombinedSheetmapSampler sheetmap_sheetmap,
     vec2 uv,
     uint lod
 ) {

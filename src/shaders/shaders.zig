@@ -3,6 +3,7 @@ pub const AffineTransform3D = common.AffineTransform3D;
 pub const RendererViewType = common.RendererViewType;
 
 pub const common = @import("common.zig");
+pub const spirv_ext = @import("spirv_ext.zig");
 
 test {
     _ = std.testing.refAllDecls(@This());
