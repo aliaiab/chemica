@@ -2,16 +2,22 @@
 pub fn selectDevice(
     options: DeviceSelectionOptions,
     arena: std.mem.Allocator,
-) !*Device {
+    gpa: std.mem.Allocator,
+) !void {
     return backendCall(@src(), .{
         options,
         arena,
+        gpa,
     });
 }
 
 ///Frees device and all the resources associated with it
-pub fn freeDevice(device: Device) void {
-    return backendCall(@src(), .{device});
+pub fn freeDevice(
+    gpa: std.mem.Allocator,
+) void {
+    return backendCall(@src(), .{
+        gpa,
+    });
 }
 
 ///Allocate memory from the device
@@ -29,6 +35,11 @@ pub fn memAlloc(
 
 ///Free device memory
 pub fn memFree(memory: []u8) void {
+    return backendCall(@src(), .{memory});
+}
+
+///Returns the device memory tag (upper 16 bits of the device address)
+pub inline fn memGetMemoryTag(memory: *const anyopaque) u16 {
     return backendCall(@src(), .{memory});
 }
 
@@ -62,14 +73,12 @@ pub fn memSet(
 ///Copy device memory from source memory to a destination texture
 pub fn memCopyToTexture(
     command_buffer: *CommandBuffer,
-    dest_texture: *Texture,
     dest_slice: TextureSliceDescription,
     dest_gpu: []u8,
     src_gpu: []const u8,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
-        dest_texture,
         dest_slice,
         dest_gpu,
         src_gpu,
@@ -79,23 +88,14 @@ pub fn memCopyToTexture(
 ///Set each texel of a texture to the contents src_gpu
 pub fn memClearTexture(
     command_buffer: *CommandBuffer,
-    dest_texture: *Texture,
     dest_gpu: []u8,
     src_gpu: []const u8,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
-        dest_texture,
         dest_gpu,
         src_gpu,
     });
-}
-
-///Sets the current device to be used by subsequent procedure calls
-pub fn setStateDevice(
-    device: *Device,
-) void {
-    return backendCall(@src(), .{device});
 }
 
 ///Create a raster pipeline that uses vertex and fragment stages
@@ -179,101 +179,68 @@ pub fn textureMemoryDescription(
     return backendCall(@src(), .{description});
 }
 
-pub fn createTexture(
+///Creates and registers a backend texture handle for the specified memory region
+pub fn registerTextureMemory(
+    memory: []u8,
     description: TextureDescription,
-    memory: []const u8,
-) *Texture {
+) void {
     return backendCall(@src(), .{
+        memory,
         description,
+    });
+}
+
+///Destroys the texture for the specified memory region
+pub fn unregisterTextureMemory(
+    memory: []const u8,
+) void {
+    return backendCall(@src(), .{
         memory,
     });
 }
 
-pub fn destroyTexture(
-    texture: *Texture,
-) void {
-    return backendCall(@src(), .{
-        texture,
-    });
-}
-
-pub fn readDescriptorTexture(
-    texture: *Texture,
+pub fn createTextureDescriptor(
+    texture: []const u8,
 ) TextureDescriptor {
     return backendCall(@src(), .{
         texture,
     });
 }
 
-///Copies the texture descriptor into the descriptor heap at offset
-///Returns the offset end (offset + sizeof(descriptor))
-pub fn readDescriptorTextureIntoHeap(
-    texture: *Texture,
-    descriptor_heap: *DescriptorHeap,
-    offset: usize,
-) usize {
-    return backendCall(@src(), .{
-        texture,
-        descriptor_heap,
-        offset,
-    });
-}
-
-///Copies the texture slice descriptor into the descriptor heap at offset
-///Returns the offset end (offset + sizeof(descriptor))
-pub fn readTextureSliceDescriptorIntoHeap(
-    texture: *Texture,
+pub fn createTextureSliceDescriptor(
+    texture: []const u8,
     slice: TextureSliceDescription,
-    descriptor_heap: *DescriptorHeap,
-    offset: usize,
-) usize {
+) TextureDescriptor {
     return backendCall(@src(), .{
         texture,
         slice,
-        descriptor_heap,
-        offset,
     });
 }
 
-///Copies the sampler descriptor into the descriptor heap at offset
-///Returns the offset end (offset + sizeof(descriptor))
-pub fn readTextureSliceSamplerDescriptorIntoHeap(
-    texture: *Texture,
+pub fn createTextureSliceSamplerDescriptor(
+    texture: []const u8,
     slice: TextureSliceDescription,
     sampler: TextureSamplerDescription,
-    descriptor_heap: *DescriptorHeap,
-    offset: usize,
-) usize {
+) TextureDescriptor {
     return backendCall(@src(), .{
         texture,
         slice,
         sampler,
-        descriptor_heap,
-        offset,
     });
 }
 
-pub fn descriptorHeapMemoryDescription(
+pub fn createSamplerDescriptor(
+    sampler: TextureSamplerDescription,
+) TextureDescriptor {
+    return backendCall(@src(), .{
+        sampler,
+    });
+}
+
+pub fn samplerHeapMemoryDescription(
     size: usize,
 ) ResourceMemoryDescription {
     return backendCall(@src(), .{size});
-}
-
-pub fn createDescriptorHeap(
-    memory: []u8,
-) !*DescriptorHeap {
-    return backendCall(@src(), .{memory});
-}
-
-///Sets the current sampler descriptor heap to be used by subsequent commands
-pub fn setStateSamplerDescriptorHeap(
-    command_buffer: *CommandBuffer,
-    descriptor_heap: *DescriptorHeap,
-) void {
-    return backendCall(@src(), .{
-        command_buffer,
-        descriptor_heap,
-    });
 }
 
 ///Sets the pipeline to be used by subsequent commands
@@ -470,17 +437,6 @@ pub fn dispatchRasterDrawMeshes(
     });
 }
 
-///Dispatch a set of trace rays commands
-pub fn dispatchTraceRays(
-    command_buffer: *CommandBuffer,
-    root_data: []const *anyopaque,
-) void {
-    return backendCall(@src(), .{
-        root_data,
-        command_buffer,
-    });
-}
-
 ///Build a ray tracing acceleration structure
 pub fn buildAccelerationStructures(
     command_buffer: *CommandBuffer,
@@ -495,15 +451,12 @@ pub fn buildAccelerationStructures(
 ///Returns a fresh, transient command buffer from the queue, ready to have command encoded into it
 pub fn queueStartCommandRecording(
     queue: Queue,
+    initial_state: CommandBufferInitialState,
 ) *CommandBuffer {
-    return backendCall(@src(), .{queue});
-}
-
-///End command encoding for command_buffer
-pub fn queueEndCommandRecording(
-    command_buffer: *CommandBuffer,
-) void {
-    return backendCall(@src(), .{command_buffer});
+    return backendCall(@src(), .{
+        queue,
+        initial_state,
+    });
 }
 
 ///Submit command buffers to a queue for execution
@@ -566,7 +519,7 @@ pub fn destroySwapchain(swapchain: *Swapchain) void {
 ///Obtain a texture from the swapchain which can be presented
 pub fn swapchainObtainTexture(
     swapchain: *Swapchain,
-) *Texture {
+) []u8 {
     return backendCall(@src(), .{swapchain});
 }
 
@@ -581,18 +534,10 @@ pub fn swapchainPresent(
     });
 }
 
-pub const Device = opaque {};
-pub const Texture = opaque {};
 pub const Pipeline = opaque {};
 pub const CommandBuffer = opaque {};
 pub const Semaphore = opaque {};
-pub const DescriptorHeap = opaque {};
-pub const DescriptorTextureHeap = opaque {};
 pub const Swapchain = opaque {};
-
-pub const BufferDescriptor = packed struct(u64) {
-    value: u64,
-};
 
 pub const TextureDescriptor = packed struct(u256) {
     value: u256,
@@ -718,7 +663,6 @@ pub const RasterPipelineDescription = struct {
 pub const ImageFormat = enum(u3) {
     none,
     rgba8_unorm32,
-    rgb8_unorm24,
     r32_u32,
     r16_u16,
     depth_f32,
@@ -750,23 +694,29 @@ pub const RasterPassDescription = struct {
     color_attachments: []const ColorAttachment,
     depth_attachment: ?DepthAttachment = null,
     stencil_attachment: ?StencilAttachment = null,
+    render_area: struct {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    },
 
     pub const ColorAttachment = struct {
-        texture: *Texture,
+        texture: []u8,
         clear: ?[4]f32 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .store,
     };
 
     pub const DepthAttachment = struct {
-        texture: *Texture,
+        texture: []u8,
         clear: ?f32 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .discard,
     };
 
     pub const StencilAttachment = struct {
-        texture: *Texture,
+        texture: []u8,
         clear: ?u8 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .discard,
@@ -783,16 +733,8 @@ pub const RasterPassDescription = struct {
     };
 };
 
-///Defines the mapping between binding locations in the pipeline interface and locations in a descriptor heap
-pub const DescriptorHeapMapping = packed struct {
-    binding_first: u32,
-    binding_count: u32,
-    heap_offset: u32,
-    heap_array_stride: u32,
-    sampler_binding_first: u32,
-    sampler_binding_count: u32,
-    sampler_heap_offset: u32,
-    sampler_heap_array_stride: u32,
+pub const CommandBufferInitialState = struct {
+    sampler_heap: []const TextureDescriptor = &.{},
 };
 
 pub const TextureDescription = struct {
@@ -907,21 +849,48 @@ pub const mem = struct {
     pub const GpuPointerData = packed struct(u64) {
         ///The actual device address
         address: u48,
+        ///The memory type of the allocation
+        memory_type: Allocator.MemoryType,
         ///Implementation specific allocation index
-        allocation_handle: u16,
+        allocation_handle: u12,
     };
 
+    ///The maximum number of active (not-freed) root allocations (calls to memAlloc or page_allocator.alloc)
+    pub const max_root_allocations = std.math.maxInt(u12);
+
     ///Converts a gpu pointer to a cpu/gpu accessible pointer
-    pub fn toAccessiblePointer(pointer: anytype) @TypeOf(pointer) {
-        var gpu_ptr: GpuPointerData = @bitCast(@intFromPtr(pointer));
-        gpu_ptr.allocation_handle = 0;
+    pub inline fn toAccessiblePointer(pointer: anytype) @TypeOf(pointer) {
+        var gpu_ptr: PointerData = @bitCast(@intFromPtr(pointer));
+        gpu_ptr.tag = memGetMemoryTag(@ptrCast(pointer));
         return @ptrFromInt(@backingInt(gpu_ptr));
     }
 
     ///Converts a gpu slice to a cpu/gpu accessible slice
-    pub fn toAccessibleSlice(slice: anytype) @TypeOf(slice) {
+    pub inline fn toAccessibleSlice(slice: anytype) @TypeOf(slice) {
         return toAccessiblePointer(slice.ptr)[0..slice.len];
     }
+
+    ///Returns the memory type of the slice or ptr
+    pub inline fn getMemoryType(slice: anytype) Allocator.MemoryType {
+        const ptr = if (@typeInfo(@TypeOf(slice)).pointer.size == .slice) slice.ptr else slice;
+        const gpu_ptr: GpuPointerData = @bitCast(@intFromPtr(ptr));
+
+        const ptr_data: PointerData = @bitCast(@intFromPtr(ptr));
+        //If the upper 4 bits of the lower 8 bits of the tag are not zero, then we are dealing with a pointer with tagging (IE from some managed runtime somewhere)
+        //If this is the case, we can assume this a cpu pointer
+        if (gpu_ptr.memory_type == .cpu and ptr_data.tag & 0x00f0 != 0) {
+            //This case is extremly unlikely
+            @branchHint(.unlikely);
+            return .cpu;
+        }
+
+        return gpu_ptr.memory_type;
+    }
+
+    const PointerData = packed struct(u64) {
+        address: u48,
+        tag: u16,
+    };
 
     pub inline fn copySingle(
         command_buffer: *CommandBuffer,
@@ -966,14 +935,12 @@ pub const mem = struct {
     pub inline fn copyToTexture(
         command_buffer: *CommandBuffer,
         comptime T: type,
-        dest_texture: *Texture,
         dest_slice: TextureSliceDescription,
         dest_gpu: []T,
         src_gpu: []const T,
     ) void {
         gpu.memCopyToTexture(
             command_buffer,
-            dest_texture,
             dest_slice,
             dest_gpu,
             src_gpu,
@@ -988,46 +955,12 @@ pub const mem = struct {
 
         pub const FreeGroup = struct {
             commands: std.ArrayList(FreeCommand) = .empty,
-            texture_commands: std.ArrayList(FreeTextureCommand) = .empty,
             semaphores: []const *Semaphore = &.{},
         };
 
         pub const FreeCommand = struct {
             memory: []u8,
         };
-
-        pub const FreeTextureCommand = struct {
-            texture: *Texture,
-        };
-
-        pub fn create(
-            allocator: Allocator,
-            comptime T: type,
-            memory_type: MemoryType,
-        ) !*T {
-            return &(try allocator.alloc(T, 1, memory_type))[0];
-        }
-
-        ///Creates a texture handle and allocates memory for it
-        pub fn allocTexture(
-            allocator: Allocator,
-            texture_description: TextureDescription,
-        ) !struct { *Texture, []u8 } {
-            const texture_mem_description = gpu.textureMemoryDescription(texture_description);
-
-            const memory = try allocator.alloc(
-                u8,
-                texture_mem_description.size,
-                texture_mem_description.memory_type,
-            );
-
-            const texture = gpu.createTexture(
-                texture_description,
-                memory,
-            );
-
-            return .{ texture, memory };
-        }
 
         pub fn alloc(
             allocator: Allocator,
@@ -1041,7 +974,59 @@ pub const mem = struct {
                 .of(T),
                 memory_type,
                 @returnAddress(),
-            ))))[0..size];
+            ) orelse return error.OutOfMemory)))[0..size];
+        }
+
+        ///Allocates gpu_cpu_writable memory and copies from input
+        pub fn allocDupe(allocator: Allocator, comptime T: type, input: []const T) ![]T {
+            std.debug.assert(input.len != 0);
+
+            const duped = try allocator.alloc(T, input.len, .gpu_cpu_writable);
+
+            @memcpy(gpu.mem.toAccessibleSlice(duped), input);
+
+            return duped;
+        }
+
+        pub fn create(
+            allocator: Allocator,
+            comptime T: type,
+            memory_type: MemoryType,
+        ) !*T {
+            return &(try allocator.alloc(T, 1, memory_type))[0];
+        }
+
+        ///Allocates texture memory and registers it
+        pub fn allocTexture(
+            allocator: Allocator,
+            texture_description: TextureDescription,
+        ) ![]u8 {
+            const texture_mem_description = gpu.textureMemoryDescription(texture_description);
+
+            const memory = try allocator.alloc(
+                u8,
+                texture_mem_description.size,
+                texture_mem_description.memory_type,
+            );
+
+            gpu.registerTextureMemory(
+                memory,
+                texture_description,
+            );
+
+            return memory;
+        }
+
+        pub fn allocTextureDescriptor(
+            allocator: Allocator,
+            sampler_heap: []const TextureDescriptor,
+            texture: []const u8,
+        ) !u32 {
+            const descriptor = try allocator.create(TextureDescriptor, gpu.mem.getMemoryType(sampler_heap));
+
+            descriptor.* = createTextureDescriptor(texture);
+
+            return @intCast((@intFromPtr(descriptor) - @intFromPtr(sampler_heap.ptr)) / @sizeOf(gpu.TextureDescriptor));
         }
 
         ///Defer a free memory command
@@ -1051,7 +1036,7 @@ pub const mem = struct {
         ) void {
             allocator.vtable.free(
                 allocator.ptr,
-                std.mem.asBytes(memory),
+                @ptrCast(memory),
                 .@"1",
                 .gpu,
                 @returnAddress(),
@@ -1061,10 +1046,8 @@ pub const mem = struct {
         ///Defer a free texture command
         pub fn freeTexture(
             allocator: Allocator,
-            texture: *Texture,
             memory: []u8,
         ) void {
-            _ = texture; // autofix
             _ = memory; // autofix
             _ = allocator; // autofix
         }
@@ -1090,9 +1073,10 @@ pub const mem = struct {
             _ = allocator; // autofix
         }
 
-        pub const MemoryType = enum {
+        pub const MemoryType = enum(u4) {
+            cpu = 0,
             gpu,
-            cpu,
+            gpu_cpu_writable,
             readback,
         };
 
@@ -1129,33 +1113,6 @@ pub const mem = struct {
             ) void,
         };
     };
-
-    ///A gpu array list
-    pub fn ArrayList(comptime T: type) type {
-        return struct {
-            data: []T,
-            capacity: usize,
-
-            pub fn append(
-                self: *Self,
-                ///Command buffer to encode copy commands into
-                command_buffer: *CommandBuffer,
-                ///Descriptor heap to write new descriptors into
-                descriptor_heap: *DescriptorHeap,
-                ///Location of the array list descriptor
-                descriptor_heap_offset: usize,
-                element: T,
-            ) !void {
-                _ = self; // autofix
-                _ = command_buffer; // autofix
-                _ = descriptor_heap; // autofix
-                _ = descriptor_heap_offset; // autofix
-                _ = element; // autofix
-            }
-
-            const Self = @This();
-        };
-    }
 };
 
 ///The gpu memory heap module
@@ -1222,6 +1179,8 @@ pub const heap = struct {
         }
     };
 
+    pub const FixedBufferAllocator = @import("gpu/heap/FixedBufferAllocator.zig");
+
     ///A gpu memory arena
     pub const ArenaAllocator = struct {};
 
@@ -1287,7 +1246,7 @@ pub const texturing = struct {
     ///Generates a mip chain for a texture
     pub fn generateMipChain(
         command_buffer: *CommandBuffer,
-        texture: *Texture,
+        texture: []u8,
     ) void {
         _ = texture; // autofix
         _ = command_buffer; // autofix
@@ -1299,7 +1258,6 @@ pub const debug = struct {
     ///Represents debug info for a file
     pub const Info = struct {
         source_bytes: [:0]const u8,
-        descriptor_names: std.AutoArrayHashMapUnmanaged(*DescriptorHeap, DescriptorNames) = .empty,
         raster_pass_names: std.AutoArrayHashMapUnmanaged(std.lang.SourceLocation, [:0]const u8) = .empty,
         pipeline_names: std.AutoArrayHashMapUnmanaged(*Pipeline, [:0]const u8) = .empty,
 
@@ -1367,8 +1325,7 @@ const layer: type = layer_none;
 const layer_none = struct {};
 
 const backend = switch (@import("builtin").os.tag) {
-    .macos => @compileError("metal api not yet supported!"),
-    .linux, .windows => @import("gpu/gpu_vulkan.zig"),
+    .macos, .linux, .windows => @import("gpu/gpu_vulkan.zig"),
     else => @compileError("Os not supported!"),
 };
 
@@ -1384,7 +1341,6 @@ test {
     _ = std.testing.refAllDecls(@This());
 }
 
-pub const use_opengl = false;
 pub const use_vulkan = false;
 
 const gpu = @This();

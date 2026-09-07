@@ -66,22 +66,22 @@ const Shaders = struct {
 
 pub const Context = struct {
     window: *glfw.Window,
-    gpu_device: *gpu.Device,
     gpu_gpa: gpu.mem.Allocator,
+    gpu_staging_arena: gpu.mem.Allocator,
+    gpu_staging_fbas: [2]gpu.heap.FixedBufferAllocator,
+    gpu_staging_fba_index: usize,
     gpu_arena_instance: gpu.heap.ArenaAllocator,
     gpu_arena: gpu.mem.Allocator,
-    graphics_queue: *gpu.Queue,
-    swapchain_texture: *gpu.Texture,
-    descriptor_mapping: gpu.DescriptorHeapMapping,
+    swapchain_texture: []u8,
     command_buffer: *gpu.CommandBuffer,
-    env_map_texture: *gpu.Texture,
     shaders_watcher: *watchers.Watcher,
     io: std.Io,
     watcher_context: *WatcherContext,
     watcher_thread: std.Thread,
     shaders: *Shaders,
-    descriptor_heap: *gpu.DescriptorHeap,
-    sampler_heap: *gpu.DescriptorHeap,
+    sampler_heap: []gpu.TextureDescriptor,
+    sampler_heap_fba: gpu.heap.FixedBufferAllocator,
+    sampler_heap_alloc: gpu.mem.Allocator,
     asym_uniforms_buffer: [][2][4][4]f32,
     gizmo_draw_buffer: []asym.geo.DrawCommand,
     gizmo_vertex_buffer: []u8,
@@ -115,15 +115,18 @@ pub const Context = struct {
         context.shaders_watcher.* = try .init(io, arena);
         context.shaders = try arena.create(Shaders);
 
-        const gpu_device = try gpu.selectDevice(
+        try gpu.selectDevice(
             .{},
             arena,
+            std.heap.smp_allocator,
         );
-        context.gpu_device = gpu_device;
-
-        gpu.setStateDevice(gpu_device);
 
         context.gpu_gpa = gpu.heap.page_allocator;
+        const gpu_staging_buffer = try context.gpu_gpa.alloc(u8, 64 * 1024 * 1024, .gpu_cpu_writable);
+        context.gpu_staging_fbas[0] = .init(gpu_staging_buffer[0 .. gpu_staging_buffer.len / 2]);
+        context.gpu_staging_fbas[1] = .init(gpu_staging_buffer[gpu_staging_buffer.len / 2 ..]);
+        context.gpu_staging_arena = context.gpu_staging_fbas[0].allocator();
+        context.gpu_staging_fba_index = 0;
 
         context.shaders_watcher.setCallback(watcherCallback, context.watcher_context);
 
@@ -141,53 +144,53 @@ pub const Context = struct {
             &env_map_comps,
             0,
         );
+        _ = env_map_data; // autofix
 
-        const env_map_des: gpu.TextureDescription = .{
-            .dimensions = .{ @intCast(env_map_width), @intCast(env_map_height), 1 },
-            .format = .rgba8_unorm32,
-        };
-
-        const env_map_mem_desc = gpu.textureMemoryDescription(env_map_des);
-
-        const tex_memory = try context.gpu_gpa.alloc(
-            u8,
-            env_map_mem_desc.size,
-            env_map_mem_desc.memory_type,
-        );
-
-        const upload_cmds = gpu.queueStartCommandRecording(.{});
+        const upload_cmds = gpu.queueStartCommandRecording(.{}, .{});
         defer gpu.queueSubmit(.{}, &.{upload_cmds}, &.{});
 
-        const env_map_texture = gpu.createTexture(env_map_des, tex_memory);
-
-        gpu.memCopyToTexture(upload_cmds, env_map_texture, .{
-            .dimensions = env_map_des.dimensions,
+        const env_map_texture = try context.gpu_gpa.allocTexture(.{
+            .dimensions = .{ @intCast(env_map_width), @intCast(env_map_height), 1 },
             .format = .rgba8_unorm32,
-        }, tex_memory, env_map_data[0..@intCast(env_map_width * env_map_height * @sizeOf([3]u8))]);
+        });
 
-        const descriptor_heap_memory_info = gpu.descriptorHeapMemoryDescription(@sizeOf(gpu.TextureDescriptor) * 2048);
-        const sampler_descriptor_heap_memory_info = gpu.descriptorHeapMemoryDescription(@sizeOf(gpu.TextureDescriptor) * 2048);
+        const env_map_staging_mem = try context.gpu_staging_arena.alloc(
+            u32,
+            @intCast(env_map_width * env_map_height),
+            .gpu_cpu_writable,
+        );
+        defer context.gpu_staging_fbas[0].end_index = 0;
 
-        const descriptor_heap_mem = try context.gpu_gpa.alloc(
+        for (gpu.mem.toAccessibleSlice(env_map_staging_mem)) |*color_out| {
+            color_out.* = 0xffaaffaa;
+        }
+
+        gpu.mem.copyToTexture(
+            upload_cmds,
             u8,
-            descriptor_heap_memory_info.size,
-            descriptor_heap_memory_info.memory_type,
+            .{
+                .dimensions = .{ @intCast(env_map_width), @intCast(env_map_height), 1 },
+                .format = .rgba8_unorm32,
+            },
+            env_map_texture,
+            @ptrCast(env_map_staging_mem),
         );
 
+        const sampler_descriptor_heap_memory_info = gpu.samplerHeapMemoryDescription(@sizeOf(gpu.TextureDescriptor) * 2048);
+
         const sampler_descriptor_heap_mem = try context.gpu_gpa.alloc(
-            u8,
-            sampler_descriptor_heap_memory_info.size,
+            gpu.TextureDescriptor,
+            sampler_descriptor_heap_memory_info.size / @sizeOf(gpu.TextureDescriptor),
             sampler_descriptor_heap_memory_info.memory_type,
         );
 
-        context.descriptor_heap = try gpu.createDescriptorHeap(descriptor_heap_mem);
-        context.sampler_heap = try gpu.createDescriptorHeap(sampler_descriptor_heap_mem);
+        context.sampler_heap = sampler_descriptor_heap_mem;
 
-        _ = gpu.readDescriptorTextureIntoHeap(
-            env_map_texture,
+        const env_map_descriptor = try context.sampler_heap_alloc.allocTextureDescriptor(
             context.sampler_heap,
-            9 * @sizeOf(gpu.TextureDescriptor),
+            env_map_texture,
         );
+        _ = env_map_descriptor; // autofix
 
         context.asym_uniforms_buffer = try context.gpu_gpa.alloc([2][4][4]f32, 1, .gpu);
         context.gizmo_draw_buffer = try context.gpu_gpa.alloc(asym.geo.DrawCommand, 1024, .gpu);
@@ -236,9 +239,13 @@ pub const Context = struct {
     pub fn beginFrame(
         context: *Context,
     ) void {
-        context.command_buffer = gpu.queueStartCommandRecording(.{});
+        context.command_buffer = gpu.queueStartCommandRecording(.{}, .{
+            .sampler_heap = context.sampler_heap,
+        });
 
         const command_buffer = context.command_buffer;
+
+        const framebuffer_size = context.window.getFramebufferSize();
 
         gpu.rasterPassBegin(command_buffer, .{
             .color_attachments = &.{.{
@@ -253,11 +260,13 @@ pub const Context = struct {
                 .texture = context.swapchain_texture,
                 .clear = 0,
             },
+            .render_area = .{
+                .x = 0,
+                .y = 0,
+                .width = @intCast(framebuffer_size[0]),
+                .height = @intCast(framebuffer_size[1]),
+            },
         });
-
-        gpu.setStateSamplerDescriptorHeap(command_buffer, context.sampler_heap);
-
-        const framebuffer_size = context.window.getFramebufferSize();
 
         gpu.setStateViewport(command_buffer, .{
             0,
@@ -283,7 +292,6 @@ pub const Context = struct {
     ) void {
         const command_buffer = context.command_buffer;
         gpu.rasterPassEnd(command_buffer);
-        gpu.queueEndCommandRecording(command_buffer);
     }
 
     const asym = @import("asym.zig");
@@ -301,7 +309,7 @@ pub const Context = struct {
         geo_ctx: *const asym.geo.Context,
         typeface_handle: asym.geo.TextTypeFaceHandle,
         typeface_ttf: []const u8,
-    ) !?*Texture {
+    ) !?[]u8 {
         _ = io; // autofix
         const Generator = @import("msdf-zig");
 
@@ -345,7 +353,7 @@ pub const Context = struct {
             sdfs[glyph_index] = data;
         }
 
-        const texture_handle, const texture_mem = try context.gpu_gpa.allocTexture(
+        const texture_memory = try context.gpu_gpa.allocTexture(
             .{
                 .dimensions = .{ max_width, max_height, @intCast(typeface.codepoints_to_glyph.count()) },
                 .format = .rgba8_unorm32,
@@ -353,13 +361,9 @@ pub const Context = struct {
             },
         );
 
-        _ = gpu.readDescriptorTextureIntoHeap(
-            texture_handle,
-            context.sampler_heap,
-            10 * @sizeOf(gpu.TextureDescriptor),
-        );
+        context.sampler_heap[10] = gpu.createTextureDescriptor(texture_memory);
 
-        const commands = gpu.queueStartCommandRecording(.{});
+        const commands = gpu.queueStartCommandRecording(.{}, .{});
 
         for (sdfs, glyph_metrics, 0..) |*maybe_data, *metrics, glyph_index| {
             if (maybe_data.* == null) {
@@ -382,7 +386,6 @@ pub const Context = struct {
             gpu.mem.copyToTexture(
                 commands,
                 u8,
-                texture_handle,
                 .{
                     .offset = .{
                         0,
@@ -396,7 +399,7 @@ pub const Context = struct {
                     },
                     .format = .rgba8_unorm32,
                 },
-                texture_mem,
+                texture_memory,
                 data.pixels,
             );
         }
@@ -411,17 +414,16 @@ pub const Context = struct {
             commands,
             @import("lib").shaders.common.asym.GlyphMetric,
             context.asym_glyph_metrics_buffer,
-            glyph_metrics,
+            try context.gpu_staging_arena.allocDupe(@import("lib").shaders.common.asym.GlyphMetric, glyph_metrics),
         );
 
-        gpu.queueEndCommandRecording(commands);
         gpu.queueSubmit(
             .{},
             &.{commands},
             &.{},
         );
 
-        return texture_handle;
+        return texture_memory;
     }
 
     pub fn renderGizmos(
@@ -430,7 +432,7 @@ pub const Context = struct {
         geo_context: *const asym.geo.Context,
         scene: *const asym.geo.Scene,
         views: []const asym.geo.Scene.View,
-        typeface_textures: []?*Texture,
+        typeface_textures: []?[]u8,
     ) void {
         const command_buffer = context.command_buffer;
 
@@ -692,8 +694,6 @@ pub const Simulation = struct {
 
     point_light_buffer: []PointLight = undefined,
 
-    uniform_buffer: *ShaderUniforms = undefined,
-
     sdf_elements_3d_buffer: []SdfElement3D = undefined,
     sdf_elements_3d_transforms_buffer: []AffineTransform3D = undefined,
     sdf_elements_3d_params_buffer: []f32 = undefined,
@@ -709,9 +709,9 @@ pub const Simulation = struct {
     voxel_allocator_buffer: []VoxelChunkAllocator = undefined,
     voxel_chunks_buffer: []VoxelChunksAllocation = undefined,
 
-    voxel_bit_buffer_memory_texture: *Texture = undefined,
-    voxel_chunk_allocations_texture: *Texture = undefined,
-    voxel_chunk_positions_texture: *Texture = undefined,
+    voxel_bit_buffer_memory_texture: []u8 = undefined,
+    voxel_chunk_allocations_texture: []u8 = undefined,
+    voxel_chunk_positions_texture: []u8 = undefined,
 
     voxel_heap_bit_buffer: []u32 = undefined,
     voxel_positions_buffer: []u32 = undefined,
@@ -719,8 +719,8 @@ pub const Simulation = struct {
     simulation_state: *@import("lib").shaders.common.SimulationState = undefined,
     simulation_rendering_state: *@import("lib").shaders.common.SimulationRenderingState = undefined,
 
-    scene_thumbnails: std.StringHashMapUnmanaged(?*Texture) = .empty,
-    scene_2d_texture: ?*Texture = null,
+    scene_thumbnails: std.StringHashMapUnmanaged(?[]u8) = .empty,
+    scene_2d_texture: ?[]u8 = null,
     scene_2d_texture_width: u32 = 0,
     scene_2d_texture_height: u32 = 0,
 
@@ -816,13 +816,12 @@ pub const Simulation = struct {
             &gpu_sim.shaders.raymarched_sdf_shader,
         );
 
-        gpu_sim.scene_2d_texture, _ = try context.gpu_gpa.allocTexture(.{
+        gpu_sim.scene_2d_texture = try context.gpu_gpa.allocTexture(.{
             .type = .@"2d",
             .dimensions = .{ 512, 512, 1 },
         });
         const buffer_length = sim.width * sim.height * sim.depth;
 
-        gpu_sim.uniform_buffer = try context.gpu_gpa.create(ShaderUniforms, .gpu);
         gpu_sim.simulation_material_buffer = try context.gpu_gpa.alloc(u16, buffer_length * 2, .gpu);
         gpu_sim.simulation_temperature_buffer = try context.gpu_gpa.alloc(f32, buffer_length * 2, .gpu);
         gpu_sim.simulation_deviation_buffer = try context.gpu_gpa.alloc(i8, buffer_length * 2, .gpu);
@@ -850,7 +849,11 @@ pub const Simulation = struct {
         gpu_sim.simulation_state = try context.gpu_gpa.create(@import("lib").shaders.common.SimulationState, .gpu);
         gpu_sim.simulation_rendering_state = try context.gpu_gpa.create(@import("lib").shaders.common.SimulationRenderingState, .gpu);
 
-        const upload_cmds = gpu.queueStartCommandRecording(.{});
+        context.gpu_staging_fbas[0].end_index = 0;
+        context.gpu_staging_fbas[1].end_index = 0;
+        context.gpu_staging_arena = context.gpu_staging_fbas[0].allocator();
+
+        const upload_cmds = gpu.queueStartCommandRecording(.{}, .{});
         defer gpu.queueSubmit(
             .{},
             &.{upload_cmds},
@@ -861,72 +864,49 @@ pub const Simulation = struct {
             upload_cmds,
             RayStats,
             gpu_sim.ray_stats_buffer,
-            &.{},
+            &(try context.gpu_staging_arena.allocDupe(RayStats, &.{
+                .{},
+            }))[0],
         );
 
         const brick_map_width = 16;
 
-        gpu_sim.voxel_bit_buffer_memory_texture, _ = try context.gpu_gpa.allocTexture(.{
+        gpu_sim.voxel_bit_buffer_memory_texture = try context.gpu_gpa.allocTexture(.{
             .type = .@"3d",
             .dimensions = @splat(16 * brick_map_width),
             .format = .r16_u16,
         });
 
-        gpu_sim.voxel_chunk_allocations_texture, _ = try context.gpu_gpa.allocTexture(.{
+        gpu_sim.voxel_chunk_allocations_texture = try context.gpu_gpa.allocTexture(.{
             .type = .@"3d",
             .dimensions = @splat(brick_map_width),
             .format = .r32_u32,
         });
 
-        gpu_sim.voxel_chunk_positions_texture, _ = try context.gpu_gpa.allocTexture(.{
+        gpu_sim.voxel_chunk_positions_texture = try context.gpu_gpa.allocTexture(.{
             .type = .@"3d",
             .dimensions = @splat(brick_map_width),
             .format = .r16_u16,
         });
 
-        _ = gpu.readTextureSliceDescriptorIntoHeap(
+        context.sampler_heap[0] = gpu.createTextureDescriptor(
             gpu_sim.voxel_bit_buffer_memory_texture,
-            .{
-                .dimensions = @splat(16 * brick_map_width),
-                .mode = .read_write,
-                .format = .r16_u16,
-            },
-            context.sampler_heap,
-            0 * @sizeOf(gpu.TextureDescriptor),
         );
 
-        _ = gpu.readTextureSliceDescriptorIntoHeap(
+        context.sampler_heap[1] = gpu.createTextureDescriptor(
             gpu_sim.voxel_chunk_allocations_texture,
-            .{
-                .dimensions = @splat(brick_map_width),
-                .mode = .read_write,
-                .format = .r32_u32,
-            },
-            context.sampler_heap,
-            1 * @sizeOf(gpu.TextureDescriptor),
         );
 
-        _ = gpu.readTextureSliceDescriptorIntoHeap(
+        context.sampler_heap[1] = gpu.createTextureDescriptor(
             gpu_sim.voxel_chunk_positions_texture,
-            .{
-                .dimensions = @splat(brick_map_width),
-                .mode = .read_write,
-                .format = .r16_u16,
-            },
-            context.sampler_heap,
-            2 * @sizeOf(gpu.TextureDescriptor),
         );
 
-        _ = gpu.readDescriptorTextureIntoHeap(
+        context.sampler_heap[5] = gpu.createTextureDescriptor(
             gpu_sim.voxel_bit_buffer_memory_texture,
-            context.sampler_heap,
-            5 * @sizeOf(gpu.TextureDescriptor),
         );
 
-        _ = gpu.readDescriptorTextureIntoHeap(
+        context.sampler_heap[6] = gpu.createTextureDescriptor(
             gpu_sim.voxel_chunk_positions_texture,
-            context.sampler_heap,
-            6 * @sizeOf(gpu.TextureDescriptor),
         );
 
         const voxel_allocator_bins: VoxelAllocatorBins = .{
@@ -937,7 +917,7 @@ pub const Simulation = struct {
             upload_cmds,
             VoxelAllocatorBins,
             gpu_sim.voxel_allocator_bins_buffer,
-            &voxel_allocator_bins,
+            &(try context.gpu_staging_arena.allocDupe(VoxelAllocatorBins, &.{voxel_allocator_bins}))[0],
         );
 
         gpu.mem.set(upload_cmds, VoxelChunksAllocation, gpu_sim.voxel_chunks_buffer, .{
@@ -994,7 +974,7 @@ pub const Simulation = struct {
         }
     }
 
-    pub fn update(gpu_sim: *Simulation, sim: *@import("Simulation.zig"), shader_uniforms: ShaderUniforms) void {
+    pub fn update(gpu_sim: *Simulation, sim: *@import("Simulation.zig")) void {
         gpu.mem.copy(
             gpu_sim.command_buffer,
             VoxelMaterial,
@@ -1007,18 +987,6 @@ pub const Simulation = struct {
             VoxelMaterialVisual,
             gpu_sim.voxel_materials_visual_buffer,
             sim.voxel_materials_visual.items,
-        );
-
-        var upload_uniforms = shader_uniforms;
-
-        upload_uniforms.simulation_read_offset = gpu_sim.simulation_write_offset;
-        upload_uniforms.simulation_write_offset = gpu_sim.simulation_read_offset;
-
-        gpu.mem.copySingle(
-            gpu_sim.command_buffer,
-            ShaderUniforms,
-            gpu_sim.uniform_buffer,
-            &upload_uniforms,
         );
 
         gpu.mem.copy(
@@ -1051,16 +1019,6 @@ pub const Simulation = struct {
                 },
             );
         }
-
-        upload_uniforms.simulation_read_offset = gpu_sim.simulation_read_offset;
-        upload_uniforms.simulation_write_offset = gpu_sim.simulation_write_offset;
-
-        gpu.mem.copySingle(
-            gpu_sim.command_buffer,
-            ShaderUniforms,
-            gpu_sim.uniform_buffer,
-            &upload_uniforms,
-        );
 
         gpu.barrier(
             gpu_sim.command_buffer,
@@ -1097,16 +1055,6 @@ pub const Simulation = struct {
                 },
             );
 
-            upload_uniforms.simulation_read_offset = gpu_sim.simulation_write_offset;
-            upload_uniforms.simulation_write_offset = gpu_sim.simulation_read_offset;
-
-            gpu.mem.copySingle(
-                gpu_sim.command_buffer,
-                ShaderUniforms,
-                gpu_sim.uniform_buffer,
-                &upload_uniforms,
-            );
-
             gpu.setStatePipeline(gpu_sim.command_buffer, gpu_sim.shaders.grain_simulation_shader);
             gpu.dispatchCompute(
                 gpu_sim.command_buffer,
@@ -1118,16 +1066,6 @@ pub const Simulation = struct {
                         .workgroup_count_z = sim.depth / 8,
                     },
                 },
-            );
-
-            upload_uniforms.simulation_read_offset = gpu_sim.simulation_read_offset;
-            upload_uniforms.simulation_write_offset = gpu_sim.simulation_write_offset;
-
-            gpu.mem.copySingle(
-                gpu_sim.command_buffer,
-                ShaderUniforms,
-                gpu_sim.uniform_buffer,
-                &upload_uniforms,
             );
 
             gpu.barrier(
@@ -1182,23 +1120,13 @@ pub const Simulation = struct {
     pub fn render(
         sim: Simulation,
         context: Context,
-        shader_uniforms: ShaderUniforms,
-        render_texture: ?*Texture,
+        render_texture: ?[]u8,
         scene_root_index: u32,
         options: struct {
             render_sdf_raymarched: bool = false,
         },
     ) void {
-        var actual_uniforms = shader_uniforms;
-        actual_uniforms.sdf_texture_root = scene_root_index;
-
-        gpu.mem.copySingle(
-            sim.command_buffer,
-            ShaderUniforms,
-            sim.uniform_buffer,
-            &actual_uniforms,
-        );
-
+        _ = scene_root_index; // autofix
         gpu.mem.copySingle(
             sim.command_buffer,
             RayStats,
@@ -1225,6 +1153,12 @@ pub const Simulation = struct {
                             .texture = texture,
                             .clear = .{ 0, 0, 0, 0 },
                         },
+                    },
+                    .render_area = .{
+                        .x = 0,
+                        .y = 0,
+                        .width = 128,
+                        .height = 128,
                     },
                     //TODO: add depth stencil buffer
                 },
@@ -1343,29 +1277,19 @@ pub const Simulation = struct {
         scene_root_index: u32,
         scene_path: []const u8,
         gpa: std.mem.Allocator,
-    ) !?*Texture {
+    ) !?[]u8 {
         sim.csg_dirty = true;
-
-        gpu.setStateSamplerDescriptorHeap(gpu_sim.command_buffer, context.sampler_heap);
-
-        gpu.mem.copy(
-            gpu_sim.command_buffer,
-            u8,
-            (std.mem.asBytes(gpu_sim.uniform_buffer).ptr + @offsetOf(ShaderUniforms, "sdf_texture_root"))[0..4],
-            std.mem.asBytes(&scene_root_index),
-        );
 
         const is_enabled: bool = sim.enable_simulation;
         sim.update(scene_root_index);
 
         const thumbnail_result = try gpu_sim.scene_thumbnails.getOrPut(gpa, std.fs.path.basename(scene_path));
 
-        const thumbnail_texture, const thumbnail_mem = try context.gpu_gpa.allocTexture(
+        const thumbnail_texture = try context.gpu_gpa.allocTexture(
             .{
                 .dimensions = .{ 128, 128, 1 },
             },
         );
-        _ = thumbnail_mem; // autofix
 
         thumbnail_result.value_ptr.* = thumbnail_texture;
 
@@ -1409,20 +1333,15 @@ pub const Simulation = struct {
         gpa: std.mem.Allocator,
         width: u32,
         height: u32,
-    ) !*Texture {
-        _ = sim; // autofix
+    ) ![]u8 {
         _ = gpa; // autofix
-        gpu.mem.copy(
-            gpu_sim.command_buffer,
-            u8,
-            (std.mem.asBytes(gpu_sim.uniform_buffer).ptr + @offsetOf(ShaderUniforms, "sdf_texture_root"))[0..4],
-            std.mem.asBytes(&scene_root_index),
-        );
+        _ = scene_root_index; // autofix
+        _ = sim; // autofix
+
         const command_buffer = context.command_buffer;
         _ = command_buffer; // autofix
 
         if (gpu_sim.scene_2d_texture_width != width or gpu_sim.scene_2d_texture_height != height) {
-            gpu.destroyTexture(gpu_sim.scene_2d_texture.?);
             //TODO: create new texture
 
             //gpu_sim.scene_2d_texture = @ptrFromInt(scene_2d_texture);
@@ -1488,7 +1407,6 @@ const renderer_shader = @import("renderer_shader");
 const SdfElement3D = @import("Simulation.zig").SdfElement3D;
 
 const RayStats = @import("Simulation.zig").RayStats;
-const ShaderUniforms = @import("Simulation.zig").ShaderUniforms;
 const VoxelMaterial = @import("Simulation.zig").VoxelMaterial;
 const VoxelMaterialVisual = @import("Simulation.zig").VoxelMaterialVisual;
 const PointLight = @import("Simulation.zig").PointLight;

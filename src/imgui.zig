@@ -1351,35 +1351,6 @@ pub const impl = struct {
         }
     };
 
-    pub const opengl3 = struct {
-        pub fn init(
-            options: struct {
-                glsl_version: ?[:0]const u8 = null,
-            },
-        ) InitError!void {
-            const status = if (options.glsl_version) |glsl_version|
-                cimgui.cImGui_ImplOpenGL3_InitEx(glsl_version.ptr)
-            else
-                cimgui.cImGui_ImplOpenGL3_Init();
-
-            if (status == false) {
-                return InitError.InitFailed;
-            }
-        }
-
-        pub fn shutdown() void {
-            cimgui.cImGui_ImplOpenGL3_Shutdown();
-        }
-
-        pub fn newFrame() void {
-            cimgui.cImGui_ImplOpenGL3_NewFrame();
-        }
-
-        pub fn renderDrawData(draw_data: *DrawData) void {
-            cimgui.cImGui_ImplOpenGL3_RenderDrawData(@ptrCast(draw_data));
-        }
-    };
-
     pub const vulkan = struct {
         pub fn init(
             init_info: cimgui.ImGui_ImplVulkan_InitInfo,

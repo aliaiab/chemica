@@ -13,7 +13,9 @@ pub fn fragmentMain(
     return @splat(0);
 }
 
-const PipelinePacket = extern struct {};
+const PipelinePacket = extern struct {
+    pad: u32 = 0,
+};
 
 comptime {
     start.exportPipeline(@import("shader_options").shader_module_type);

@@ -76,6 +76,11 @@ pub fn computeMain(
         simulation_state.filled_bounds_max = @splat(0);
     }
 
+    if (true) {
+        //TODO: driver crash if this is deleted
+        return;
+    }
+
     if (heap_index != .null) {
         const chunk_begin = chunk_pos * @as(@Vector(3, i32), @splat(common.chunk_size));
         const chunk_end = chunk_begin + @as(@Vector(3, i32), @splat(common.chunk_size));

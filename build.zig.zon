@@ -12,10 +12,6 @@
             .url = "git+https://github.com/tiawl/cimgui.zig.git#0c4879c66b1847372d0c3fb583f85b4610eb319f",
             .hash = "cimgui_zig-1.0.0-2XubkgIExgAD_16D1jswkYZkdKYK1zGueFcJN-eoMrsY",
         },
-        .zigglgen = .{
-            .url = "git+https://github.com/castholm/zigglgen.git#fdf06cc7ea9951203f91a27a5548f943cd6c1d59",
-            .hash = "zigglgen-0.5.1-ziggljvILwAsVanrBL96ZTzHPQ1vIQCV_Gnt3mqufzjz",
-        },
         .zmath = .{
             .url = "git+https://github.com/zig-gamedev/zmath.git#9e42b04a24c970a297b365f3d3022f92dbf3219d",
             .hash = "zmath-0.11.0-dev-wjwivTwtAwDOjG2_KGP-HLtHrONfsFfHttalmxFAGVAK",
@@ -32,10 +28,6 @@
             .url = "git+https://github.com/aliaiab/nfd-zig.git#37508ad2c57c336e4e4cd961278958e8111b741f",
             .hash = "nfd-0.1.0-y82kbrOMBgCNFqLVufstDZIuzZvNcS5XwQZNDBy14D8a",
         },
-        .MGL = .{
-            .url = "git+https://github.com/openglonmetal/MGL.git#de0ded04ec7dc99182e27e555a17775523b26911",
-            .hash = "N-V-__8AAIrO6wA_oY9CRnuHSR_kDCAOp4nlyCAb2Uzsdl4v",
-        },
         .metal_bindings = .{
             .url = "git+https://github.com/francisqureshi/metal-bindings.git#3f6df72157ee9e1722abfc8f3044a62ad68bbb3a",
             .hash = "metal_bindings-0.0.0-512c62jzAAA8FQgf4ZTmxC71AOOrkncehnh690GFtWnP",
@@ -43,10 +35,6 @@
         .zig_objc = .{
             .url = "git+https://github.com/mitchellh/zig-objc.git#c8de82ff80281215ad92900866dab7103a8efa8b",
             .hash = "zig_objc-0.0.0-Ir_Sp9gsAQCPAJc0oF5xoWePHWP6Y6tCphDeyNUThJoi",
-        },
-        .glslang_zig = .{
-            .url = "git+https://github.com/aliaiab/glslang-zig#d45a39fa3ebd00d2cd3cdf549072a28bbb467ff9",
-            .hash = "glslang_zig-0.0.0-V29wTx4xAADgsmkiOehRI8jTot_FQcoLiSO7B2TYQyKY",
         },
         .vulkan = .{
             .url = "git+https://github.com/Snektron/vulkan-zig.git#6994c93a6e882bac855aed606cf97a91e3f71d1f",

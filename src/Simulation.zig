@@ -53,59 +53,21 @@ pub fn deinit(sim: *Simulation, gpa: std.mem.Allocator) void {
 }
 
 pub fn update(sim: *Simulation, scene_root_index: u32) void {
-    const shader_uniforms: ShaderUniforms = .{
-        .size = .{ sim.width, sim.height, sim.depth },
-        .base_velocity = undefined,
-        .model = sim.model_matrix,
-        .view = sim.view_matrix,
-        .projection = sim.projection_matrix,
-        .root_transform = .identity,
-        .csg_bounding_min = undefined,
-        .csg_bounding_max = undefined,
-        .substep_index = sim.timestep_index,
-        .window_size = sim.window_size,
-        .delta_time = 0,
-        .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
-        .renderer_view_type = sim.renderer_view_type,
-        .sdf_texture_root = scene_root_index,
-        .simulation_read_offset = 0,
-        .simulation_write_offset = @intCast(sim.gpu_sim.simulation_material_buffer.len / 2),
-    };
-
-    sim.gpu_sim.update(sim, shader_uniforms);
+    _ = scene_root_index; // autofix
+    sim.gpu_sim.update(sim);
 }
 
 pub fn render(
     sim: *Simulation,
     context: gpu.Context,
-    render_texture: ?*Texture,
+    render_texture: ?[]u8,
     scene_root_index: u32,
     options: struct {
         render_sdf_raymarched: bool = false,
     },
 ) void {
-    const shader_uniforms: ShaderUniforms = .{
-        .size = .{ sim.width, sim.height, sim.depth },
-        .base_velocity = undefined,
-        .model = sim.model_matrix,
-        .view = sim.view_matrix,
-        .projection = sim.projection_matrix,
-        .root_transform = .identity,
-        .csg_bounding_min = undefined,
-        .csg_bounding_max = undefined,
-        .substep_index = sim.timestep_index,
-        .window_size = sim.window_size,
-        .delta_time = 0,
-        .enable_radiative_cooling = @intFromBool(sim.enable_radiative_cooling),
-        .renderer_view_type = sim.renderer_view_type,
-        .sdf_texture_root = scene_root_index,
-        .simulation_read_offset = 0,
-        .simulation_write_offset = @intCast(sim.gpu_sim.simulation_material_buffer.len / 2),
-    };
-
     sim.gpu_sim.render(
         context,
-        shader_uniforms,
         render_texture,
         scene_root_index,
         .{ .render_sdf_raymarched = options.render_sdf_raymarched },
@@ -118,8 +80,6 @@ pub fn updateCSGProgram(
 ) !void {
     try sim.gpu_sim.updateCSGProgram(sim.*, program);
 }
-
-pub const ShaderUniforms = @import("lib").shaders.ShaderUniforms;
 
 pub const VoxelMaterial = extern struct {
     //kgmol^-1

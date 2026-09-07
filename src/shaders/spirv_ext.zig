@@ -49,6 +49,11 @@ pub const SamplerHeap = struct {
     pub const Index = enum(u32) {
         null = std.math.maxInt(u32),
         _,
+
+        ///Returns a sampler index from a pointer contained within a heap
+        pub fn fromHeapPtr(heap: anytype, ptr: anytype) Index {
+            return @fromBackingInt(@intCast((@intFromPtr(ptr) - @intFromPtr(heap)) / @sizeOf(u256)));
+        }
     };
 
     pub const USampler2D = @SpirvType(.{ .sampled_image = UImage2DSampled });

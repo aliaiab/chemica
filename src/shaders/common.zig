@@ -278,27 +278,6 @@ pub const SpotLight = extern struct {
     outer_angle: f32,
 };
 
-pub const ShaderUniforms = extern struct {
-    model: [4][4]f32,
-    view: [4][4]f32,
-    projection: [4][4]f32,
-    size: [3]u32,
-    padding0: u32 = 0,
-    base_velocity: [3]i32,
-    substep_index: u32,
-    root_transform: AffineTransform3D,
-    csg_bounding_min: [3]i32,
-    padding1: u32 = 0,
-    csg_bounding_max: [3]i32,
-    delta_time: f32,
-    window_size: [2]u32,
-    enable_radiative_cooling: u32,
-    renderer_view_type: RendererViewType,
-    sdf_texture_root: u32 = 0,
-    simulation_read_offset: u32,
-    simulation_write_offset: u32,
-};
-
 pub const RendererViewType = enum(u32) {
     pbr,
     albedo,

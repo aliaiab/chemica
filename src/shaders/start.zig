@@ -67,6 +67,12 @@ pub fn exportComputePipeline(
                                     arg.* = .{
                                         .samplers_2d = @extern(@TypeOf(arg.*.samplers_2d), .{
                                             .name = "samplers",
+                                            .decoration = .{
+                                                .descriptor = .{
+                                                    .set = 0,
+                                                    .binding = 0,
+                                                },
+                                            },
                                         }),
                                     };
                                 },
@@ -124,7 +130,17 @@ fn vertexMain() callconv(.spirv_vertex) void {
                         };
                     },
                     SamplerHeap => {
-                        arg.* = .{};
+                        arg.* = .{
+                            .samplers_2d = @extern(@TypeOf(arg.*.samplers_2d), .{
+                                .name = "samplers",
+                                .decoration = .{
+                                    .descriptor = .{
+                                        .set = 0,
+                                        .binding = 0,
+                                    },
+                                },
+                            }),
+                        };
                     },
                     else => @compileError("Not supported!"),
                 }
@@ -173,7 +189,17 @@ fn fragmentMain() callconv(.{ .spirv_fragment = .{} }) void {
                         };
                     },
                     SamplerHeap => {
-                        arg.* = .{};
+                        arg.* = .{
+                            .samplers_2d = @extern(@TypeOf(arg.*.samplers_2d), .{
+                                .name = "samplers",
+                                .decoration = .{
+                                    .descriptor = .{
+                                        .set = 0,
+                                        .binding = 0,
+                                    },
+                                },
+                            }),
+                        };
                     },
                     else => {
                         arg.* = in.*;

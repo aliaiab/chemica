@@ -1,7 +1,7 @@
 pub fn vertexMain(
-    vertex_positions: [*]addrspace(.physical_storage_buffer) const [4]f32,
-    simulation_state: *addrspace(.physical_storage_buffer) const common.SimulationState,
-    simulation_rendering_state: *addrspace(.physical_storage_buffer) const common.SimulationRenderingState,
+    vertex_positions: [*]addrspace(start.address_space) const [4]f32,
+    simulation_state: *addrspace(start.address_space) const common.SimulationState,
+    simulation_rendering_state: *addrspace(start.address_space) const common.SimulationRenderingState,
     draw_parameters: start.RasterDrawCommandParameters,
 ) struct { @Vector(4, f32), PipelinePacket } {
     _ = simulation_rendering_state; // autofix
@@ -10,22 +10,15 @@ pub fn vertexMain(
 }
 
 pub fn fragmentMain(
-    _: *addrspace(.physical_storage_buffer) const [4]f32,
-    simulation_state: *addrspace(.physical_storage_buffer) const common.SimulationState,
-    simulation_rendering_state: *addrspace(.physical_storage_buffer) const common.SimulationRenderingState,
+    _: *addrspace(start.address_space) const [4]f32,
+    simulation_state: *addrspace(start.address_space) const common.SimulationState,
+    simulation_rendering_state: *addrspace(start.address_space) const common.SimulationRenderingState,
     input: PipelinePacket,
 ) @Vector(4, f32) {
     _ = simulation_rendering_state; // autofix
     _ = simulation_state; // autofix
     _ = input; // autofix
-    const vos: math.Vec3(f32) = undefined;
-    const dir: math.Vec3(f32) = undefined;
-    const eye: math.Vec3(f32) = undefined;
-    const end_pos: math.Vec3(f32) = undefined;
-    _ = end_pos; // autofix
-    _ = eye; // autofix
-    _ = dir; // autofix
-    _ = vos; // autofix
+    // autofix
 
     return @splat(0);
 }

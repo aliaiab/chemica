@@ -7,26 +7,13 @@ pub fn build(b: *std.Build) !void {
     const zglfw = b.dependency("zglfw", .{
         .target = target,
         .optimize = optimize,
-        .import_vulkan = true,
+        .import_vulkan = false,
     });
-
-    var cimgui_renderers: [1]cimgui.Renderer = undefined;
-
-    if (target.result.os.tag == .macos) {
-        cimgui_renderers[0] = .Metal;
-    } else {
-        if (use_vulkan) {
-            //cimgui_renderers[0] = .Vulkan;
-        }
-
-        cimgui_renderers[0] = .OpenGL3;
-    }
 
     const cimgui_dep = b.dependency("cimgui_zig", .{
         .target = target,
         .optimize = optimize,
         .platforms = &[_]cimgui.Platform{.GLFW},
-        .renderers = &cimgui_renderers,
         .docking = true,
     });
 
@@ -34,16 +21,6 @@ pub fn build(b: *std.Build) !void {
 
     const zigimg = b.dependency("zigimg", .{});
     const zmath = b.dependency("zmath", .{});
-
-    // Choose the OpenGL API, version, profile and extensions you want to generate bindings for.
-    const gl_bindings = @import("zigglgen").generateModule(b, .{
-        .api = .gl,
-        .version = .@"4.6",
-        .profile = .core,
-        .extensions = &.{
-            .EXT_mesh_shader,
-        },
-    });
 
     const freetype_dep = b.dependency("freetype", .{
         .target = target,
@@ -78,7 +55,6 @@ pub fn build(b: *std.Build) !void {
 
     const zglfw_mod = zglfw.module("root");
 
-    main_module.addImport("gl", gl_bindings);
     main_module.addImport("zglfw", zglfw_mod);
     main_module.addImport("zigimg", zigimg.module("zigimg"));
     main_module.addImport("lib", root_module);
@@ -184,24 +160,6 @@ pub fn build(b: *std.Build) !void {
 
     check_step.dependOn(&exe_check.step);
 
-    const glslang_zig = b.dependency("glslang_zig", .{
-        .optimize = optimize,
-        .target = target,
-    });
-
-    const glsl_compiler = b.addExecutable(.{
-        .name = "glsl_compiler",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/build/glsl_compiler.zig"),
-            .target = b.graph.host,
-            .optimize = .debug,
-        }),
-    });
-
-    glsl_compiler.root_module.addIncludePath(b.path(""));
-    glsl_compiler.root_module.addImport("glslang", glslang_zig.module("glslang-zig"));
-    glsl_compiler.root_module.addImport("glslang_c", glslang_zig.module("c_interface"));
-
     const shader_start_module = b.createModule(.{
         .root_source_file = b.path("src/shaders/start.zig"),
     });
@@ -264,10 +222,21 @@ fn compileZigShader(
             .optimize = mode,
             .target = b.resolveTargetQuery(.{
                 .cpu_arch = .spirv64,
-                .cpu_model = .{ .explicit = &std.Target.spirv.cpu.generic },
+                .cpu_model = .{ .explicit = &std.Target.spirv.cpu.vulkan_v1_2 },
                 .cpu_features_add = std.Target.spirv.featureSet(&[_]std.Target.spirv.Feature{
                     .v1_4,
                     .image_query,
+                    .draw_parameters,
+                    .sampled_image_array_non_uniform_indexing,
+                    .storage_image_array_non_uniform_indexing,
+                    .atomic_storage,
+                    .atomic_storage_ops,
+                    .variable_pointers_storage_buffer,
+                    .variable_pointers,
+                    .untyped_pointers_khr,
+                    .SPV_KHR_untyped_pointers,
+                    .SPV_EXT_physical_storage_buffer,
+                    .SPV_EXT_descriptor_indexing,
                 }),
                 .os_tag = .vulkan,
                 .ofmt = .spirv,

@@ -1,4 +1,3 @@
-pub const ShaderUniforms = common.ShaderUniforms;
 pub const AffineTransform3D = common.AffineTransform3D;
 pub const RendererViewType = common.RendererViewType;
 

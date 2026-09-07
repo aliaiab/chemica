@@ -1,12 +1,9 @@
-descriptors: []gpu.TextureDescriptor,
-sampler_descriptors: []gpu.TextureDescriptor,
-
 pub fn init(
-    descriptor_allocator: gpu.mem.Allocator,
-    sampler_descriptor_allocator: gpu.mem.Allocator,
+    sampler_heap: []gpu.TextureDescriptor,
+    sampler_allocator: gpu.mem.Allocator,
 ) RendererImGui {
-    _ = sampler_descriptor_allocator; // autofix
-    _ = descriptor_allocator; // autofix
+    _ = sampler_allocator; // autofix
+    _ = sampler_heap; // autofix
     const self: RendererImGui = .{};
 
     return self;
