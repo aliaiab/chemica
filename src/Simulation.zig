@@ -52,15 +52,15 @@ pub fn deinit(sim: *Simulation, gpa: std.mem.Allocator) void {
     _ = gpa; // autofix
 }
 
-pub fn update(sim: *Simulation, scene_root_index: u32) void {
+pub fn update(sim: *Simulation, scene_root_index: u32) !void {
     _ = scene_root_index; // autofix
-    sim.gpu_sim.update(sim);
+    try sim.gpu_sim.update(sim);
 }
 
 pub fn render(
     sim: *Simulation,
     context: gpu.Context,
-    render_texture: ?[]u8,
+    render_texture: ?[]gpu.TextureByte,
     scene_root_index: u32,
     options: struct {
         render_sdf_raymarched: bool = false,
@@ -76,9 +76,10 @@ pub fn render(
 
 pub fn updateCSGProgram(
     sim: *Simulation,
+    context: *gpu.Context,
     program: CSGProgram,
 ) !void {
-    try sim.gpu_sim.updateCSGProgram(sim.*, program);
+    try sim.gpu_sim.updateCSGProgram(context, sim.*, program);
 }
 
 pub const VoxelMaterial = extern struct {

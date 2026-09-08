@@ -234,7 +234,7 @@ pub fn selectDevice(
     };
 
     const vma_allocator_create_info: vma.VmaAllocatorCreateInfo = .{
-        .flags = vma.VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT,
+        .flags = vma.VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT | vma.VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
         .vulkanApiVersion = vma.VK_API_VERSION_1_3,
         .physicalDevice = @ptrFromInt(@intFromEnum(context.physical_device)),
         .device = @ptrFromInt(@intFromEnum(context.device.handle)),
@@ -361,8 +361,11 @@ pub fn memAlloc(
             properties = .{ .device_local = true };
         },
         .gpu_cpu_writable => {
-            vma_usage = vma.VMA_MEMORY_USAGE_GPU_ONLY;
-            properties = .{ .device_local = true, .host_visible = true };
+            vma_usage = vma.VMA_MEMORY_USAGE_AUTO;
+            properties = .{
+                .device_local = true,
+                .host_visible = true,
+            };
         },
         .cpu => return std.heap.page_allocator.rawAlloc(size, alignment, @returnAddress()).?[0..size],
         .readback => {
@@ -390,17 +393,13 @@ pub fn memAlloc(
         .sharing_mode = .exclusive,
     };
 
-    const buffer = context.device.createBuffer(
-        &buffer_create_info,
-        null,
-    ) catch @panic("");
-
-    var memory_requirements = context.device.getBufferMemoryRequirements(buffer);
-
-    memory_requirements.alignment = @max(memory_requirements.alignment, alignment.toByteUnits());
+    var buffer: vk.Buffer = undefined;
 
     const allocation_create_info: vma.VmaAllocationCreateInfo = .{
-        .flags = if (memory_type != .gpu) vma.VMA_ALLOCATION_CREATE_MAPPED_BIT else 0,
+        .flags = if (memory_type != .gpu)
+            vma.VMA_ALLOCATION_CREATE_MAPPED_BIT | vma.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
+        else
+            0,
         .usage = vma_usage,
         .requiredFlags = @bitCast(properties),
     };
@@ -408,18 +407,13 @@ pub fn memAlloc(
     var vma_alloc: vma.VmaAllocation = undefined;
     var vma_alloc_info: vma.VmaAllocationInfo = undefined;
 
-    _ = vma.vmaAllocateMemory(
+    _ = vma.vmaCreateBuffer(
         context.vma_allocator,
-        @ptrCast(&memory_requirements),
+        @ptrCast(&buffer_create_info),
         &allocation_create_info,
+        @ptrCast(&buffer),
         &vma_alloc,
         &vma_alloc_info,
-    );
-
-    _ = vma.vmaBindBufferMemory(
-        context.vma_allocator,
-        vma_alloc,
-        @ptrFromInt(@intFromEnum(buffer)),
     );
 
     const address: u64 = context.device.getBufferDeviceAddress(&.{
@@ -450,7 +444,6 @@ pub fn memAlloc(
     return ptr[0..size];
 }
 
-///Free device memory
 pub fn memFree(memory: []u8) void {
     const allocation = getMemoryAllocation(memory);
 
@@ -475,11 +468,8 @@ pub fn memCopy(
     const dest_allocation = getMemoryAllocation(dest_gpu);
     const src_allocation = getMemoryAllocation(src_gpu);
 
+    std.debug.assert(isGpuMemory(dest_gpu));
     std.debug.assert(isGpuMemory(src_gpu));
-
-    if (true) {
-        return;
-    }
 
     context.device.cmdCopyBuffer(
         vk_command_buffer,
@@ -492,12 +482,12 @@ pub fn memCopy(
 pub fn memCopyToTexture(
     command_buffer: *CommandBuffer,
     dest_slice: gpu.TextureSliceDescription,
-    dest_gpu: []u8,
+    dest_gpu: []gpu.TextureByte,
     src_gpu: []const u8,
 ) void {
     const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
 
-    std.debug.assert(isGpuMemory(dest_gpu));
+    std.debug.assert(isGpuMemory(@ptrCast(dest_gpu)));
     std.debug.assert(isGpuMemory(src_gpu));
 
     const src_allocation = getMemoryAllocation(src_gpu);
@@ -507,7 +497,7 @@ pub fn memCopyToTexture(
     const mip_height: u32 = @max(1, dest_slice.dimensions[1] >> @as(u5, @intCast(dest_slice.mip_start)));
     const mip_depth: u32 = @max(1, dest_slice.dimensions[2] >> @as(u5, @intCast(dest_slice.mip_start)));
 
-    const dest_texture = getMemoryAllocationTexture(dest_gpu);
+    const dest_texture = getMemoryAllocationTexture(@ptrCast(dest_gpu));
 
     context.device.cmdCopyBufferToImage(
         vk_command_buffer,
@@ -759,13 +749,13 @@ pub fn textureMemoryDescription(
 }
 
 pub fn registerTextureMemory(
-    memory: []u8,
+    memory: []gpu.TextureByte,
     description: TextureDescription,
 ) void {
     const image_create_info = toVkImageCreateInfo(description);
 
-    const allocation = getMemoryAllocationPtr(memory);
-    const allocation_offset = getMemoryAllocationOffset(memory);
+    const allocation = getMemoryAllocationPtr(@ptrCast(memory));
+    const allocation_offset = getMemoryAllocationOffset(@ptrCast(memory));
 
     var image: vk.Image = .null_handle;
 
@@ -778,39 +768,36 @@ pub fn registerTextureMemory(
     ) >= 0);
 
     const cmds = queueStartCommandRecording(.{}, .{});
+    defer queueSubmit(.{}, &.{cmds}, &.{});
 
     const cmd_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(cmds));
 
     std.debug.assert(image != .null_handle);
 
-    if (false) {
-        context.device.cmdPipelineBarrier2(cmd_buffer, &.{
-            .image_memory_barrier_count = 1,
-            .p_image_memory_barriers = @ptrCast(&vk.ImageMemoryBarrier2{
-                .image = image,
-                .src_queue_family_index = context.graphics_queue.family,
-                .dst_queue_family_index = context.graphics_queue.family,
-                .subresource_range = .{
-                    .aspect_mask = toVkImageAspectFlags(description.format),
-                    .base_mip_level = 0,
-                    .base_array_layer = 0,
-                    .level_count = description.mip_count,
-                    .layer_count = description.layer_count,
-                },
-                .old_layout = .undefined,
-                .new_layout = .general,
-                .src_stage_mask = .{ .all_commands = true },
-                .src_access_mask = .{ .memory_write = true },
-                .dst_stage_mask = .{ .all_commands = true },
-                .dst_access_mask = .{ .memory_read = true, .memory_write = true },
-            }),
-        });
-    }
-
-    defer queueSubmit(.{}, &.{cmds}, &.{});
+    context.device.cmdPipelineBarrier2(cmd_buffer, &.{
+        .image_memory_barrier_count = 1,
+        .p_image_memory_barriers = @ptrCast(&vk.ImageMemoryBarrier2{
+            .image = image,
+            .src_queue_family_index = context.graphics_queue.family,
+            .dst_queue_family_index = context.graphics_queue.family,
+            .subresource_range = .{
+                .aspect_mask = toVkImageAspectFlags(description.format),
+                .base_mip_level = 0,
+                .base_array_layer = 0,
+                .level_count = description.mip_count,
+                .layer_count = description.layer_count,
+            },
+            .old_layout = .undefined,
+            .new_layout = .general,
+            .src_stage_mask = .{ .all_commands = true },
+            .src_access_mask = .{ .memory_write = true },
+            .dst_stage_mask = .{ .all_commands = true },
+            .dst_access_mask = .{ .memory_read = true, .memory_write = true },
+        }),
+    });
 
     allocation.textures.append(context.gpa, .{
-        .allocation = memory,
+        .allocation = @ptrCast(memory),
         .handle = image,
         .view = .null_handle,
         .description = description,
@@ -818,52 +805,19 @@ pub fn registerTextureMemory(
 }
 
 pub fn unregisterTextureMemory(
-    texture: []const u8,
+    texture: []const gpu.TextureByte,
 ) void {
-    _ = texture; // autofix
+    const texture_data = getMemoryAllocationTexture(texture);
+
+    context.device.destroyImage(texture_data.handle, null);
 }
 
 pub fn createTextureDescriptor(
-    texture: []const u8,
+    texture: []const gpu.TextureByte,
 ) TextureDescriptor {
-    _ = texture; // autofix
-    return undefined;
-}
+    const texture_data = getMemoryAllocationTexture(@ptrCast(texture));
 
-pub fn createTextureSliceDescriptor(
-    texture: []const u8,
-    slice: gpu.TextureSliceDescription,
-) TextureDescriptor {
-    _ = texture; // autofix
-    _ = slice; // autofix
-    return undefined;
-}
-
-pub fn createTextureSliceSamplerDescriptor(
-    texture: []const u8,
-    slice: gpu.TextureSliceDescription,
-    sampler: gpu.TextureSamplerDescription,
-) TextureDescriptor {
-    _ = texture; // autofix
-    _ = slice; // autofix
-    _ = sampler; // autofix
-    return undefined;
-}
-
-pub fn createSamplerDescriptor(
-    sampler: gpu.TextureSamplerDescription,
-) TextureDescriptor {
-    _ = sampler; // autofix
-    return undefined;
-}
-
-pub fn readDescriptorTextureIntoHeap(
-    texture: []const u8,
-    descriptor: *TextureDescriptor,
-) void {
-    const heap_data: DescriptorHeapData = getMemoryAllocationDescriptorHeap(descriptor);
-    const texture_data = getMemoryAllocationTexture(texture);
-    const vk_image: vk.Image = texture_data.handle;
+    var descriptor: TextureDescriptor = undefined;
 
     if (context.vk_ext_descriptor_heap_enabled) {
         context.device.writeResourceDescriptorsEXT(
@@ -873,7 +827,7 @@ pub fn readDescriptorTextureIntoHeap(
                     .data = .{
                         .p_image = &.{
                             .p_view = &.{
-                                .image = vk_image,
+                                .image = texture_data.handle,
                                 .view_type = .@"2d",
                                 .format = undefined,
                                 .components = undefined,
@@ -885,7 +839,7 @@ pub fn readDescriptorTextureIntoHeap(
                 },
             },
             &.{.{
-                .address = gpu.mem.toAccessiblePointer(descriptor),
+                .address = &descriptor,
                 .size = @sizeOf(gpu.TextureDescriptor),
             }},
         ) catch @panic("oom");
@@ -908,49 +862,53 @@ pub fn readDescriptorTextureIntoHeap(
             .unnormalized_coordinates = .false,
         }, null) catch @panic("oom");
         const view = context.device.createImageView(&.{
-            .image = vk_image,
+            .image = texture_data.handle,
             .view_type = .@"2d",
-            .format = .r8g8b8a8_unorm,
+            .format = toVkImageFormat(texture_data.description.format),
             .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
             .subresource_range = .{
-                .aspect_mask = toVkImageAspectFlags(.rgba8_unorm32),
+                .aspect_mask = toVkImageAspectFlags(texture_data.description.format),
                 .base_mip_level = 0,
-                .level_count = 1,
+                .level_count = texture_data.description.layer_count,
                 .base_array_layer = 0,
-                .layer_count = 1,
+                .layer_count = texture_data.description.mip_count,
             },
         }, null) catch @panic("oom");
 
-        context.device.updateDescriptorSets(
-            &.{
-                .{
-                    .dst_set = heap_data.descriptor_sets[0],
-                    .dst_binding = 0,
-                    .dst_array_element = @intCast(descriptor - heap_data.memory.ptr),
-                    .descriptor_count = 1,
-                    .descriptor_type = .sampled_image,
-                    .p_image_info = &[_]vk.DescriptorImageInfo{.{
-                        .sampler = sampler,
-                        .image_view = view,
-                        .image_layout = .general,
-                    }},
-                    .p_buffer_info = &.{},
-                    .p_texel_buffer_view = &.{},
-                },
-            },
-            &.{},
-        );
+        return @bitCast(DescriptorSetDescriptor{
+            .view = view,
+            .sampler = sampler,
+        });
     }
+
+    return descriptor;
 }
 
-pub fn readTextureSliceDescriptorIntoHeap(
-    texture: []const u8,
+pub fn createTextureSliceDescriptor(
+    texture: []const gpu.TextureByte,
     slice: gpu.TextureSliceDescription,
-    heap: []u8,
-) void {
+) TextureDescriptor {
     _ = texture; // autofix
     _ = slice; // autofix
-    _ = heap; // autofix
+    return undefined;
+}
+
+pub fn createTextureSliceSamplerDescriptor(
+    texture: []const gpu.TextureByte,
+    slice: gpu.TextureSliceDescription,
+    sampler: gpu.TextureSamplerDescription,
+) TextureDescriptor {
+    _ = texture; // autofix
+    _ = slice; // autofix
+    _ = sampler; // autofix
+    return undefined;
+}
+
+pub fn createSamplerDescriptor(
+    sampler: gpu.TextureSamplerDescription,
+) TextureDescriptor {
+    _ = sampler; // autofix
+    return undefined;
 }
 
 pub fn samplerHeapMemoryDescription(
@@ -964,17 +922,23 @@ pub fn samplerHeapMemoryDescription(
 }
 
 const DescriptorHeapData = struct {
-    memory: []TextureDescriptor,
+    memory: []const TextureDescriptor,
     descriptor_sets: [3]vk.DescriptorSet,
     descriptor_pool: vk.DescriptorPool,
 };
 
-pub fn createDescriptorHeap(
-    memory: []TextureDescriptor,
-) !void {
+const DescriptorSetDescriptor = packed struct(u256) {
+    view: vk.ImageView,
+    sampler: vk.Sampler,
+    _: u128 = 0,
+};
+
+fn createDescriptorHeap(
+    memory: []const TextureDescriptor,
+) !DescriptorHeapData {
     var data: DescriptorHeapData = undefined;
 
-    const allocation = getMemoryAllocationPtr(memory);
+    const allocation = getMemoryAllocationPtr(@ptrCast(memory));
 
     const texture_count: u32 = @intCast(memory.len / @sizeOf(gpu.TextureDescriptor));
 
@@ -1008,18 +972,58 @@ pub fn createDescriptorHeap(
             },
             &data.descriptor_sets,
         ) catch @panic("oom");
+
+        const descriptor_infos: []vk.DescriptorImageInfo = try context.gpa.alloc(
+            vk.DescriptorImageInfo,
+            memory.len,
+        );
+
+        var descriptor_count: u32 = 0;
+
+        for (memory, descriptor_infos) |descriptor, *info| {
+            const descriptor_data: DescriptorSetDescriptor = @bitCast(descriptor);
+            if (descriptor_data.view == .null_handle) {
+                break;
+            }
+
+            info.* = .{
+                .image_layout = .general,
+                .image_view = descriptor_data.view,
+                .sampler = descriptor_data.sampler,
+            };
+
+            descriptor_count += 1;
+        }
+
+        context.device.updateDescriptorSets(
+            &.{
+                .{
+                    .dst_set = data.descriptor_sets[0],
+                    .dst_binding = 0,
+                    .dst_array_element = 0,
+                    .descriptor_count = descriptor_count,
+                    .descriptor_type = .sampled_image,
+                    .p_image_info = descriptor_infos.ptr,
+                    .p_buffer_info = &.{},
+                    .p_texel_buffer_view = &.{},
+                },
+            },
+            &.{},
+        );
     }
 
     const descriptor_set_index = allocation.descriptor_sets.items.len;
 
     try allocation.descriptor_sets.append(context.gpa, data);
     try context.descriptor_heaps.append(context.gpa, .{
-        .allocation_index = getMemoryAllocationIndex(memory),
+        .allocation_index = getMemoryAllocationIndex(@ptrCast(memory)),
         .descriptor_heap_index = @intCast(descriptor_set_index),
     });
+
+    return data;
 }
 
-pub fn setStatePipeline(
+fn setStatePipeline(
     command_buffer: *CommandBuffer,
     pipeline: *Pipeline,
 ) void {
@@ -1268,11 +1272,13 @@ pub fn rasterPassEnd(
     context.device.cmdEndRendering(vk_command_buffer);
 }
 
-pub fn dispatchCompute(
+pub fn launchCompute(
     command_buffer: *CommandBuffer,
+    pipeline: *Pipeline,
     root_data: []const *anyopaque,
     commands: []const ComputeCommand,
 ) void {
+    setStatePipeline(command_buffer, pipeline);
     const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
 
     var push_constants: CommonPushConstants = undefined;
@@ -1313,12 +1319,14 @@ pub fn dispatchCompute(
     }
 }
 
-pub fn dispatchRasterDraw(
+pub fn launchRasterDraw(
     command_buffer: *CommandBuffer,
+    pipeline: *Pipeline,
     root_data: []const *anyopaque,
     commands: []const RasterDrawCommand,
     options: gpu.DispatchRasterDrawOptions,
 ) void {
+    setStatePipeline(command_buffer, pipeline);
     const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
 
     var push_constants: CommonPushConstants = undefined;
@@ -1353,9 +1361,11 @@ pub fn dispatchRasterDraw(
     }
 
     if (isGpuMemory(std.mem.sliceAsBytes(commands))) {
+        //Optimize for draw indirect
+        @branchHint(.likely);
+
         const commands_allocation = getMemoryAllocation(std.mem.sliceAsBytes(commands));
         const commands_offset = getMemoryAllocationOffset(std.mem.sliceAsBytes(commands));
-        //draw indirect
         context.device.cmdDrawIndirect(
             vk_command_buffer,
             commands_allocation.buffer,
@@ -1376,23 +1386,15 @@ pub fn dispatchRasterDraw(
     }
 }
 
-pub fn dispatchRasterDrawMeshes(
+pub fn launchRasterDrawMeshes(
     command_buffer: *CommandBuffer,
+    pipeline: *Pipeline,
     root_data: []const *anyopaque,
     commands: []const RasterDrawMeshesCommand,
 ) void {
+    setStatePipeline(command_buffer, pipeline);
     _ = root_data; // autofix
-    _ = command_buffer; // autofix
     _ = commands; // autofix
-    @panic("");
-}
-
-pub fn dispatchTraceRays(
-    command_buffer: *CommandBuffer,
-    root_data: []const *anyopaque,
-) void {
-    _ = root_data; // autofix
-    _ = command_buffer; // autofix
     @panic("");
 }
 
@@ -1410,6 +1412,7 @@ pub fn queueStartCommandRecording(
     initial_state: gpu.CommandBufferInitialState,
 ) *CommandBuffer {
     const pool = context.command_pools[@backingInt(queue)];
+    std.debug.print("cmd_pool: 0x{x}\n", .{pool});
     const cmd_buffer_allocation_info: vk.CommandBufferAllocateInfo = .{
         .command_pool = pool,
         .level = .primary,
@@ -1422,8 +1425,10 @@ pub fn queueStartCommandRecording(
 
     context.device.beginCommandBuffer(command_buffer, &.{}) catch @panic("oom");
 
-    {
-        const heap_data: DescriptorHeapData = getMemoryAllocationDescriptorHeap(@ptrCast(initial_state.sampler_heap));
+    if (initial_state.sampler_heap.len != 0) {
+        const heap_data: DescriptorHeapData = getMemoryAllocationDescriptorHeap(initial_state.sampler_heap) orelse blk: {
+            break :blk createDescriptorHeap(initial_state.sampler_heap) catch @panic("oom");
+        };
 
         const allocation = getMemoryAllocation(@ptrCast(heap_data.memory));
         const allocation_offset = getMemoryAllocationOffset(@ptrCast(heap_data.memory));
@@ -1464,14 +1469,6 @@ pub fn queueStartCommandRecording(
     return @ptrFromInt(@backingInt(command_buffer));
 }
 
-pub fn queueEndCommandRecording(
-    command_buffer: *CommandBuffer,
-) void {
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
-
-    context.device.endCommandBuffer(vk_command_buffer) catch @panic("oom");
-}
-
 pub fn queueSubmit(
     queue: Queue,
     command_buffers: []const *CommandBuffer,
@@ -1487,6 +1484,9 @@ pub fn queueSubmit(
         submit_info.* = .{
             .p_command_buffers = @ptrCast(&vk_command_buffer),
             .command_buffer_count = 1,
+            .p_wait_dst_stage_mask = &.{
+                .{ .all_commands = true },
+            },
         };
 
         context.device.endCommandBuffer(vk_command_buffer) catch @panic("End command buffer failed!");
@@ -1497,46 +1497,52 @@ pub fn queueSubmit(
         submit_infos,
         .null_handle,
     ) catch @panic("oom");
+
+    std.debug.print("Successful submit!\n", .{});
 }
 
 const SwapchainData = struct {
     handle: vk.SwapchainKHR,
     surface: vk.SurfaceKHR,
+    images: []vk.Image,
+    image_to_present: u32,
 };
 
 pub fn createSwapchain(
     window: *anyopaque,
 ) *gpu.Swapchain {
+    const glfw_window: *glfw.Window = @ptrCast(@alignCast(window));
     const swapchain_data = context.arena.create(SwapchainData) catch @panic("oom");
+
+    _ = glfw.createWindowSurface(@fromBackingInt(@backingInt(context.instance.handle)), glfw_window, null, @ptrCast(&swapchain_data.surface)) catch @panic("oom");
+
+    const surface_capabilities = context.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
+        context.physical_device,
+        swapchain_data.surface,
+    ) catch @panic("oom");
+
+    const image_count = @min(@max(surface_capabilities.min_image_count, 3), surface_capabilities.max_image_count);
 
     swapchain_data.handle = context.device.createSwapchainKHR(
         &.{
             .surface = swapchain_data.surface,
-            .min_image_count = 1,
-            .image_format = .undefined,
-            .image_color_space = undefined,
-            .image_extent = undefined,
-            .image_array_layers = undefined,
-            .image_usage = undefined,
+            .min_image_count = image_count,
+            .image_format = vk.Format.b8g8r8a8_srgb,
+            .image_color_space = vk.ColorSpaceKHR.srgb_nonlinear_khr,
+            .image_extent = surface_capabilities.current_extent,
+            .image_array_layers = 1,
+            .image_usage = .{ .color_attachment = true },
             .image_sharing_mode = .exclusive,
-            .pre_transform = undefined,
-            .composite_alpha = undefined,
-            .present_mode = undefined,
-            .clipped = undefined,
+            .pre_transform = .{ .identity_khr = true },
+            .composite_alpha = .{ .opaque_khr = true },
+            .present_mode = vk.PresentModeKHR.fifo_khr,
+            .clipped = .true,
         },
         null,
     ) catch @panic("oom");
 
-    context.allocations.append(context.gpa, .{
-        .buffer = .null_handle,
-        .device_address = 0,
-        .vma_alloc_info = undefined,
-        .vma_alloc = undefined,
-        .textures = .empty,
-        .descriptor_sets = .empty,
-    }) catch @panic("oom");
+    swapchain_data.images = context.device.getSwapchainImagesAllocKHR(swapchain_data.handle, context.arena) catch @panic("oom");
 
-    _ = window; // autofix
     return @ptrCast(swapchain_data);
 }
 
@@ -1544,18 +1550,62 @@ pub fn destroySwapchain(swapchain: *gpu.Swapchain) void {
     const swapchain_data: *SwapchainData = @ptrCast(@alignCast(swapchain));
 
     context.device.destroySwapchainKHR(swapchain_data.handle, null);
+    context.instance.destroySurfaceKHR(swapchain_data.surface, null);
 }
 
 pub fn swapchainObtainTexture(
-    _: *anyopaque,
-) []u8 {
-    return undefined;
+    swapchain: *gpu.Swapchain,
+) []gpu.TextureByte {
+    const swapchain_data: *SwapchainData = @ptrCast(@alignCast(swapchain));
+
+    const result = context.device.acquireNextImageKHR(
+        swapchain_data.handle,
+        std.math.maxInt(u64),
+        .null_handle,
+        .null_handle,
+    ) catch @panic("oom");
+
+    swapchain_data.image_to_present = result.image_index;
+
+    //Use a special constant for the pointer, as we're essentially creating a dummy texture
+    const ptr: [*]u8 = @ptrFromInt(0xfafa);
+
+    for (context.allocations.items[0].textures.items) |*texture| {
+        if (texture.allocation.ptr == ptr) {
+            texture.handle = swapchain_data.images[result.image_index];
+            break;
+        }
+    } else {
+        const allocation = getMemoryAllocationPtr(ptr[0..1]);
+
+        allocation.textures.append(context.gpa, .{
+            .allocation = ptr[0..1],
+            .handle = swapchain_data.images[result.image_index],
+            .view = .null_handle,
+            .description = undefined,
+        }) catch @panic("oom");
+    }
+
+    return @ptrCast(ptr[0..1]);
 }
 
 pub fn swapchainPresent(
-    _: *CommandBuffer,
-    _: *gpu.Swapchain,
-) void {}
+    command_buffer: *CommandBuffer,
+    swapchain: *gpu.Swapchain,
+) void {
+    _ = command_buffer; // autofix
+    const swapchain_data: *SwapchainData = @ptrCast(@alignCast(swapchain));
+
+    const result = context.device.queuePresentKHR(
+        context.graphics_queue.handle,
+        &.{
+            .swapchain_count = 1,
+            .p_swapchains = @ptrCast(&swapchain_data.handle),
+            .p_image_indices = &.{swapchain_data.image_to_present},
+        },
+    ) catch @panic("oom");
+    _ = result; // autofix
+}
 
 pub fn placeCommandTimestampQuery(
     command_buffer: *CommandBuffer,
@@ -1793,7 +1843,6 @@ inline fn toVkImageCreateInfo(description: TextureDescription) vk.ImageCreateInf
     return .{
         .flags = .{
             .cube_compatible = description.type == .cube or description.type == .array_cube,
-            .@"2d_array_compatible" = description.type == .array_2d or description.type == .array_cube,
         },
         .image_type = switch (description.type) {
             .@"1d" => .@"1d",
@@ -1874,18 +1923,18 @@ inline fn getMemoryAllocationTexture(memory: []const u8) TextureData {
     return undefined;
 }
 
-fn getMemoryAllocationDescriptorHeap(memory: *const TextureDescriptor) DescriptorHeapData {
-    const gpu_ptr: gpu.mem.GpuPointerData = @bitCast(@intFromPtr(memory));
+fn getMemoryAllocationDescriptorHeap(memory: []const TextureDescriptor) ?DescriptorHeapData {
+    const gpu_ptr: gpu.mem.GpuPointerData = @bitCast(@intFromPtr(memory.ptr));
 
     const allocation = context.allocations.items[gpu_ptr.allocation_handle];
 
     for (allocation.descriptor_sets.items) |heap_data| {
-        if (@intFromPtr(heap_data.memory.ptr) >= @intFromPtr(memory) and @intFromPtr(memory) < @intFromPtr(heap_data.memory.ptr + heap_data.memory.len)) {
+        if (@intFromPtr(heap_data.memory.ptr) >= @intFromPtr(memory.ptr) and @intFromPtr(memory.ptr) < @intFromPtr(heap_data.memory.ptr + heap_data.memory.len)) {
             return heap_data;
         }
     }
 
-    return undefined;
+    return null;
 }
 
 const CommonPushConstants = extern struct {
@@ -1939,4 +1988,5 @@ const vma = @import("vk_mem_alloc.zig");
 const mem = gpu.mem;
 const vk = @import("vk.zig");
 const std = @import("std");
+const glfw = @import("zglfw");
 const gpu = @import("../gpu.zig");

@@ -300,7 +300,7 @@ pub fn main(init: std.process.Init) !void {
 
     const asym_typeface = try asym.typeface.loadTypeFaceFromTTf(&asym_geo_context, @embedFile("assets/JetBrainsMono_regular.ttf"));
 
-    const typeface_textures: []?[]u8 = try arena.alloc(?[]u8, 1);
+    const typeface_textures: []?[]gpu.TextureByte = try arena.alloc(?[]gpu.TextureByte, 1);
 
     typeface_textures[0] = try gpu_context.loadTypeFaceTextureFromTTF(
         gpa,
@@ -440,7 +440,7 @@ pub fn main(init: std.process.Init) !void {
 
                 const scene_root = try scene.compile(gpa, &csg_program);
 
-                try simulation.updateCSGProgram(csg_program);
+                try simulation.updateCSGProgram(&gpu_context, csg_program);
 
                 _ = try simulation.gpu_sim.renderSceneThumbnail(
                     gpu_context,
@@ -504,9 +504,9 @@ pub fn main(init: std.process.Init) !void {
         const scene_2d_root_index = try csg_tree_2d.compile(arena, &csg_program);
         const scene_root_index = try csg_tree_3d.compile(arena, &csg_program);
 
-        try simulation.updateCSGProgram(csg_program);
+        try simulation.updateCSGProgram(&gpu_context, csg_program);
 
-        simulation.update(scene_root_index);
+        try simulation.update(scene_root_index);
 
         const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
 
@@ -1479,17 +1479,12 @@ pub fn main(init: std.process.Init) !void {
 
         const gizmo_views = asym_geo_context.endSubmission();
 
-        gpu_context.renderGizmos(
+        try gpu_context.renderGizmos(
             gpa,
             &asym_geo_context,
             gizmo_views,
             gizmo_views.views.items,
             typeface_textures,
-        );
-
-        gpu.swapchainPresent(
-            gpu_context.command_buffer,
-            gpu_swapchain,
         );
 
         gpu_context.endFrame();
@@ -1504,17 +1499,10 @@ pub fn main(init: std.process.Init) !void {
             &.{},
         );
 
-        if (true) {
-            if (@import("builtin").os.tag != .macos) {} else {
-                imgui.impl.metal.renderDrawData(
-                    imgui.getDrawData(),
-                    simulation.gpu_sim.command_buffer,
-                    simulation.gpu_sim.render_encoder,
-                );
-            }
-        }
-
-        glfw.swapBuffers(window);
+        gpu.swapchainPresent(
+            gpu_context.command_buffer,
+            gpu_swapchain,
+        );
     }
 }
 

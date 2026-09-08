@@ -74,7 +74,7 @@ pub fn memSet(
 pub fn memCopyToTexture(
     command_buffer: *CommandBuffer,
     dest_slice: TextureSliceDescription,
-    dest_gpu: []u8,
+    dest_gpu: []TextureByte,
     src_gpu: []const u8,
 ) void {
     return backendCall(@src(), .{
@@ -88,7 +88,7 @@ pub fn memCopyToTexture(
 ///Set each texel of a texture to the contents src_gpu
 pub fn memClearTexture(
     command_buffer: *CommandBuffer,
-    dest_gpu: []u8,
+    dest_gpu: []TextureByte,
     src_gpu: []const u8,
 ) void {
     return backendCall(@src(), .{
@@ -181,7 +181,7 @@ pub fn textureMemoryDescription(
 
 ///Creates and registers a backend texture handle for the specified memory region
 pub fn registerTextureMemory(
-    memory: []u8,
+    memory: []TextureByte,
     description: TextureDescription,
 ) void {
     return backendCall(@src(), .{
@@ -192,7 +192,7 @@ pub fn registerTextureMemory(
 
 ///Destroys the texture for the specified memory region
 pub fn unregisterTextureMemory(
-    memory: []const u8,
+    memory: []const TextureByte,
 ) void {
     return backendCall(@src(), .{
         memory,
@@ -200,7 +200,7 @@ pub fn unregisterTextureMemory(
 }
 
 pub fn createTextureDescriptor(
-    texture: []const u8,
+    texture: []const TextureByte,
 ) TextureDescriptor {
     return backendCall(@src(), .{
         texture,
@@ -208,7 +208,7 @@ pub fn createTextureDescriptor(
 }
 
 pub fn createTextureSliceDescriptor(
-    texture: []const u8,
+    texture: []const TextureByte,
     slice: TextureSliceDescription,
 ) TextureDescriptor {
     return backendCall(@src(), .{
@@ -218,7 +218,7 @@ pub fn createTextureSliceDescriptor(
 }
 
 pub fn createTextureSliceSamplerDescriptor(
-    texture: []const u8,
+    texture: []const TextureByte,
     slice: TextureSliceDescription,
     sampler: TextureSamplerDescription,
 ) TextureDescriptor {
@@ -241,17 +241,6 @@ pub fn samplerHeapMemoryDescription(
     size: usize,
 ) ResourceMemoryDescription {
     return backendCall(@src(), .{size});
-}
-
-///Sets the pipeline to be used by subsequent commands
-pub fn setStatePipeline(
-    command_buffer: *CommandBuffer,
-    pipeline: *Pipeline,
-) void {
-    return backendCall(@src(), .{
-        command_buffer,
-        pipeline,
-    });
 }
 
 ///Sets the rasterizer depth and stencil state
@@ -376,75 +365,78 @@ pub fn rasterPassEnd(
     return backendCall(@src(), .{command_buffer});
 }
 
-///Dispatch a set of compute commands
-pub fn dispatchCompute(
+///Launch a set of compute commands
+pub fn launchCompute(
     command_buffer: *CommandBuffer,
+    pipeline: *Pipeline,
     root_data: []const *anyopaque,
     commands: []const ComputeCommand,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
+        pipeline,
         root_data,
         commands,
     });
 }
 
-pub const DispatchRasterDrawOptions = struct {
-    command_stride: usize = @sizeOf(RasterDrawCommand),
-};
-
-///Dispatch a set of raster draw commands
-pub fn dispatchRasterDraw(
+///Launch a set of raster draw commands
+pub fn launchRasterDraw(
     command_buffer: *CommandBuffer,
-    ///Slice of root pointers that are passed to the pipeline
+    pipeline: *Pipeline,
     root_data: []const *anyopaque,
     commands: []const RasterDrawCommand,
     options: DispatchRasterDrawOptions,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
+        pipeline,
         root_data,
         commands,
         options,
     });
 }
 
-///Dispatch a set of raster draw commands
-pub fn dispatchRasterDrawIndexed(
+///Launch a set of raster draw commands
+pub fn launchRasterDrawIndexed(
     command_buffer: *CommandBuffer,
+    pipeline: *Pipeline,
     root_data: []const *anyopaque,
     commands: []const RasterDrawCommand,
     indices: []u8,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
+        pipeline,
         root_data,
         commands,
         indices,
     });
 }
 
-///Dispatch a set of raster mesh draw commands
-pub fn dispatchRasterDrawMeshes(
+///Launch a set of raster mesh draw commands
+pub fn launchRasterDrawMeshes(
     command_buffer: *CommandBuffer,
+    pipeline: *Pipeline,
     root_data: []const *anyopaque,
     commands: []const RasterDrawMeshesCommand,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
+        pipeline,
         root_data,
         commands,
     });
 }
 
-///Build a ray tracing acceleration structure
-pub fn buildAccelerationStructures(
+///Build a set of ray tracing acceleration structures
+pub fn launchBuildAccelerationStructures(
     command_buffer: *CommandBuffer,
-    description: AccelerationStructureBuildDescription,
+    commands: []const AccelerationStructureBuildDescription,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
-        description,
+        commands,
     });
 }
 
@@ -519,7 +511,7 @@ pub fn destroySwapchain(swapchain: *Swapchain) void {
 ///Obtain a texture from the swapchain which can be presented
 pub fn swapchainObtainTexture(
     swapchain: *Swapchain,
-) []u8 {
+) []gpu.TextureByte {
     return backendCall(@src(), .{swapchain});
 }
 
@@ -702,21 +694,21 @@ pub const RasterPassDescription = struct {
     },
 
     pub const ColorAttachment = struct {
-        texture: []u8,
+        texture: []gpu.TextureByte,
         clear: ?[4]f32 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .store,
     };
 
     pub const DepthAttachment = struct {
-        texture: []u8,
+        texture: []gpu.TextureByte,
         clear: ?f32 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .discard,
     };
 
     pub const StencilAttachment = struct {
-        texture: []u8,
+        texture: []gpu.TextureByte,
         clear: ?u8 = null,
         load_op: MemoryLoadOp = .load,
         store_op: MemoryStoreOp = .discard,
@@ -734,8 +726,14 @@ pub const RasterPassDescription = struct {
 };
 
 pub const CommandBufferInitialState = struct {
+    ///The sampler heap to be used by subsequent commands
     sampler_heap: []const TextureDescriptor = &.{},
 };
+
+///Represents a byte of implementation specific, formatted texture memory
+pub const TextureByte = enum(u8) { _ };
+///Represents a byte of implementation specific, formatted acceleration structure memory
+pub const AccelerationStructureByte = enum(u8) { _ };
 
 pub const TextureDescription = struct {
     type: Type = .@"2d",
@@ -764,16 +762,6 @@ pub const TextureDescription = struct {
     };
 };
 
-pub const TextureSamplerDescription = struct {
-    filter_minification: Filter,
-    filter_magnification: Filter,
-
-    pub const Filter = enum {
-        nearest,
-        linear,
-    };
-};
-
 ///Represents a logical slice of a texture's memory
 pub const TextureSliceDescription = struct {
     offset: [3]u32 = @splat(0),
@@ -789,6 +777,16 @@ pub const TextureSliceDescription = struct {
         sampled,
         read,
         read_write,
+    };
+};
+
+pub const TextureSamplerDescription = struct {
+    filter_minification: Filter,
+    filter_magnification: Filter,
+
+    pub const Filter = enum {
+        nearest,
+        linear,
     };
 };
 
@@ -825,6 +823,12 @@ pub const ComputeCommand = extern struct {
     workgroup_count_x: u32,
     workgroup_count_y: u32 = 1,
     workgroup_count_z: u32 = 1,
+};
+
+pub const DispatchRasterDrawOptions = struct {
+    command_stride: usize = @sizeOf(RasterDrawCommand),
+    ///The number of actual commands to execute
+    command_count: ?*u32 = null,
 };
 
 pub const AccelerationStructureBuildDescription = struct {};
@@ -936,7 +940,7 @@ pub const mem = struct {
         command_buffer: *CommandBuffer,
         comptime T: type,
         dest_slice: TextureSliceDescription,
-        dest_gpu: []T,
+        dest_gpu: []TextureByte,
         src_gpu: []const T,
     ) void {
         gpu.memCopyToTexture(
@@ -1000,11 +1004,11 @@ pub const mem = struct {
         pub fn allocTexture(
             allocator: Allocator,
             texture_description: TextureDescription,
-        ) ![]u8 {
+        ) ![]TextureByte {
             const texture_mem_description = gpu.textureMemoryDescription(texture_description);
 
             const memory = try allocator.alloc(
-                u8,
+                TextureByte,
                 texture_mem_description.size,
                 texture_mem_description.memory_type,
             );
@@ -1020,7 +1024,7 @@ pub const mem = struct {
         pub fn allocTextureDescriptor(
             allocator: Allocator,
             sampler_heap: []const TextureDescriptor,
-            texture: []const u8,
+            texture: []const TextureByte,
         ) !u32 {
             const descriptor = try allocator.create(TextureDescriptor, gpu.mem.getMemoryType(sampler_heap));
 

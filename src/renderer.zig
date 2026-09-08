@@ -72,7 +72,7 @@ pub const Context = struct {
     gpu_staging_fba_index: usize,
     gpu_arena_instance: gpu.heap.ArenaAllocator,
     gpu_arena: gpu.mem.Allocator,
-    swapchain_texture: []u8,
+    swapchain_texture: []gpu.TextureByte,
     command_buffer: *gpu.CommandBuffer,
     shaders_watcher: *watchers.Watcher,
     io: std.Io,
@@ -159,7 +159,6 @@ pub const Context = struct {
             @intCast(env_map_width * env_map_height),
             .gpu_cpu_writable,
         );
-        defer context.gpu_staging_fbas[0].end_index = 0;
 
         for (gpu.mem.toAccessibleSlice(env_map_staging_mem)) |*color_out| {
             color_out.* = 0xffaaffaa;
@@ -185,6 +184,8 @@ pub const Context = struct {
         );
 
         context.sampler_heap = sampler_descriptor_heap_mem;
+        context.sampler_heap_fba = .init(@ptrCast(context.sampler_heap));
+        context.sampler_heap_alloc = context.sampler_heap_fba.allocator();
 
         const env_map_descriptor = try context.sampler_heap_alloc.allocTextureDescriptor(
             context.sampler_heap,
@@ -309,7 +310,7 @@ pub const Context = struct {
         geo_ctx: *const asym.geo.Context,
         typeface_handle: asym.geo.TextTypeFaceHandle,
         typeface_ttf: []const u8,
-    ) !?[]u8 {
+    ) !?[]gpu.TextureByte {
         _ = io; // autofix
         const Generator = @import("msdf-zig");
 
@@ -353,15 +354,21 @@ pub const Context = struct {
             sdfs[glyph_index] = data;
         }
 
-        const texture_memory = try context.gpu_gpa.allocTexture(
-            .{
-                .dimensions = .{ max_width, max_height, @intCast(typeface.codepoints_to_glyph.count()) },
-                .format = .rgba8_unorm32,
-                .type = .array_2d,
-            },
-        );
+        var texture_memory: []gpu.TextureByte = &.{};
 
-        context.sampler_heap[10] = gpu.createTextureDescriptor(texture_memory);
+        if (false) {
+            texture_memory = try context.gpu_gpa.allocTexture(
+                .{
+                    .dimensions = .{ max_width, max_height, 1 },
+                    .layer_count = @intCast(typeface.codepoints_to_glyph.count()),
+                    .format = .rgba8_unorm32,
+                    .type = .array_2d,
+                },
+            );
+            context.sampler_heap[10] = gpu.createTextureDescriptor(texture_memory);
+        }
+
+        context.gpu_staging_arena = context.gpu_staging_fbas[0].allocator();
 
         const commands = gpu.queueStartCommandRecording(.{}, .{});
 
@@ -383,25 +390,27 @@ pub const Context = struct {
             metrics.bearing_x = @floatCast(data.metrics.bearing_x);
             metrics.bearing_y = @floatCast(data.metrics.bearing_y);
 
-            gpu.mem.copyToTexture(
-                commands,
-                u8,
-                .{
-                    .offset = .{
-                        0,
-                        0,
-                        @intCast(glyph_index),
+            if (false) {
+                gpu.mem.copyToTexture(
+                    commands,
+                    u8,
+                    .{
+                        .offset = .{
+                            0,
+                            0,
+                            @intCast(glyph_index),
+                        },
+                        .dimensions = .{
+                            data.metrics.width,
+                            data.metrics.height,
+                            1,
+                        },
+                        .format = .rgba8_unorm32,
                     },
-                    .dimensions = .{
-                        data.metrics.width,
-                        data.metrics.height,
-                        1,
-                    },
-                    .format = .rgba8_unorm32,
-                },
-                texture_memory,
-                data.pixels,
-            );
+                    texture_memory,
+                    try context.gpu_staging_arena.allocDupe(u8, data.pixels),
+                );
+            }
         }
 
         context.asym_glyph_metrics_buffer = try context.gpu_gpa.alloc(
@@ -417,11 +426,13 @@ pub const Context = struct {
             try context.gpu_staging_arena.allocDupe(@import("lib").shaders.common.asym.GlyphMetric, glyph_metrics),
         );
 
-        gpu.queueSubmit(
-            .{},
-            &.{commands},
-            &.{},
-        );
+        if (false) {
+            gpu.queueSubmit(
+                .{},
+                &.{commands},
+                &.{},
+            );
+        }
 
         return texture_memory;
     }
@@ -432,12 +443,11 @@ pub const Context = struct {
         geo_context: *const asym.geo.Context,
         scene: *const asym.geo.Scene,
         views: []const asym.geo.Scene.View,
-        typeface_textures: []?[]u8,
-    ) void {
+        typeface_textures: []?[]gpu.TextureByte,
+    ) !void {
         const command_buffer = context.command_buffer;
 
         _ = typeface_textures; // autofix
-        gpu.setStatePipeline(command_buffer, context.shaders.gizmo_shader);
         gpu.setStateViewport(
             command_buffer,
             .{ 0, 0, @floatFromInt(context.window.getSize()[0]), @floatFromInt(context.window.getSize()[1]) },
@@ -446,6 +456,8 @@ pub const Context = struct {
             command_buffer,
             .{ 0, 0, @intCast(context.window.getSize()[0]), @intCast(context.window.getSize()[1]) },
         );
+
+        const staging_arena = context.gpu_staging_fbas[1].allocator();
 
         var transforms_offset: usize = 0;
         var materials_offset: usize = 0;
@@ -459,21 +471,21 @@ pub const Context = struct {
                 command_buffer,
                 u32,
                 context.asym_transform_offsets_by_type_buffer[type_index..],
-                &.{@intCast(transforms_offset)},
+                try staging_arena.allocDupe(u32, &.{@intCast(transforms_offset)}),
             );
 
             gpu.mem.copy(
                 command_buffer,
                 asym.geo.AffineTransform3D,
                 context.asym_transforms_buffer[transforms_offset..],
-                transforms.items,
+                try staging_arena.allocDupe(asym.geo.AffineTransform3D, transforms.items),
             );
 
             gpu.mem.copy(
                 command_buffer,
                 asym.geo.Material,
                 context.asym_materials_buffer[materials_offset..],
-                materials.items,
+                try staging_arena.allocDupe(asym.geo.Material, materials.items),
             );
 
             transforms_offset += transforms.items.len;
@@ -498,12 +510,12 @@ pub const Context = struct {
                 command_buffer,
                 [2][4][4]f32,
                 context.asym_uniforms_buffer,
-                &.{
+                try staging_arena.allocDupe([2][4][4]f32, &.{
                     .{
                         @bitCast(view_projection),
                         @splat(@splat(@floatCast(glfw.getTime()))),
                     },
-                },
+                }),
             );
 
             var text_buffer_entry_begin: usize = 0;
@@ -566,20 +578,20 @@ pub const Context = struct {
                             command_buffer,
                             shtmap.Sheetmap,
                             context.asym_grapheme_buffers[draw_index..],
-                            &.{
+                            try staging_arena.allocDupe(shtmap.Sheetmap, &.{
                                 shtmap.Sheetmap{
                                     .quadrat_buffer_begin = @intCast(quadrat_buffer_begin),
                                     .width = grapheme_buffer_width,
                                     .height = grapheme_buffer_height,
                                 },
-                            },
+                            }),
                         );
 
                         gpu.mem.copy(
                             command_buffer,
                             GraphemeBin,
                             context.asym_grapheme_pigeon_hole_buffers[quadrat_buffer_begin..],
-                            grapheme_buffer_bins,
+                            try staging_arena.allocDupe(GraphemeBin, grapheme_buffer_bins),
                         );
 
                         quadrat_buffer_begin += grapheme_buffer_bins.len * @sizeOf(GraphemeBin);
@@ -599,21 +611,21 @@ pub const Context = struct {
                         command_buffer,
                         u32,
                         &context.asym_parameter_offsets_by_type_buffer[type_index],
-                        &@intCast(parameter_buffer_offset),
+                        &(try staging_arena.allocDupe(u32, &.{@intCast(parameter_buffer_offset)}))[0],
                     );
 
                     gpu.mem.copy(
                         command_buffer,
                         f32,
                         context.asym_parameters_buffer[parameter_buffer_offset..],
-                        params,
+                        try staging_arena.allocDupe(f32, params),
                     );
 
                     gpu.mem.copy(
                         command_buffer,
                         asym.geo.DrawCommand,
                         context.gizmo_draw_buffer[draw_buffer_offset..],
-                        draws,
+                        try staging_arena.allocDupe(asym.geo.DrawCommand, draws),
                     );
 
                     draw_buffer_offset += draws.len;
@@ -623,8 +635,9 @@ pub const Context = struct {
                 gpu.setStateBlend(command_buffer, .{});
                 gpu.setStateDepthStencil(command_buffer, .{});
 
-                gpu.dispatchRasterDraw(
+                gpu.launchRasterDraw(
                     command_buffer,
+                    context.shaders.gizmo_shader,
                     &.{},
                     @as([*]gpu.RasterDrawCommand, @ptrCast(context.gizmo_draw_buffer[0..].ptr))[0..draw_buffer_offset],
                     .{
@@ -709,9 +722,9 @@ pub const Simulation = struct {
     voxel_allocator_buffer: []VoxelChunkAllocator = undefined,
     voxel_chunks_buffer: []VoxelChunksAllocation = undefined,
 
-    voxel_bit_buffer_memory_texture: []u8 = undefined,
-    voxel_chunk_allocations_texture: []u8 = undefined,
-    voxel_chunk_positions_texture: []u8 = undefined,
+    voxel_bit_buffer_memory_texture: []gpu.TextureByte = undefined,
+    voxel_chunk_allocations_texture: []gpu.TextureByte = undefined,
+    voxel_chunk_positions_texture: []gpu.TextureByte = undefined,
 
     voxel_heap_bit_buffer: []u32 = undefined,
     voxel_positions_buffer: []u32 = undefined,
@@ -719,8 +732,8 @@ pub const Simulation = struct {
     simulation_state: *@import("lib").shaders.common.SimulationState = undefined,
     simulation_rendering_state: *@import("lib").shaders.common.SimulationRenderingState = undefined,
 
-    scene_thumbnails: std.StringHashMapUnmanaged(?[]u8) = .empty,
-    scene_2d_texture: ?[]u8 = null,
+    scene_thumbnails: std.StringHashMapUnmanaged(?[]gpu.TextureByte) = .empty,
+    scene_2d_texture: ?[]gpu.TextureByte = null,
     scene_2d_texture_width: u32 = 0,
     scene_2d_texture_height: u32 = 0,
 
@@ -728,6 +741,7 @@ pub const Simulation = struct {
     simulation_write_offset: u32 = 0,
 
     command_buffer: *gpu.CommandBuffer = undefined,
+    staging_arena: gpu.mem.Allocator = undefined,
 
     const SimShaders = struct {
         renderer_program: *gpu.Pipeline = undefined,
@@ -845,6 +859,7 @@ pub const Simulation = struct {
         gpu_sim.simulation_draws_buffer = try context.gpu_gpa.alloc(gpu.RasterDrawCommand, 128, .gpu);
         gpu_sim.simulation_bounds_buffer = try context.gpu_gpa.alloc([4]u32, 2, .gpu);
         gpu_sim.ray_stats_buffer = try context.gpu_gpa.create(RayStats, .gpu);
+        gpu_sim.vertex_buffer = try context.gpu_gpa.alloc(u8, 1024, .gpu);
 
         gpu_sim.simulation_state = try context.gpu_gpa.create(@import("lib").shaders.common.SimulationState, .gpu);
         gpu_sim.simulation_rendering_state = try context.gpu_gpa.create(@import("lib").shaders.common.SimulationRenderingState, .gpu);
@@ -852,6 +867,8 @@ pub const Simulation = struct {
         context.gpu_staging_fbas[0].end_index = 0;
         context.gpu_staging_fbas[1].end_index = 0;
         context.gpu_staging_arena = context.gpu_staging_fbas[0].allocator();
+
+        gpu_sim.staging_arena = context.gpu_staging_arena;
 
         const upload_cmds = gpu.queueStartCommandRecording(.{}, .{});
         defer gpu.queueSubmit(
@@ -932,17 +949,19 @@ pub const Simulation = struct {
 
     pub fn updateCSGProgram(
         gpu_sim: *Simulation,
+        context: *Context,
         sim: @import("Simulation.zig"),
         program: CSGProgram,
     ) !void {
         _ = sim; // autofix
+        const staging_arena = context.gpu_staging_fbas[1].allocator();
 
         if (program.elements.items.len != 0) {
             gpu.mem.copy(
                 gpu_sim.command_buffer,
                 SdfElement3D,
                 gpu_sim.sdf_elements_3d_buffer,
-                program.elements.items,
+                try staging_arena.allocDupe(SdfElement3D, program.elements.items),
             );
         }
 
@@ -951,7 +970,7 @@ pub const Simulation = struct {
                 gpu_sim.command_buffer,
                 f32,
                 gpu_sim.sdf_elements_3d_params_buffer,
-                program.element_params.items,
+                try staging_arena.allocDupe(f32, program.element_params.items),
             );
         }
 
@@ -960,7 +979,7 @@ pub const Simulation = struct {
                 gpu_sim.command_buffer,
                 AffineTransform3D,
                 gpu_sim.sdf_elements_3d_transforms_buffer,
-                program.transforms.items,
+                try staging_arena.allocDupe(AffineTransform3D, program.transforms.items),
             );
         }
 
@@ -969,31 +988,33 @@ pub const Simulation = struct {
                 gpu_sim.command_buffer,
                 [4]f32,
                 gpu_sim.sdf_elements_3d_bounds_buffer,
-                program.element_bounds.items,
+                try staging_arena.allocDupe([4]f32, program.element_bounds.items),
             );
         }
     }
 
-    pub fn update(gpu_sim: *Simulation, sim: *@import("Simulation.zig")) void {
+    pub fn update(gpu_sim: *Simulation, sim: *@import("Simulation.zig")) !void {
+        const staging_arena = gpu_sim.staging_arena;
+
         gpu.mem.copy(
             gpu_sim.command_buffer,
             VoxelMaterial,
             gpu_sim.voxel_materials_buffer,
-            sim.voxel_materials.items,
+            try staging_arena.allocDupe(VoxelMaterial, sim.voxel_materials.items),
         );
 
         gpu.mem.copy(
             gpu_sim.command_buffer,
             VoxelMaterialVisual,
             gpu_sim.voxel_materials_visual_buffer,
-            sim.voxel_materials_visual.items,
+            try staging_arena.allocDupe(VoxelMaterialVisual, sim.voxel_materials_visual.items),
         );
 
         gpu.mem.copy(
             gpu_sim.command_buffer,
             PointLight,
             gpu_sim.point_light_buffer,
-            sim.point_lights.items,
+            try staging_arena.allocDupe(PointLight, sim.point_lights.items),
         );
 
         if (sim.gpu_sim.shaders.fill_region_shader != sim.gpu_sim.shaders.old_fill_region_shader) {
@@ -1003,12 +1024,11 @@ pub const Simulation = struct {
         sim.csg_dirty = true;
 
         if (!sim.enable_simulation and sim.csg_dirty) {
-            gpu.setStatePipeline(gpu_sim.command_buffer, gpu_sim.shaders.fill_region_shader);
-
             sim.csg_dirty = false;
 
-            gpu.dispatchCompute(
+            gpu.launchCompute(
                 gpu_sim.command_buffer,
+                gpu_sim.shaders.fill_region_shader,
                 &.{},
                 &.{
                     .{
@@ -1031,10 +1051,11 @@ pub const Simulation = struct {
         );
 
         if (sim.enable_simulation) {
-            gpu.setStatePipeline(gpu_sim.command_buffer, gpu_sim.shaders.thermal_shader);
-            gpu.dispatchCompute(
+            gpu.launchCompute(
                 gpu_sim.command_buffer,
+                gpu_sim.shaders.thermal_shader,
                 &.{
+                    undefined,
                     gpu_sim.simulation_state,
                 },
                 &.{
@@ -1055,9 +1076,9 @@ pub const Simulation = struct {
                 },
             );
 
-            gpu.setStatePipeline(gpu_sim.command_buffer, gpu_sim.shaders.grain_simulation_shader);
-            gpu.dispatchCompute(
+            gpu.launchCompute(
                 gpu_sim.command_buffer,
+                gpu_sim.shaders.grain_simulation_shader,
                 &.{},
                 &.{
                     .{
@@ -1079,13 +1100,17 @@ pub const Simulation = struct {
             );
         }
 
-        gpu.setStatePipeline(gpu_sim.command_buffer, gpu_sim.shaders.generate_chunk_draws);
-
         const chunk_size = 16;
 
-        gpu.dispatchCompute(
+        gpu.launchCompute(
             gpu_sim.command_buffer,
-            &.{},
+            gpu_sim.shaders.generate_chunk_draws,
+            &.{
+                gpu_sim.vertex_buffer.ptr,
+                undefined,
+                gpu_sim.simulation_state,
+                gpu_sim.simulation_rendering_state,
+            },
             &.{
                 .{
                     .workgroup_count_x = (sim.width / chunk_size) / 8,
@@ -1120,19 +1145,13 @@ pub const Simulation = struct {
     pub fn render(
         sim: Simulation,
         context: Context,
-        render_texture: ?[]u8,
+        render_texture: ?[]gpu.TextureByte,
         scene_root_index: u32,
         options: struct {
             render_sdf_raymarched: bool = false,
         },
     ) void {
         _ = scene_root_index; // autofix
-        gpu.mem.copySingle(
-            sim.command_buffer,
-            RayStats,
-            sim.ray_stats_buffer,
-            &RayStats{},
-        );
 
         gpu.barrier(
             sim.command_buffer,
@@ -1165,11 +1184,11 @@ pub const Simulation = struct {
             );
         }
 
-        gpu.setStatePipeline(sim.command_buffer, context.shaders.env_map_shader);
         gpu.setStateDepthStencil(sim.command_buffer, .{});
 
-        gpu.dispatchRasterDraw(
+        gpu.launchRasterDraw(
             sim.command_buffer,
+            context.shaders.env_map_shader,
             &.{},
             &.{
                 .{
@@ -1182,7 +1201,6 @@ pub const Simulation = struct {
             .{},
         );
 
-        gpu.setStatePipeline(sim.command_buffer, sim.shaders.depth_prepass_shader);
         gpu.setStateDepthStencil(sim.command_buffer, .{
             .depth_mode = .{
                 .read = true,
@@ -1200,8 +1218,9 @@ pub const Simulation = struct {
         });
         gpu.setStateCull(sim.command_buffer, .clockwise);
 
-        gpu.dispatchRasterDraw(
+        gpu.launchRasterDraw(
             sim.command_buffer,
+            sim.shaders.depth_prepass_shader,
             &.{
                 sim.vertex_buffer.ptr,
                 sim.simulation_state,
@@ -1211,24 +1230,18 @@ pub const Simulation = struct {
             .{},
         );
 
-        gpu.setStatePipeline(sim.command_buffer, sim.shaders.gizmo_shader);
         gpu.setStateCull(sim.command_buffer, .clockwise);
         gpu.setStatePolygonMode(sim.command_buffer, .line);
 
-        gpu.dispatchRasterDraw(
+        gpu.launchRasterDraw(
             sim.command_buffer,
+            sim.shaders.gizmo_shader,
             &.{},
             sim.simulation_draws_buffer,
             .{},
         );
 
         gpu.setStatePolygonMode(sim.command_buffer, .fill);
-
-        if (options.render_sdf_raymarched) {
-            gpu.setStatePipeline(sim.command_buffer, sim.shaders.raymarched_sdf_shader);
-        } else {
-            gpu.setStatePipeline(sim.command_buffer, sim.shaders.renderer_program);
-        }
 
         gpu.setStateCull(
             sim.command_buffer,
@@ -1251,8 +1264,9 @@ pub const Simulation = struct {
             .stencil_read_mask = 0xff,
         });
 
-        gpu.dispatchRasterDraw(
+        gpu.launchRasterDraw(
             sim.command_buffer,
+            if (options.render_sdf_raymarched) sim.shaders.raymarched_sdf_shader else sim.shaders.renderer_program,
             &.{},
             &.{
                 .{
@@ -1278,16 +1292,20 @@ pub const Simulation = struct {
         scene_path: []const u8,
         gpa: std.mem.Allocator,
     ) !?[]u8 {
+        if (true) {
+            return null;
+        }
         sim.csg_dirty = true;
 
         const is_enabled: bool = sim.enable_simulation;
-        sim.update(scene_root_index);
+        try sim.update(scene_root_index);
 
         const thumbnail_result = try gpu_sim.scene_thumbnails.getOrPut(gpa, std.fs.path.basename(scene_path));
 
         const thumbnail_texture = try context.gpu_gpa.allocTexture(
             .{
                 .dimensions = .{ 128, 128, 1 },
+                .format = .rgba8_unorm32,
             },
         );
 
@@ -1333,7 +1351,7 @@ pub const Simulation = struct {
         gpa: std.mem.Allocator,
         width: u32,
         height: u32,
-    ) ![]u8 {
+    ) ![]gpu.TextureByte {
         _ = gpa; // autofix
         _ = scene_root_index; // autofix
         _ = sim; // autofix
@@ -1349,17 +1367,20 @@ pub const Simulation = struct {
             gpu_sim.scene_2d_texture_height = height;
         }
 
-        gpu.setStatePipeline(gpu_sim.command_buffer, gpu_sim.shaders.sdf_texture_compute);
-
         const dispatch_width = try std.math.divCeil(u32, width, 8);
         const dispatch_height = try std.math.divCeil(u32, height, 8);
 
-        gpu.dispatchCompute(gpu_sim.command_buffer, &.{}, &.{
-            .{
-                .workgroup_count_x = dispatch_width,
-                .workgroup_count_y = dispatch_height,
+        gpu.launchCompute(
+            gpu_sim.command_buffer,
+            gpu_sim.shaders.sdf_texture_compute,
+            &.{},
+            &.{
+                .{
+                    .workgroup_count_x = dispatch_width,
+                    .workgroup_count_y = dispatch_height,
+                },
             },
-        });
+        );
 
         gpu.barrier(
             gpu_sim.command_buffer,

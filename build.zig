@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) !void {
     const zglfw = b.dependency("zglfw", .{
         .target = target,
         .optimize = optimize,
-        .import_vulkan = false,
+        .import_vulkan = true,
     });
 
     const cimgui_dep = b.dependency("cimgui_zig", .{
