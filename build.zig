@@ -209,6 +209,13 @@ fn compileZigShader(
         source_basename,
         "_",
         @tagName(shader_type),
+        "_pre_opt",
+        ".spv",
+    }) catch @panic("");
+    const actual_output_path = std.mem.concat(b.allocator, u8, &.{
+        source_basename,
+        "_",
+        @tagName(shader_type),
         ".spv",
     }) catch @panic("");
     const options = b.addOptions();
@@ -229,8 +236,6 @@ fn compileZigShader(
                     .draw_parameters,
                     .sampled_image_array_non_uniform_indexing,
                     .storage_image_array_non_uniform_indexing,
-                    .atomic_storage,
-                    .atomic_storage_ops,
                     .variable_pointers_storage_buffer,
                     .variable_pointers,
                     .untyped_pointers_khr,
@@ -239,7 +244,6 @@ fn compileZigShader(
                     .SPV_EXT_descriptor_indexing,
                 }),
                 .os_tag = .vulkan,
-                .ofmt = .spirv,
             }),
             .imports = &.{
                 .{ .name = "lib", .module = shader_lib_module },
@@ -257,8 +261,19 @@ fn compileZigShader(
     const val = b.addSystemCommand(&.{"spirv-val"});
     val.addFileArg(output_file_path);
 
-    exe_step.root_module.addImport(output_path, b.createModule(.{
-        .root_source_file = output_file_path,
+    const opt = b.addSystemCommand(&.{
+        "spirv-opt",
+        "--target-env=vulkan1.3",
+        "--skip-validation",
+        "--inline-entry-points-exhaustive",
+    });
+
+    opt.addArtifactArg(compile_zig_shader);
+    opt.addArg("-o");
+    const output_lazy_path = opt.addOutputFileArg(actual_output_path);
+
+    exe_step.root_module.addImport(actual_output_path, b.createModule(.{
+        .root_source_file = output_lazy_path,
     }));
     //exe_step.step.dependOn(&val.step);
 

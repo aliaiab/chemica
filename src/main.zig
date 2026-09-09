@@ -4,49 +4,30 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
     _ = args; // autofix
 
-    if (@import("builtin").os.tag == .linux and @import("builtin").mode == .debug) {
-        //We do this in debug mode so that we can do renderdoc captures
-        if (!@import("options").enable_nfd) {
-            try glfw.initHint(.platform, glfw.Platform.x11);
-        }
-    }
-
     const renderdoc = @import("renderdoc_app.zig");
 
     var rdoc_api: ?*renderdoc.RENDERDOC_API_1_2_0 = null;
 
-    var renderdoc_dynlib = std.DynLib.open("librenderdoc.so") catch null;
+    var renderdoc_dynlib: ?std.DynLib = if (true) null else std.DynLib.open("librenderdoc.so") catch null;
     defer if (renderdoc_dynlib) |*dynlib| dynlib.close();
 
     if (renderdoc_dynlib != null) {
         const render_doc_get_api = renderdoc_dynlib.?.lookup(renderdoc.pRENDERDOC_GetAPI, "RENDERDOC_GetAPI").?;
 
         _ = render_doc_get_api.?(renderdoc.eRENDERDOC_API_Version_1_1_2, @ptrCast(&rdoc_api));
+
+        std.debug.assert(rdoc_api.?.SetCaptureOptionU32.?(renderdoc.eRENDERDOC_Option_DebugOutputMute, 0) != 0);
     }
 
-    try glfw.init();
-    defer glfw.terminate();
+    try glaze.init(arena);
+    defer glaze.deinit();
 
-    glfw.windowHint(.client_api, .no_api);
-
-    if (@import("builtin").os.tag == .macos) {
-        glfw.windowHint(.cocoa_retina_framebuffer, true);
-    }
-
-    const content_scale = imgui.cimgui.cImGui_ImplGlfw_GetContentScaleForMonitor(@ptrCast(glfw.getPrimaryMonitor()));
-
-    var window = try glfw.createWindow(
-        @intFromFloat(640 * content_scale),
-        @intFromFloat(480 * content_scale),
-        "Chemica",
-        null,
-        null,
-    );
-    defer window.destroy();
-
-    window.maximize();
-    glfw.makeContextCurrent(window);
-    glfw.swapInterval(0);
+    const surface = try glaze.createSurface(arena, .{
+        .preferred_width = 640,
+        .preferred_height = 480,
+        .name = "Chemica",
+    });
+    defer glaze.destroySurface(surface);
 
     var asym_geo_context: asym.geo.Context = .init(gpa);
     defer asym_geo_context.deinit();
@@ -55,7 +36,7 @@ pub fn main(init: std.process.Init) !void {
 
     _ = imgui.createContext(.{});
 
-    var gpu_context = try gpu.Context.init(arena, window, init.io);
+    var gpu_context = try gpu.Context.init(arena, init.io);
     defer gpu_context.deinit();
 
     var gpu_start_timestamp: ?*gpu.debug.TimestampQuery = null;
@@ -145,14 +126,16 @@ pub fn main(init: std.process.Init) !void {
     var simulation: Simulation = try .init(
         &gpu_context,
         arena,
-        @bitCast(window.getSize()),
         voxel_materials,
         voxel_materials_visual,
     );
     defer simulation.deinit(arena);
 
-    const gpu_swapchain = gpu.createSwapchain(window);
+    const gpu_swapchain = gpu.createSwapchain(glaze.surfaceGetPlatformHandle(surface));
     defer gpu.destroySwapchain(gpu_swapchain);
+
+    const frame_semaphore = gpu.createSemaphore(0);
+    defer gpu.destroySemaphore(frame_semaphore);
 
     imguiStyleSetup();
 
@@ -176,10 +159,7 @@ pub fn main(init: std.process.Init) !void {
         imgui.saveIniSettingsToDisk("src/assets/imgui.ini");
     }
 
-    var last_mouse_pos: [2]f32 = undefined;
-
-    last_mouse_pos[0] = @floatCast(window.getCursorPos()[0]);
-    last_mouse_pos[1] = @floatCast(window.getCursorPos()[1]);
+    var last_mouse_pos: [2]f32 = @splat(0);
 
     var camera: Camera = .{
         .eye = .{ 90, 90, 90 },
@@ -192,10 +172,7 @@ pub fn main(init: std.process.Init) !void {
         .view = @bitCast(zmath.identity()),
     };
 
-    _ = window.setScrollCallback(glfwScrollCallback);
     var mouse_scroll: f32 = 0;
-
-    window.setUserPointer(&mouse_scroll);
 
     var csg_tree_3d: CSGTree = try .init(arena);
     var csg_tree: *CSGTree = &csg_tree_3d;
@@ -314,10 +291,22 @@ pub fn main(init: std.process.Init) !void {
 
     var zoom: f32 = 1;
 
-    while (!window.shouldClose()) {
-        glfw.pollEvents();
+    var next_frame: u64 = 1;
 
-        const start_capture = window.getKey(.F12) == .press;
+    while (try glaze.surfacePoll(arena, surface)) |surface_poll| {
+        gpu_context.window_extents = .{
+            surface_poll.surface_state.extent[0],
+            surface_poll.surface_state.extent[1],
+        };
+
+        if (next_frame > 2) {
+            gpu.semaphoreWait(frame_semaphore, next_frame - 2);
+        }
+        defer next_frame += 1;
+
+        const keyboard_input = &surface_poll.keyboard_input;
+
+        const start_capture = keyboard_input.keys.get(.f12) == .press;
 
         if (start_capture) {
             rdoc_api.?.TriggerCapture.?();
@@ -326,8 +315,6 @@ pub fn main(init: std.process.Init) !void {
         defer if (start_capture) {
             _ = rdoc_api.?.EndFrameCapture.?(null, null);
         };
-
-        if (false) imgui.impl.glfw.newFrame();
 
         asym_geo_context.beginSubmission();
 
@@ -380,7 +367,10 @@ pub fn main(init: std.process.Init) !void {
 
         //Camera Controls
         {
-            const cursor_pos_f64: [2]f64 = window.getCursorPos();
+            const cursor_pos_f64: [2]f64 = .{
+                @floatCast(surface_poll.mouse_input.cursor_position[0]),
+                @floatCast(surface_poll.mouse_input.cursor_position[1]),
+            };
             const cursor_pos: [2]f32 = .{
                 @floatCast(cursor_pos_f64[0]),
                 @floatCast(cursor_pos_f64[1]),
@@ -389,8 +379,8 @@ pub fn main(init: std.process.Init) !void {
             const cursor_delta_x = cursor_pos[0] - last_mouse_pos[0];
             const cursor_delta_y = cursor_pos[1] - last_mouse_pos[1];
 
-            const norm_delta_x = cursor_delta_x / @as(f32, @floatFromInt(window.getSize()[0]));
-            const norm_delta_y = cursor_delta_y / @as(f32, @floatFromInt(window.getSize()[1]));
+            const norm_delta_x = cursor_delta_x / @as(f32, @floatFromInt(surface_poll.surface_state.extent[0]));
+            const norm_delta_y = cursor_delta_y / @as(f32, @floatFromInt(surface_poll.surface_state.extent[1]));
 
             const angle_x = norm_delta_x * std.math.tau;
             const angle_y = norm_delta_y * std.math.tau;
@@ -408,7 +398,7 @@ pub fn main(init: std.process.Init) !void {
 
             new_eye += .{ camera.target[0], camera.target[1], camera.target[2], 0 };
 
-            if (window.getMouseButton(.right) != .release and !imgui.isAnyItemActive() and !imguizmo.ImGuizmo_IsUsing()) {
+            if (surface_poll.mouse_input.buttons.get(.right) != .release and !imgui.isAnyItemActive() and !imguizmo.ImGuizmo_IsUsing()) {
                 camera.eye = .{ new_eye[0], new_eye[1], new_eye[2] };
             }
 
@@ -454,7 +444,7 @@ pub fn main(init: std.process.Init) !void {
 
         camera.projection = @bitCast((zmath.perspectiveFovRhGl(
             camera.fov,
-            @as(f32, @floatFromInt(window.getSize()[0])) / @as(f32, @floatFromInt(window.getSize()[1])),
+            @as(f32, @floatFromInt(surface_poll.surface_state.extent[0])) / @as(f32, @floatFromInt(surface_poll.surface_state.extent[1])),
             camera.near,
             camera.far,
         )));
@@ -464,7 +454,7 @@ pub fn main(init: std.process.Init) !void {
             .{ 0, 1, 0, 0 },
         )));
 
-        const aspect_ratio: f32 = @as(f32, @floatFromInt(window.getSize()[0])) / @as(f32, @floatFromInt(window.getSize()[1]));
+        const aspect_ratio: f32 = @as(f32, @floatFromInt(surface_poll.surface_state.extent[0])) / @as(f32, @floatFromInt(surface_poll.surface_state.extent[1]));
 
         if (true) {
             asym.geo.beginView(
@@ -478,8 +468,8 @@ pub fn main(init: std.process.Init) !void {
                 .{
                     0,
                     0,
-                    @floatFromInt(window.getSize()[0]),
-                    @floatFromInt(window.getSize()[1]),
+                    @floatFromInt(surface_poll.surface_state.extent[0]),
+                    @floatFromInt(surface_poll.surface_state.extent[1]),
                 },
             );
         } else {
@@ -489,8 +479,8 @@ pub fn main(init: std.process.Init) !void {
                 .{
                     0,
                     0,
-                    @floatFromInt(window.getSize()[0]),
-                    @floatFromInt(window.getSize()[1]),
+                    @floatFromInt(surface_poll.surface_state.extent[0]),
+                    @floatFromInt(surface_poll.surface_state.extent[1]),
                 },
             );
         }
@@ -515,15 +505,6 @@ pub fn main(init: std.process.Init) !void {
 
         enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
 
-        simulation.render(
-            gpu_context,
-            null,
-            scene_root_index,
-            .{
-                .render_sdf_raymarched = render_sdf_raymarched,
-            },
-        );
-
         const scene_2d_texture = try simulation.gpu_sim.render2DScene(
             gpu_context,
             &simulation,
@@ -533,11 +514,20 @@ pub fn main(init: std.process.Init) !void {
             512,
         );
 
+        simulation.render(
+            gpu_context,
+            null,
+            scene_root_index,
+            .{
+                .render_sdf_raymarched = render_sdf_raymarched,
+            },
+        );
+
         if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Space)) {
             simulation.enable_simulation = !simulation.enable_simulation;
         }
 
-        if (window.getKey(.r) == .press) {
+        if (keyboard_input.keys.get(.r) == .press) {
             simulation.csg_dirty = true;
             simulation.enable_simulation = false;
         }
@@ -575,8 +565,8 @@ pub fn main(init: std.process.Init) !void {
                 imguizmo.setRect(
                     0,
                     0,
-                    @floatFromInt(window.getSize()[0]),
-                    @floatFromInt(window.getSize()[1]),
+                    @floatFromInt(surface_poll.surface_state.extent[0]),
+                    @floatFromInt(surface_poll.surface_state.extent[1]),
                 );
 
                 imguizmo.enable(enable_transform_gizmo);
@@ -1061,7 +1051,7 @@ pub fn main(init: std.process.Init) !void {
                     .no_move = true,
                     .no_resize = true,
                     .no_mouse_inputs = true,
-                }, .size = .{ @floatFromInt(window.getSize()[0]), @floatFromInt(window.getSize()[1]) } })) {
+                }, .size = .{ @floatFromInt(surface_poll.surface_state.extent()[0]), @floatFromInt(surface_poll.surface_state.extent[1]) } })) {
                     var camera_rot: [4]f32 = .{ 0, 0, 0, 0 };
 
                     camera_rot[0] = -camera.view[2][0];
@@ -1089,7 +1079,7 @@ pub fn main(init: std.process.Init) !void {
                 }
                 imgui.end();
 
-                if (window.getKey(.left_control) != .release and window.getKey(.c) == .press) {
+                if (keyboard_input.keys.get(.left_control) != .release and keyboard_input.keys.get(.c) == .press) {
                     copied_node_handles = try selected_node_handles.clone(arena);
                 }
 
@@ -1101,7 +1091,7 @@ pub fn main(init: std.process.Init) !void {
                 }
 
                 {
-                    const mouse_pos_f64 = window.getCursorPos();
+                    const mouse_pos_f64 = surface_poll.mouse_input.cursor_position;
                     const mouse_pos: [2]f32 = .{ @floatCast(mouse_pos_f64[0]), @floatCast(mouse_pos_f64[1]) };
 
                     var inv_proj = zmath.inverse(@as([4]@Vector(4, f32), @bitCast(camera.projection)));
@@ -1113,8 +1103,10 @@ pub fn main(init: std.process.Init) !void {
                     var proj_view = zmath.mul(view, projection);
                     proj_view = zmath.transpose(proj_view);
 
-                    const window_size_int = window.getSize();
-                    const window_size: [2]f32 = .{ @floatFromInt(window_size_int[0]), @floatFromInt(window_size_int[1]) };
+                    const window_size: [2]f32 = .{
+                        @floatFromInt(surface_poll.surface_state.extent[0]),
+                        @floatFromInt(surface_poll.surface_state.extent[1]),
+                    };
 
                     var ndc = @Vector(4, f32){
                         (2.0 * mouse_pos[0]) / window_size[0] - 1,
@@ -1132,10 +1124,10 @@ pub fn main(init: std.process.Init) !void {
 
                     //try imGuiCSGTreeNodeGizmos(csg_tree, .root);
 
-                    if (imgui.beginSpatial("Spatial Log", .{}, .{ 1, @floatCast(@sin(glfw.getTime()) * 100), 1 })) {
+                    if (imgui.beginSpatial("Spatial Log", .{}, .{ 1, @floatCast(@sin(0) * 100), 1 })) {
                         imgui.text("Bum", .{});
 
-                        imgui.text("{:.2}", .{@sin(glfw.getTime())});
+                        imgui.text("{:.2}", .{@sin(0)});
                     }
                     imgui.end();
 
@@ -1364,7 +1356,7 @@ pub fn main(init: std.process.Init) !void {
                     .bounds = .{ 1, 1, 0 },
                     .colour = .green,
                     .transform = .{
-                        .translation = .{ .x = @floatCast(@cos(glfw.getTime())), .y = 0, .z = 0 },
+                        .translation = .{ .x = @floatCast(@cos(0.0)), .y = 0, .z = 0 },
                         .scale = 1,
                         .rotation = .identity,
                     },
@@ -1375,7 +1367,7 @@ pub fn main(init: std.process.Init) !void {
                     .bounds = .{ 1, 1, 0 },
                     .colour = .red,
                     .transform = .{
-                        .translation = .{ .x = @floatCast(@sin(glfw.getTime())), .y = 1, .z = 0 },
+                        .translation = .{ .x = @floatCast(@sin(0.0)), .y = 1, .z = 0 },
                         .scale = 1,
                         .rotation = .identity,
                     },
@@ -1388,7 +1380,7 @@ pub fn main(init: std.process.Init) !void {
                     .radius = 10,
                     .colour = .blue,
                     .transform = .{
-                        .translation = .{ .x = @floatCast(@sin(glfw.getTime())), .y = 0, .z = 0 },
+                        .translation = .{ .x = @floatCast(@sin(0.0)), .y = 0, .z = 0 },
                         .scale = 1,
                         .rotation = .identity,
                     },
@@ -1399,7 +1391,7 @@ pub fn main(init: std.process.Init) !void {
                     .radius = 10,
                     .colour = .{ .r = 0, .g = 255, .b = 0, .a = 100 },
                     .transform = .{
-                        .translation = .{ .x = @floatCast(@cos(glfw.getTime())), .y = 0, .z = 0 },
+                        .translation = .{ .x = @floatCast(@cos(0.0)), .y = 0, .z = 0 },
                         .scale = 1,
                         .rotation = .identity,
                     },
@@ -1426,11 +1418,11 @@ pub fn main(init: std.process.Init) !void {
             var fmt_buf: [1024]u8 = undefined;
 
             const str = try std.fmt.bufPrint(&fmt_buf, "Some math:\nsin(t) = {:.2}\ncos(t) = {:.2}", .{
-                @sin(glfw.getTime()),
-                @cos(glfw.getTime()),
+                @sin(0.0),
+                @cos(0.0),
             });
             const str_2 = try std.fmt.bufPrint(fmt_buf[str.len..], "Some times:\t = {:.2}", .{
-                (glfw.getTime()),
+                0,
             });
             _ = str_2; // autofix
 
@@ -1479,6 +1471,8 @@ pub fn main(init: std.process.Init) !void {
 
         const gizmo_views = asym_geo_context.endSubmission();
 
+        gpu.rasterPassEnd(gpu_context.command_buffer);
+
         try gpu_context.renderGizmos(
             gpa,
             &asym_geo_context,
@@ -1493,17 +1487,56 @@ pub fn main(init: std.process.Init) !void {
             gpu_end_timestamp = gpu.placeCommandTimestampQuery(gpu_context.command_buffer);
         }
 
-        gpu.queueSubmit(
-            .{},
-            &.{gpu_context.command_buffer},
-            &.{},
-        );
+        const clear_cmds = gpu.queueStartCommandRecording(.{}, .{});
+
+        gpu.rasterPassBegin(clear_cmds, .{
+            .color_attachments = &.{.{
+                .texture = swapchain_texture,
+                .clear = .{ 1, 0.6, 0, 1 },
+            }},
+            .render_area = .{
+                .x = 0,
+                .y = 0,
+                .width = 500,
+                .height = 200,
+            },
+        });
+        gpu.rasterPassEnd(clear_cmds);
+
+        if (true) {
+            gpu.queueSubmit(
+                .{},
+                &.{clear_cmds},
+                &.{
+                    .{
+                        .signal_semaphore = frame_semaphore,
+                        .signal_value = next_frame,
+                    },
+                },
+            );
+        } else {
+            gpu.queueSubmit(
+                .{},
+                &.{gpu_context.command_buffer},
+                &.{
+                    .{
+                        .signal_semaphore = frame_semaphore,
+                        .signal_value = next_frame,
+                    },
+                },
+            );
+        }
 
         gpu.swapchainPresent(
-            gpu_context.command_buffer,
             gpu_swapchain,
+            .{
+                .wait_semaphore = frame_semaphore,
+                .wait_value = next_frame,
+            },
         );
     }
+
+    gpu.waitIdle();
 }
 
 const CSGReparentCommand = struct {
@@ -2052,13 +2085,6 @@ const CSGTreeNodeZonSerializable = struct {
     name: [:0]const u8 = "",
 };
 
-fn glfwScrollCallback(window: *glfw.Window, x: f64, y: f64) callconv(.c) void {
-    _ = x; // autofix
-    const scroll = window.getUserPointer(f32);
-
-    scroll.?.* = @floatCast(-y * 0.1);
-}
-
 ///Call this to send a log message to the log viewer
 pub fn logMessage(
     comptime message_level: std.log.Level,
@@ -2112,9 +2138,9 @@ pub const shaders = @import("lib").shaders;
 const imgui = @import("imgui.zig");
 const Simulation = @import("Simulation.zig");
 const asym = @import("asym.zig");
-const glfw = @import("zglfw");
 const zigimg = @import("zigimg");
 const std = @import("std");
 const stb_image = @import("stb_image.zig");
 const imguizmo = @import("imguizmo.zig");
 const gpu = @import("gpu.zig");
+const glaze = @import("glaze.zig");

@@ -65,7 +65,7 @@ const Shaders = struct {
 };
 
 pub const Context = struct {
-    window: *glfw.Window,
+    window_extents: [2]u32,
     gpu_gpa: gpu.mem.Allocator,
     gpu_staging_arena: gpu.mem.Allocator,
     gpu_staging_fbas: [2]gpu.heap.FixedBufferAllocator,
@@ -99,13 +99,11 @@ pub const Context = struct {
 
     pub fn init(
         arena: std.mem.Allocator,
-        window: *glfw.Window,
         io: std.Io,
     ) !Context {
         var context: Context = undefined;
 
         context.io = io;
-        context.window = window;
         context.shaders_watcher = try arena.create(watchers.Watcher);
         context.watcher_context = try arena.create(WatcherContext);
         context.watcher_context.* = .{
@@ -122,7 +120,7 @@ pub const Context = struct {
         );
 
         context.gpu_gpa = gpu.heap.page_allocator;
-        const gpu_staging_buffer = try context.gpu_gpa.alloc(u8, 64 * 1024 * 1024, .gpu_cpu_writable);
+        const gpu_staging_buffer = try context.gpu_gpa.alloc(u8, 32 * 1024 * 1024, .gpu_cpu_writable);
         context.gpu_staging_fbas[0] = .init(gpu_staging_buffer[0 .. gpu_staging_buffer.len / 2]);
         context.gpu_staging_fbas[1] = .init(gpu_staging_buffer[gpu_staging_buffer.len / 2 ..]);
         context.gpu_staging_arena = context.gpu_staging_fbas[0].allocator();
@@ -246,28 +244,7 @@ pub const Context = struct {
 
         const command_buffer = context.command_buffer;
 
-        const framebuffer_size = context.window.getFramebufferSize();
-
-        gpu.rasterPassBegin(command_buffer, .{
-            .color_attachments = &.{.{
-                .texture = context.swapchain_texture,
-                .clear = .{ 0, 0, 1, 0 },
-            }},
-            .depth_attachment = .{
-                .texture = context.swapchain_texture,
-                .clear = 1,
-            },
-            .stencil_attachment = .{
-                .texture = context.swapchain_texture,
-                .clear = 0,
-            },
-            .render_area = .{
-                .x = 0,
-                .y = 0,
-                .width = @intCast(framebuffer_size[0]),
-                .height = @intCast(framebuffer_size[1]),
-            },
-        });
+        const framebuffer_size = context.window_extents;
 
         gpu.setStateViewport(command_buffer, .{
             0,
@@ -292,7 +269,7 @@ pub const Context = struct {
         context: Context,
     ) void {
         const command_buffer = context.command_buffer;
-        gpu.rasterPassEnd(command_buffer);
+        _ = command_buffer; // autofix
     }
 
     const asym = @import("asym.zig");
@@ -450,11 +427,11 @@ pub const Context = struct {
         _ = typeface_textures; // autofix
         gpu.setStateViewport(
             command_buffer,
-            .{ 0, 0, @floatFromInt(context.window.getSize()[0]), @floatFromInt(context.window.getSize()[1]) },
+            .{ 0, 0, @floatFromInt(context.window_extents[0]), @floatFromInt(context.window_extents[1]) },
         );
         gpu.setStateScissor(
             command_buffer,
-            .{ 0, 0, @intCast(context.window.getSize()[0]), @intCast(context.window.getSize()[1]) },
+            .{ 0, 0, @intCast(context.window_extents[0]), @intCast(context.window_extents[1]) },
         );
 
         const staging_arena = context.gpu_staging_fbas[1].allocator();
@@ -494,13 +471,6 @@ pub const Context = struct {
 
         for (views) |*view| {
             var iter = view.iterate();
-
-            gpu.setStateScissor(command_buffer, .{
-                @intFromFloat(view.scissor[0]),
-                @intFromFloat(view.scissor[1]),
-                @intFromFloat(view.scissor[2]),
-                @intFromFloat(view.scissor[3]),
-            });
 
             const Mat4x4 = [4]@Vector(4, f32);
 
@@ -631,6 +601,53 @@ pub const Context = struct {
                     draw_buffer_offset += draws.len;
                     parameter_buffer_offset += params.len;
                 }
+            }
+        }
+
+        const framebuffer_size = context.window_extents;
+
+        gpu.rasterPassBegin(context.command_buffer, .{
+            .color_attachments = &.{.{
+                .texture = context.swapchain_texture,
+                .clear = .{ 0, 0, 1, 0 },
+            }},
+            .render_area = .{
+                .x = 0,
+                .y = 0,
+                .width = @intCast(framebuffer_size[0]),
+                .height = @intCast(framebuffer_size[1]),
+            },
+        });
+        defer gpu.rasterPassEnd(context.command_buffer);
+
+        for (views) |*view| {
+            var iter = view.iterate();
+
+            gpu.setStateScissor(command_buffer, .{
+                @intFromFloat(view.scissor[0]),
+                @intFromFloat(view.scissor[1]),
+                @intFromFloat(view.scissor[2]),
+                @intFromFloat(view.scissor[3]),
+            });
+
+            var draw_buffer_offset: usize = 0;
+
+            while (iter.next()) |tuple| {
+                const state, const group = tuple;
+                _ = state; // autofix
+                for (group.draws_by_type.values, group.parameters_by_type.values, 0..) |
+                    draws,
+                    params,
+                    type_index,
+                | {
+                    _ = params; // autofix
+                    _ = type_index; // autofix
+                    if (draws.len == 0) {
+                        continue;
+                    }
+
+                    draw_buffer_offset += draws.len;
+                }
 
                 gpu.setStateBlend(command_buffer, .{});
                 gpu.setStateDepthStencil(command_buffer, .{});
@@ -662,7 +679,7 @@ pub const Context = struct {
             @embedFile(fragment_ir_path),
             .{
                 .color_targets = &.{.{
-                    .format = .rgba8_unorm32,
+                    .format = .bgra8_srgb32,
                     .write_mask = 0xff,
                 }},
                 .depth_format = .depth_stencil_u24_u8,
@@ -853,7 +870,7 @@ pub const Simulation = struct {
         gpu_sim.voxel_temperature_memory_buffer = try context.gpu_gpa.alloc(f32, 64 * 64 * 64 * 16, .gpu);
         gpu_sim.voxel_allocator_buffer = try context.gpu_gpa.alloc(VoxelChunkAllocator, 128, .gpu);
         gpu_sim.voxel_chunks_buffer = try context.gpu_gpa.alloc(VoxelChunksAllocation, 64 * 64 * 64, .gpu);
-        gpu_sim.voxel_heap_bit_buffer = try context.gpu_gpa.alloc(u32, 16 * 16 * 16 * 16 * 16 * 16, .gpu);
+        gpu_sim.voxel_heap_bit_buffer = try context.gpu_gpa.alloc(u32, 16 * 16 * 16 * 16, .gpu);
         gpu_sim.voxel_positions_buffer = try context.gpu_gpa.alloc(u32, 16 * 16 * 16, .gpu);
         gpu_sim.simulation_vertex_buffer = try context.gpu_gpa.alloc([4]f32, 10_000, .gpu);
         gpu_sim.simulation_draws_buffer = try context.gpu_gpa.alloc(gpu.RasterDrawCommand, 128, .gpu);
@@ -1162,6 +1179,21 @@ pub const Simulation = struct {
                 .draw_commands = true,
             },
         );
+
+        const framebuffer_size = context.window_extents;
+
+        gpu.rasterPassBegin(context.command_buffer, .{
+            .color_attachments = &.{.{
+                .texture = context.swapchain_texture,
+                .clear = .{ 0, 0, 1, 0 },
+            }},
+            .render_area = .{
+                .x = 0,
+                .y = 0,
+                .width = @intCast(framebuffer_size[0]),
+                .height = @intCast(framebuffer_size[1]),
+            },
+        });
 
         if (render_texture) |texture| {
             gpu.rasterPassBegin(

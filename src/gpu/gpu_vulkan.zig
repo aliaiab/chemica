@@ -28,6 +28,7 @@ var context: struct {
     queues: []vk.Queue,
 
     vk_ext_descriptor_heap_enabled: bool,
+    vk_ext_swapchain_maintenance_enabled: bool,
 
     descriptor_set_layouts: []vk.DescriptorSetLayout,
 
@@ -68,6 +69,8 @@ pub fn selectDevice(
     context.command_pools = try arena.alloc(vk.CommandPool, 1 + std.math.maxInt(@TypeOf(@backingInt(gpu.Queue{}))));
     context.queues = try arena.alloc(vk.Queue, 1 + std.math.maxInt(@TypeOf(@backingInt(gpu.Queue{}))));
     context.vk_ext_descriptor_heap_enabled = false;
+    //TODO: check for support
+    context.vk_ext_swapchain_maintenance_enabled = true;
     context.descriptor_heaps = .empty;
 
     context.pipeline_pool = try .initCapacity(gpa, 128);
@@ -94,7 +97,9 @@ pub fn selectDevice(
     var extension_names: std.ArrayList([*:0]const u8) = .empty;
     defer extension_names.deinit(allocator);
 
-    try extension_names.append(allocator, vk.extensions.ext_debug_utils.name);
+    if (@import("builtin").mode == .debug) {
+        try extension_names.append(allocator, vk.extensions.ext_debug_utils.name);
+    }
 
     if (@import("builtin").os.tag == .macos) {
         // the following extensions are to support vulkan in mac os
@@ -104,11 +109,13 @@ pub fn selectDevice(
     }
 
     try extension_names.append(allocator, vk.extensions.khr_surface.name);
+    try extension_names.append(allocator, vk.extensions.ext_surface_maintenance_1.name);
 
     switch (@import("builtin").os.tag) {
         .linux => {
-            try extension_names.append(allocator, vk.extensions.khr_xcb_surface.name);
-            //try extension_names.append(allocator, vk.extensions.khr_wayland_surface.name);
+            //TODO: check the relevant environ variable to choose which window system to support
+            //try extension_names.append(allocator, vk.extensions.khr_xcb_surface.name);
+            try extension_names.append(allocator, vk.extensions.khr_wayland_surface.name);
         },
         .windows => {
             try extension_names.append(allocator, vk.extensions.khr_win_32_surface.name);
@@ -118,6 +125,8 @@ pub fn selectDevice(
         },
         else => @compileError("Os currently not supported for vulkan!"),
     }
+
+    try extension_names.append(allocator, vk.extensions.khr_get_surface_capabilities_2.name);
 
     _ = try context.vkb.enumerateInstanceExtensionPropertiesAlloc("", allocator);
 
@@ -142,21 +151,23 @@ pub fn selectDevice(
     context.instance = vk.InstanceProxy.init(instance, vki);
     errdefer context.instance.destroyInstance(null);
 
-    context.debug_messenger = try context.instance.createDebugUtilsMessengerEXT(&.{
-        .message_severity = .{
-            .verbose_ext = true,
-            .info_ext = true,
-            .warning_ext = true,
-            .error_ext = true,
-        },
-        .message_type = .{
-            .general_ext = true,
-            .validation_ext = true,
-            .performance_ext = true,
-        },
-        .pfn_user_callback = &debugUtilsMessengerCallback,
-        .p_user_data = null,
-    }, null);
+    if (@import("builtin").mode == .debug) {
+        context.debug_messenger = try context.instance.createDebugUtilsMessengerEXT(&.{
+            .message_severity = .{
+                .verbose_ext = false,
+                .info_ext = false,
+                .warning_ext = true,
+                .error_ext = true,
+            },
+            .message_type = .{
+                .general_ext = true,
+                .validation_ext = true,
+                .performance_ext = true,
+            },
+            .pfn_user_callback = &debugUtilsMessengerCallback,
+            .p_user_data = null,
+        }, null);
+    }
 
     const candidate = try pickPhysicalDevice(context.instance, allocator);
     context.physical_device = candidate.pdev;
@@ -182,16 +193,62 @@ pub fn selectDevice(
         else
             2;
 
+        var features: vk.PhysicalDeviceFeatures = .{
+            .multi_draw_indirect = .true,
+            .fill_mode_non_solid = .true,
+            .shader_int_64 = .true,
+        };
+
+        var swapchain_maint_features: vk.PhysicalDeviceSwapchainMaintenance1FeaturesEXT = .{
+            .swapchain_maintenance_1 = .true,
+        };
+
+        var dynamic_state_features_3: vk.PhysicalDeviceExtendedDynamicState3FeaturesEXT = .{};
+        dynamic_state_features_3.p_next = &swapchain_maint_features;
+        dynamic_state_features_3.extended_dynamic_state_3_depth_clamp_enable = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_polygon_mode = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_rasterization_samples = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_sample_mask = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_alpha_to_coverage_enable = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_alpha_to_one_enable = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_logic_op_enable = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_color_blend_enable = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_color_blend_equation = .true;
+        dynamic_state_features_3.extended_dynamic_state_3_color_write_mask = .true;
+
+        var dynamic_state_features: vk.PhysicalDeviceExtendedDynamicState2FeaturesEXT = .{};
+        dynamic_state_features.p_next = &dynamic_state_features_3;
+        dynamic_state_features.extended_dynamic_state_2_logic_op = .true;
+        dynamic_state_features.extended_dynamic_state_2 = .true;
+
         var descriptor_heap_features: vk.PhysicalDeviceDescriptorHeapFeaturesEXT = .{};
         descriptor_heap_features.descriptor_heap = .true;
+        descriptor_heap_features.p_next = &dynamic_state_features;
 
         var features_11: vk.PhysicalDeviceVulkan11Features = .{
             .p_next = &descriptor_heap_features,
             .shader_draw_parameters = .true,
+            .variable_pointers_storage_buffer = .true,
+            .variable_pointers = .true,
         };
 
-        const features_13: vk.PhysicalDeviceVulkan13Features = .{
+        var features_12: vk.PhysicalDeviceVulkan12Features = .{
             .p_next = &features_11,
+        };
+        features_12.buffer_device_address = .true;
+        features_12.descriptor_indexing = .true;
+        features_12.descriptor_binding_partially_bound = .true;
+        features_12.descriptor_binding_storage_image_update_after_bind = .true;
+        features_12.descriptor_binding_sampled_image_update_after_bind = .true;
+        features_12.draw_indirect_count = .true;
+        features_12.buffer_device_address_capture_replay = .true;
+        features_12.buffer_device_address_multi_device = .true;
+        features_12.timeline_semaphore = .true;
+        features_12.shader_sampled_image_array_non_uniform_indexing = .true;
+        features_12.shader_storage_image_array_non_uniform_indexing = .true;
+
+        const features_13: vk.PhysicalDeviceVulkan13Features = .{
+            .p_next = &features_12,
             .synchronization_2 = .true,
             .dynamic_rendering = .true,
             .maintenance_4 = .true,
@@ -201,6 +258,7 @@ pub fn selectDevice(
         defer device_extension_names.deinit(allocator);
 
         try device_extension_names.appendSlice(allocator, &required_device_extensions);
+        try device_extension_names.append(allocator, vk.extensions.ext_swapchain_maintenance_1.name);
 
         if (false) {
             try device_extension_names.append(allocator, vk.extensions.ext_descriptor_heap.name);
@@ -211,10 +269,11 @@ pub fn selectDevice(
             .p_next = &features_13,
             .queue_create_info_count = queue_count,
             .p_queue_create_infos = &qci,
+            .p_enabled_features = &features,
             .enabled_extension_count = @intCast(device_extension_names.items.len),
             .pp_enabled_extension_names = @ptrCast(device_extension_names.items.ptr),
             .enabled_layer_count = 0,
-            .pp_enabled_layer_names = undefined,
+            .pp_enabled_layer_names = null,
         }, null);
     };
 
@@ -395,7 +454,7 @@ pub fn memAlloc(
 
     var buffer: vk.Buffer = undefined;
 
-    const allocation_create_info: vma.VmaAllocationCreateInfo = .{
+    var allocation_create_info: vma.VmaAllocationCreateInfo = .{
         .flags = if (memory_type != .gpu)
             vma.VMA_ALLOCATION_CREATE_MAPPED_BIT | vma.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
         else
@@ -475,7 +534,13 @@ pub fn memCopy(
         vk_command_buffer,
         src_allocation.buffer,
         dest_allocation.buffer,
-        &.{},
+        &.{
+            .{
+                .src_offset = getMemoryAllocationOffset(src_gpu),
+                .dst_offset = getMemoryAllocationOffset(dest_gpu),
+                .size = src_gpu.len,
+            },
+        },
     );
 }
 
@@ -496,6 +561,7 @@ pub fn memCopyToTexture(
     const mip_width: u32 = @max(1, dest_slice.dimensions[0] >> @as(u5, @intCast(dest_slice.mip_start)));
     const mip_height: u32 = @max(1, dest_slice.dimensions[1] >> @as(u5, @intCast(dest_slice.mip_start)));
     const mip_depth: u32 = @max(1, dest_slice.dimensions[2] >> @as(u5, @intCast(dest_slice.mip_start)));
+    _ = mip_depth; // autofix
 
     const dest_texture = getMemoryAllocationTexture(@ptrCast(dest_gpu));
 
@@ -516,14 +582,14 @@ pub fn memCopyToTexture(
                     .layer_count = @max(1, dest_slice.layer_count),
                 },
                 .image_offset = .{
-                    .x = if (dest_slice.dimensions[0] != 0) @intCast(dest_slice.dimensions[0]) else @intCast(dest_slice.offset[0]),
-                    .y = if (dest_slice.dimensions[1] != 0) @intCast(dest_slice.dimensions[1]) else @intCast(dest_slice.offset[1]),
-                    .z = if (dest_slice.dimensions[2] != 0) @intCast(dest_slice.dimensions[2]) else @intCast(dest_slice.offset[2]),
+                    .x = @intCast(dest_slice.offset[0]),
+                    .y = @intCast(dest_slice.offset[1]),
+                    .z = @intCast(dest_slice.offset[2]),
                 },
                 .image_extent = .{
-                    .width = @intCast(mip_width),
-                    .height = @intCast(mip_depth),
-                    .depth = @intCast(mip_depth),
+                    .width = if (dest_slice.dimensions[0] != 0) @intCast(dest_slice.dimensions[0]) else @intCast(dest_slice.offset[0]),
+                    .height = if (dest_slice.dimensions[1] != 0) @intCast(dest_slice.dimensions[1]) else @intCast(dest_slice.offset[1]),
+                    .depth = if (dest_slice.dimensions[2] != 0) @intCast(dest_slice.dimensions[2]) else @intCast(dest_slice.offset[2]),
                 },
             },
         },
@@ -585,6 +651,7 @@ pub fn createRasterVertexPipeline(
         vk.DynamicState.depth_write_enable,
         vk.DynamicState.depth_compare_op,
         vk.DynamicState.depth_bounds_test_enable,
+        vk.DynamicState.depth_bias_enable,
         vk.DynamicState.stencil_test_enable,
         vk.DynamicState.stencil_op,
         vk.DynamicState.depth_bounds,
@@ -595,11 +662,14 @@ pub fn createRasterVertexPipeline(
         vk.DynamicState.color_blend_equation_ext,
         vk.DynamicState.color_write_mask_ext,
         vk.DynamicState.blend_constants,
+        //multisample state
+        vk.DynamicState.rasterization_samples_ext,
+        vk.DynamicState.sample_mask_ext,
+        vk.DynamicState.alpha_to_coverage_enable_ext,
+        vk.DynamicState.alpha_to_one_enable_ext,
         //Viewport and scissor
         vk.DynamicState.viewport,
-        vk.DynamicState.viewport_with_count,
         vk.DynamicState.scissor,
-        vk.DynamicState.scissor_with_count,
     };
 
     _ = context.device.createGraphicsPipelines(
@@ -772,8 +842,6 @@ pub fn registerTextureMemory(
 
     const cmd_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(cmds));
 
-    std.debug.assert(image != .null_handle);
-
     context.device.cmdPipelineBarrier2(cmd_buffer, &.{
         .image_memory_barrier_count = 1,
         .p_image_memory_barriers = @ptrCast(&vk.ImageMemoryBarrier2{
@@ -785,7 +853,7 @@ pub fn registerTextureMemory(
                 .base_mip_level = 0,
                 .base_array_layer = 0,
                 .level_count = description.mip_count,
-                .layer_count = description.layer_count,
+                .layer_count = vk.REMAINING_ARRAY_LAYERS,
             },
             .old_layout = .undefined,
             .new_layout = .general,
@@ -863,7 +931,7 @@ pub fn createTextureDescriptor(
         }, null) catch @panic("oom");
         const view = context.device.createImageView(&.{
             .image = texture_data.handle,
-            .view_type = .@"2d",
+            .view_type = toVkImageViewType(texture_data.description.type),
             .format = toVkImageFormat(texture_data.description.format),
             .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
             .subresource_range = .{
@@ -940,8 +1008,6 @@ fn createDescriptorHeap(
 
     const allocation = getMemoryAllocationPtr(@ptrCast(memory));
 
-    const texture_count: u32 = @intCast(memory.len / @sizeOf(gpu.TextureDescriptor));
-
     data.memory = memory;
 
     if (context.vk_ext_descriptor_heap_enabled) {
@@ -956,9 +1022,9 @@ fn createDescriptorHeap(
                 },
                 .pool_size_count = 3,
                 .p_pool_sizes = &[_]vk.DescriptorPoolSize{
-                    .{ .type = .sampled_image, .descriptor_count = texture_count },
-                    .{ .type = .storage_image, .descriptor_count = texture_count },
-                    .{ .type = .sampler, .descriptor_count = texture_count },
+                    .{ .type = .sampled_image, .descriptor_count = @intCast(memory.len * 4) },
+                    .{ .type = .storage_image, .descriptor_count = @intCast(memory.len * 4) },
+                    .{ .type = .sampler, .descriptor_count = @intCast(memory.len * 4) },
                 },
             },
             null,
@@ -1077,8 +1143,10 @@ pub fn setStateBlend(
     );
     context.device.cmdSetColorWriteMaskEXT(
         vk_command_buffer,
-        0,
-        &.{},
+        1,
+        &.{
+            .{},
+        },
     );
 }
 
@@ -1158,7 +1226,11 @@ pub fn barrier(
     const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(command_buffer));
 
     const vk_before: vk.PipelineStageFlags = toVkStage(before);
-    const vk_after: vk.PipelineStageFlags = toVkStage(after);
+    var vk_after: vk.PipelineStageFlags = toVkStage(after);
+
+    if (hazards.draw_commands) {
+        vk_after.draw_indirect = true;
+    }
 
     var src_access: vk.AccessFlags = .{};
     var dst_access: vk.AccessFlags = .{};
@@ -1230,7 +1302,7 @@ pub fn rasterPassBegin(
 
     var buffer: [256]u8 = undefined;
 
-    var alloc: std.heap.BufferFirstAllocator = .init(&buffer, std.heap.page_allocator);
+    var alloc: std.heap.BufferFirstAllocator = .init(&buffer, context.gpa);
 
     const allocator = alloc.allocator();
     const color_attachments = allocator.alloc(
@@ -1240,11 +1312,32 @@ pub fn rasterPassBegin(
     defer allocator.free(color_attachments);
 
     for (color_attachments, description.color_attachments) |*color_attachment, input_color_attachment| {
+        const texture_data = getMemoryAllocationTexture(@ptrCast(input_color_attachment.texture));
+
+        if (texture_data.view == .null_handle) {
+            const view = context.device.createImageView(&.{
+                .image = texture_data.handle,
+                .view_type = .@"2d",
+                .format = toVkImageFormat(texture_data.description.format),
+                .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+                .subresource_range = .{
+                    .aspect_mask = toVkImageAspectFlags(texture_data.description.format),
+                    .base_mip_level = 0,
+                    .level_count = texture_data.description.layer_count,
+                    .base_array_layer = 0,
+                    .layer_count = texture_data.description.mip_count,
+                },
+            }, null) catch @panic("oom");
+
+            texture_data.view = view;
+        }
+
         color_attachment.* = .{
-            .image_layout = .general,
-            .resolve_mode = undefined,
+            .image_layout = vk.ImageLayout.general,
+            .image_view = texture_data.view,
+            .resolve_mode = .{},
             .resolve_image_layout = .undefined,
-            .load_op = .load,
+            .load_op = vk.AttachmentLoadOp.clear,
             .store_op = .store,
             .clear_value = .{ .color = .{ .float_32 = input_color_attachment.clear.? } },
         };
@@ -1349,7 +1442,7 @@ pub fn launchRasterDraw(
     } else {
         context.device.cmdPushConstants(
             vk_command_buffer,
-            context.compute_pipeline_layout,
+            context.raster_pipeline_layout,
             .{
                 .vertex = true,
                 .fragment = true,
@@ -1412,7 +1505,6 @@ pub fn queueStartCommandRecording(
     initial_state: gpu.CommandBufferInitialState,
 ) *CommandBuffer {
     const pool = context.command_pools[@backingInt(queue)];
-    std.debug.print("cmd_pool: 0x{x}\n", .{pool});
     const cmd_buffer_allocation_info: vk.CommandBufferAllocateInfo = .{
         .command_pool = pool,
         .level = .primary,
@@ -1466,27 +1558,64 @@ pub fn queueStartCommandRecording(
         }
     }
 
+    context.device.cmdSetRasterizerDiscardEnable(
+        command_buffer,
+        .true,
+    );
+
     return @ptrFromInt(@backingInt(command_buffer));
 }
 
 pub fn queueSubmit(
     queue: Queue,
     command_buffers: []const *CommandBuffer,
-    semaphores: []const *Semaphore,
+    semaphores: []const gpu.SemaphoreSignalDescription,
 ) void {
-    _ = semaphores; // autofix
     const submit_infos: []vk.SubmitInfo = context.arena.alloc(vk.SubmitInfo, command_buffers.len) catch @panic("oom");
     defer context.arena.free(submit_infos);
+
+    const wait_semaphores: []vk.Semaphore = context.arena.alloc(vk.Semaphore, semaphores.len) catch @panic("oom");
+    defer context.arena.free(wait_semaphores);
+    const wait_values: []u64 = context.arena.alloc(u64, semaphores.len) catch @panic("oom");
+    defer context.arena.free(wait_values);
+
+    const signal_semaphores: []vk.Semaphore = context.arena.alloc(vk.Semaphore, semaphores.len) catch @panic("oom");
+    defer context.arena.free(signal_semaphores);
+    const signal_values: []u64 = context.arena.alloc(u64, semaphores.len) catch @panic("oom");
+    defer context.arena.free(signal_values);
+
+    var signal_count: u32 = 0;
+    var wait_count: u32 = 0;
+
+    for (semaphores) |semaphore| {
+        signal_semaphores[signal_count] = @fromBackingInt(@intFromPtr(semaphore.signal_semaphore));
+        wait_semaphores[wait_count] = @fromBackingInt(@intFromPtr(semaphore.wait_semaphore));
+        signal_values[signal_count] = semaphore.signal_value orelse 0;
+        wait_values[wait_count] = semaphore.wait_value orelse 0;
+
+        signal_count += if (semaphore.signal_semaphore != null) 1 else 0;
+        wait_count += if (semaphore.wait_semaphore != null) 1 else 0;
+    }
 
     for (command_buffers, submit_infos) |*command_buffer, *submit_info| {
         const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(command_buffer.*));
 
         submit_info.* = .{
+            .p_next = &vk.TimelineSemaphoreSubmitInfo{
+                .p_wait_semaphore_values = wait_values.ptr,
+                .wait_semaphore_value_count = wait_count,
+                .p_signal_semaphore_values = signal_values.ptr,
+                .signal_semaphore_value_count = signal_count,
+            },
             .p_command_buffers = @ptrCast(&vk_command_buffer),
             .command_buffer_count = 1,
             .p_wait_dst_stage_mask = &.{
                 .{ .all_commands = true },
             },
+            .p_wait_semaphores = if (wait_count != 0) wait_semaphores.ptr else null,
+            .p_signal_semaphores = if (signal_count != 0) signal_semaphores.ptr else null,
+            .wait_semaphore_count = wait_count,
+            .signal_semaphore_count = signal_count,
         };
 
         context.device.endCommandBuffer(vk_command_buffer) catch @panic("End command buffer failed!");
@@ -1497,24 +1626,92 @@ pub fn queueSubmit(
         submit_infos,
         .null_handle,
     ) catch @panic("oom");
-
-    std.debug.print("Successful submit!\n", .{});
 }
 
 const SwapchainData = struct {
-    handle: vk.SwapchainKHR,
-    surface: vk.SurfaceKHR,
-    images: []vk.Image,
-    image_to_present: u32,
+    handle: vk.SwapchainKHR = .null_handle,
+    surface: vk.SurfaceKHR = .null_handle,
+    window_handle: *anyopaque = undefined,
+    current_extent: vk.Extent2D = undefined,
+    images: []vk.Image = &.{},
+    image_views: []vk.ImageView = &.{},
+    images_presented: []bool = &.{},
+    image_to_present: u32 = undefined,
+    semaphores: []vk.Semaphore = &.{},
+    fences: []vk.Fence = &.{},
 };
 
 pub fn createSwapchain(
     window: *anyopaque,
 ) *gpu.Swapchain {
-    const glfw_window: *glfw.Window = @ptrCast(@alignCast(window));
     const swapchain_data = context.arena.create(SwapchainData) catch @panic("oom");
 
+    swapchain_data.* = .{};
+
+    const glfw_window: *glfw.Window = @ptrCast(@alignCast(window));
+
+    swapchain_data.current_extent.width = @intCast(glfw_window.getSize()[0]);
+    swapchain_data.current_extent.height = @intCast(glfw_window.getSize()[1]);
+    swapchain_data.window_handle = window;
+
     _ = glfw.createWindowSurface(@fromBackingInt(@backingInt(context.instance.handle)), glfw_window, null, @ptrCast(&swapchain_data.surface)) catch @panic("oom");
+
+    internalCreateSwapchain(swapchain_data);
+
+    return @ptrCast(swapchain_data);
+}
+
+fn recreateSwapchain(swapchain_data: *SwapchainData) !void {
+    const surface_capabilities = context.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
+        context.physical_device,
+        swapchain_data.surface,
+    ) catch @panic("oom");
+
+    var new_extent = surface_capabilities.current_extent;
+
+    if (new_extent.width == std.math.maxInt(u32) or new_extent.height == std.math.maxInt(u32)) {
+        //TODO: use native wayland calls
+        const glfw_window: *glfw.Window = @ptrCast(@alignCast(swapchain_data.window_handle));
+
+        new_extent.width = @intCast(glfw_window.getSize()[0]);
+        new_extent.height = @intCast(glfw_window.getSize()[1]);
+    }
+
+    swapchain_data.current_extent = new_extent;
+
+    if (new_extent.width == swapchain_data.current_extent.width and
+        new_extent.height == swapchain_data.current_extent.height)
+    {
+        return;
+    }
+
+    internalCreateSwapchain(swapchain_data);
+}
+
+fn internalCreateSwapchain(
+    swapchain_data: *SwapchainData,
+) void {
+    var scaling_caps: vk.SurfacePresentScalingCapabilitiesEXT = undefined;
+    scaling_caps.s_type = .surface_present_scaling_capabilities_khr;
+    scaling_caps.p_next = null;
+
+    var present_mode: vk.SurfacePresentModeKHR = .{
+        .present_mode = vk.PresentModeKHR.fifo_khr,
+    };
+
+    var surface_caps: vk.SurfaceCapabilities2KHR = .{
+        .p_next = &scaling_caps,
+        .surface_capabilities = undefined,
+    };
+
+    context.instance.getPhysicalDeviceSurfaceCapabilities2KHR(
+        context.physical_device,
+        &.{
+            .p_next = &present_mode,
+            .surface = swapchain_data.surface,
+        },
+        &surface_caps,
+    ) catch @panic("oom");
 
     const surface_capabilities = context.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
         context.physical_device,
@@ -1523,13 +1720,26 @@ pub fn createSwapchain(
 
     const image_count = @min(@max(surface_capabilities.min_image_count, 3), surface_capabilities.max_image_count);
 
+    var scaling_info: vk.SwapchainPresentScalingCreateInfoEXT = .{
+        .scaling_behavior = .{},
+    };
+
+    if (scaling_caps.min_scaled_image_extent.width != 0 and scaling_caps.max_scaled_image_extent.width != 0) {
+        scaling_info.scaling_behavior.aspect_ratio_stretch_khr = true;
+    }
+
     swapchain_data.handle = context.device.createSwapchainKHR(
         &.{
+            .flags = .{
+                .deferred_memory_allocation_khr = context.vk_ext_swapchain_maintenance_enabled,
+            },
+            .p_next = if (context.vk_ext_swapchain_maintenance_enabled) &scaling_info else null,
             .surface = swapchain_data.surface,
+            .old_swapchain = swapchain_data.handle,
             .min_image_count = image_count,
             .image_format = vk.Format.b8g8r8a8_srgb,
             .image_color_space = vk.ColorSpaceKHR.srgb_nonlinear_khr,
-            .image_extent = surface_capabilities.current_extent,
+            .image_extent = swapchain_data.current_extent,
             .image_array_layers = 1,
             .image_usage = .{ .color_attachment = true },
             .image_sharing_mode = .exclusive,
@@ -1541,13 +1751,47 @@ pub fn createSwapchain(
         null,
     ) catch @panic("oom");
 
-    swapchain_data.images = context.device.getSwapchainImagesAllocKHR(swapchain_data.handle, context.arena) catch @panic("oom");
+    swapchain_data.images = context.device.getSwapchainImagesAllocKHR(swapchain_data.handle, context.gpa) catch @panic("oom");
+    swapchain_data.image_views = context.gpa.alloc(vk.ImageView, swapchain_data.images.len) catch @panic("oom");
+    swapchain_data.semaphores = context.gpa.alloc(vk.Semaphore, swapchain_data.images.len) catch @panic("oom");
+    swapchain_data.fences = context.gpa.alloc(vk.Fence, swapchain_data.images.len) catch @panic("oom");
+    swapchain_data.images_presented = context.gpa.alloc(bool, swapchain_data.images.len) catch @panic("oom");
+    @memset(swapchain_data.images_presented, false);
 
-    return @ptrCast(swapchain_data);
+    for (
+        swapchain_data.semaphores,
+        swapchain_data.fences,
+        swapchain_data.image_views,
+        swapchain_data.images,
+    ) |*semaphore, *fence, *image_view, image| {
+        semaphore.* = context.device.createSemaphore(&.{}, null) catch @panic("oom");
+        fence.* = context.device.createFence(&.{}, null) catch @panic("oom");
+
+        if (!context.vk_ext_swapchain_maintenance_enabled) {
+            image_view.* = context.device.createImageView(&.{
+                .image = image,
+                .view_type = .@"2d",
+                .format = toVkImageFormat(.bgra8_srgb32),
+                .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+                .subresource_range = .{
+                    .aspect_mask = toVkImageAspectFlags(.bgra8_srgb32),
+                    .base_mip_level = 0,
+                    .level_count = vk.REMAINING_MIP_LEVELS,
+                    .base_array_layer = 0,
+                    .layer_count = vk.REMAINING_ARRAY_LAYERS,
+                },
+            }, null) catch @panic("oom");
+        }
+    }
 }
 
 pub fn destroySwapchain(swapchain: *gpu.Swapchain) void {
     const swapchain_data: *SwapchainData = @ptrCast(@alignCast(swapchain));
+
+    context.gpa.free(swapchain_data.semaphores);
+    context.gpa.free(swapchain_data.fences);
+    context.gpa.free(swapchain_data.images_presented);
+    context.gpa.free(swapchain_data.images);
 
     context.device.destroySwapchainKHR(swapchain_data.handle, null);
     context.instance.destroySurfaceKHR(swapchain_data.surface, null);
@@ -1558,14 +1802,55 @@ pub fn swapchainObtainTexture(
 ) []gpu.TextureByte {
     const swapchain_data: *SwapchainData = @ptrCast(@alignCast(swapchain));
 
+    recreateSwapchain(swapchain_data) catch @panic("oom");
+
+    const fence = context.device.createFence(
+        &.{},
+        null,
+    ) catch @panic("oom");
+    defer context.device.destroyFence(fence, null);
+
     const result = context.device.acquireNextImageKHR(
         swapchain_data.handle,
         std.math.maxInt(u64),
         .null_handle,
-        .null_handle,
+        fence,
     ) catch @panic("oom");
 
+    switch (result.result) {
+        .error_out_of_date_khr, .suboptimal_khr => {
+            recreateSwapchain(swapchain_data) catch @panic("oom");
+
+            return swapchainObtainTexture(swapchain);
+        },
+        .success => {},
+        else => |e| @panic(@tagName(e)),
+    }
+
+    //TODO: add a wait semaphore to any command buffers which reference this texture, this is not optimal!
+    _ = context.device.waitForFences(@ptrCast(&fence), .true, std.math.maxInt(u64)) catch @panic("timeout");
+
     swapchain_data.image_to_present = result.image_index;
+
+    if (context.vk_ext_swapchain_maintenance_enabled) blk: {
+        if (swapchain_data.image_views[result.image_index] == .null_handle) {
+            break :blk;
+        }
+
+        swapchain_data.image_views[result.image_index] = context.device.createImageView(&.{
+            .image = swapchain_data.images[result.image_index],
+            .view_type = .@"2d",
+            .format = toVkImageFormat(.bgra8_srgb32),
+            .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+            .subresource_range = .{
+                .aspect_mask = toVkImageAspectFlags(.bgra8_srgb32),
+                .base_mip_level = 0,
+                .level_count = vk.REMAINING_MIP_LEVELS,
+                .base_array_layer = 0,
+                .layer_count = vk.REMAINING_ARRAY_LAYERS,
+            },
+        }, null) catch @panic("oom");
+    }
 
     //Use a special constant for the pointer, as we're essentially creating a dummy texture
     const ptr: [*]u8 = @ptrFromInt(0xfafa);
@@ -1581,20 +1866,87 @@ pub fn swapchainObtainTexture(
         allocation.textures.append(context.gpa, .{
             .allocation = ptr[0..1],
             .handle = swapchain_data.images[result.image_index],
-            .view = .null_handle,
-            .description = undefined,
+            .view = swapchain_data.image_views[result.image_index],
+            .description = .{
+                .dimensions = .{ 1, 1, 1 },
+                .format = .bgra8_srgb32,
+            },
         }) catch @panic("oom");
     }
+
+    const cmds = queueStartCommandRecording(.{}, .{});
+    defer queueSubmit(.{}, &.{cmds}, &.{});
+
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(cmds));
+
+    context.device.cmdPipelineBarrier2(vk_command_buffer, &.{
+        .image_memory_barrier_count = 1,
+        .p_image_memory_barriers = @ptrCast(&vk.ImageMemoryBarrier2{
+            .image = swapchain_data.images[result.image_index],
+            .src_queue_family_index = context.graphics_queue.family,
+            .dst_queue_family_index = context.graphics_queue.family,
+            .subresource_range = .{
+                .aspect_mask = toVkImageAspectFlags(.bgra8_srgb32),
+                .base_mip_level = 0,
+                .base_array_layer = 0,
+                .level_count = vk.REMAINING_MIP_LEVELS,
+                .layer_count = vk.REMAINING_ARRAY_LAYERS,
+            },
+            .old_layout = if (swapchain_data.images_presented[result.image_index]) .present_src_khr else .undefined,
+            .new_layout = .general,
+            .src_stage_mask = .{ .all_commands = true },
+            .src_access_mask = .{ .memory_write = true },
+            .dst_stage_mask = .{ .color_attachment_output = true },
+            .dst_access_mask = .{ .memory_read = true, .memory_write = true },
+        }),
+    });
 
     return @ptrCast(ptr[0..1]);
 }
 
 pub fn swapchainPresent(
-    command_buffer: *CommandBuffer,
     swapchain: *gpu.Swapchain,
+    semaphore: gpu.SemaphoreSignalDescription,
 ) void {
-    _ = command_buffer; // autofix
     const swapchain_data: *SwapchainData = @ptrCast(@alignCast(swapchain));
+
+    recreateSwapchain(swapchain_data) catch @panic("oom");
+
+    const cmds = queueStartCommandRecording(.{}, .{});
+
+    const cmd_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(cmds));
+
+    const present_semaphore = swapchain_data.semaphores[swapchain_data.image_to_present];
+
+    context.device.cmdPipelineBarrier2(cmd_buffer, &.{
+        .image_memory_barrier_count = 1,
+        .p_image_memory_barriers = @ptrCast(&vk.ImageMemoryBarrier2{
+            .image = swapchain_data.images[swapchain_data.image_to_present],
+            .src_queue_family_index = context.graphics_queue.family,
+            .dst_queue_family_index = context.graphics_queue.family,
+            .subresource_range = .{
+                .aspect_mask = toVkImageAspectFlags(.bgra8_srgb32),
+                .base_mip_level = 0,
+                .base_array_layer = 0,
+                .level_count = vk.REMAINING_MIP_LEVELS,
+                .layer_count = vk.REMAINING_ARRAY_LAYERS,
+            },
+            .old_layout = .general,
+            .new_layout = .present_src_khr,
+            .src_stage_mask = .{ .all_commands = true },
+            .src_access_mask = .{ .memory_write = true },
+            .dst_stage_mask = .{ .all_commands = true },
+            .dst_access_mask = .{ .memory_read = true, .memory_write = true },
+        }),
+    });
+
+    queueSubmit(.{}, &.{cmds}, &.{
+        semaphore,
+        .{
+            .signal_semaphore = @ptrFromInt(@backingInt(present_semaphore)),
+            .signal_value = 0,
+        },
+    });
 
     const result = context.device.queuePresentKHR(
         context.graphics_queue.handle,
@@ -1602,9 +1954,38 @@ pub fn swapchainPresent(
             .swapchain_count = 1,
             .p_swapchains = @ptrCast(&swapchain_data.handle),
             .p_image_indices = &.{swapchain_data.image_to_present},
+            .p_wait_semaphores = @ptrCast(&present_semaphore),
+            .wait_semaphore_count = 1,
         },
-    ) catch @panic("oom");
-    _ = result; // autofix
+    ) catch |e| {
+        switch (e) {
+            error.OutOfDateKHR => {
+                recreateSwapchain(swapchain_data) catch @panic("oom");
+                return;
+            },
+            else => @panic("oom"),
+        }
+    };
+
+    switch (result) {
+        .error_out_of_date_khr, .suboptimal_khr => {
+            recreateSwapchain(swapchain_data) catch @panic("oom");
+        },
+        .success => {},
+        else => @panic("oom"),
+    }
+
+    swapchain_data.images_presented[swapchain_data.image_to_present] = true;
+}
+
+pub fn waitIdle() void {
+    context.device.deviceWaitIdle() catch @panic("oom");
+}
+
+pub fn queueWaitIdle(queue: Queue) void {
+    const queue_handle = context.queues[@backingInt(queue)];
+
+    context.device.queueWaitIdle(queue_handle);
 }
 
 pub fn placeCommandTimestampQuery(
@@ -1619,6 +2000,31 @@ pub fn queryTimestampValue(
 ) ?u64 {
     _ = query; // autofix
     return 0;
+}
+
+pub fn createSemaphore(initial_value: u64) *Semaphore {
+    const semaphore = context.device.createSemaphore(&.{
+        .p_next = &vk.SemaphoreTypeCreateInfo{
+            .semaphore_type = .timeline,
+            .initial_value = initial_value,
+        },
+    }, null) catch @panic("oom");
+
+    return @ptrFromInt(@backingInt(semaphore));
+}
+
+pub fn destroySemaphore(semaphore: *Semaphore) void {
+    const vk_semaphore: vk.Semaphore = @fromBackingInt(@intFromPtr(semaphore));
+
+    context.device.destroySemaphore(vk_semaphore, null);
+}
+
+pub fn semaphoreWait(semaphore: *Semaphore, wait_value: u64) void {
+    _ = context.device.waitSemaphores(&.{
+        .semaphore_count = 1,
+        .p_semaphores = @ptrCast(&semaphore),
+        .p_values = @ptrCast(&wait_value),
+    }, std.math.maxInt(u64)) catch unreachable;
 }
 
 test {
@@ -1647,6 +2053,18 @@ fn debugUtilsMessengerCallback(
 
     const message: [*c]const u8 = if (callback_data) |cb_data| cb_data.p_message else "NO MESSAGE!";
     std.debug.print("[{s}][{s}]. Message:\n  {s}\n", .{ severity_str, type_str, message });
+
+    var is_spirv = std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "spirv");
+    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "SPIR-V");
+    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "MemoryRequirements::alignment");
+    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "pNext<VkMemoryDedicatedAllocateInfo>.pNext->buffer");
+    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "PRESENT_SRC_KHR");
+
+    if (is_spirv) {
+        return .false;
+    }
+
+    if (true and !is_spirv) @panic("");
 
     return .false;
 }
@@ -1785,6 +2203,28 @@ const QueueData = struct {
     }
 };
 
+inline fn toVkImageType(image_type: gpu.TextureDescription.Type) vk.ImageType {
+    return switch (image_type) {
+        .@"1d" => .@"1d",
+        .@"2d" => .@"2d",
+        .@"3d" => .@"3d",
+        .cube => .@"2d",
+        .array_cube => .@"2d",
+        .array_2d => .@"2d",
+    };
+}
+
+inline fn toVkImageViewType(image_type: gpu.TextureDescription.Type) vk.ImageViewType {
+    return switch (image_type) {
+        .@"1d" => .@"1d",
+        .@"2d" => .@"2d",
+        .@"3d" => .@"3d",
+        .cube => .cube,
+        .array_cube => .cube_array,
+        .array_2d => .@"2d_array",
+    };
+}
+
 inline fn toVkSampleCount(count: u32) vk.SampleCountFlags {
     return switch (count) {
         0 => .{ .@"1" = true },
@@ -1801,6 +2241,7 @@ inline fn toVkImageFormat(
 ) vk.Format {
     return switch (format) {
         .rgba8_unorm32 => .r8g8b8a8_unorm,
+        .bgra8_srgb32 => .b8g8r8a8_srgb,
         .none => @panic("Unsupported"),
         .r32_u32 => .r32_uint,
         .r16_u16 => .r16_uint,
@@ -1843,15 +2284,9 @@ inline fn toVkImageCreateInfo(description: TextureDescription) vk.ImageCreateInf
     return .{
         .flags = .{
             .cube_compatible = description.type == .cube or description.type == .array_cube,
+            .@"2d_array_compatible" = description.type == .@"3d" or description.type == .array_2d,
         },
-        .image_type = switch (description.type) {
-            .@"1d" => .@"1d",
-            .@"2d" => .@"2d",
-            .@"3d" => .@"3d",
-            .cube => .@"2d",
-            .array_cube => .@"2d",
-            .array_2d => .@"2d",
-        },
+        .image_type = toVkImageType(description.type),
         .format = toVkImageFormat(description.format),
         .extent = .{
             .width = description.dimensions[0],
@@ -1909,12 +2344,12 @@ inline fn getMemoryAllocationTag(memory: *const anyopaque) u16 {
     return @intFromPtr(allocation.device_address) & 0x00ffffff_ffffff;
 }
 
-inline fn getMemoryAllocationTexture(memory: []const u8) TextureData {
+inline fn getMemoryAllocationTexture(memory: []const u8) *TextureData {
     const gpu_ptr: gpu.mem.GpuPointerData = @bitCast(@intFromPtr(memory.ptr));
 
     const allocation = context.allocations.items[gpu_ptr.allocation_handle];
 
-    for (allocation.textures.items) |texture_data| {
+    for (allocation.textures.items) |*texture_data| {
         if (texture_data.allocation.ptr == memory.ptr) {
             return texture_data;
         }
@@ -1957,6 +2392,7 @@ const required_layer_names = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 const required_device_extensions = [_][*:0]const u8{
     vk.extensions.khr_swapchain.name,
     vk.extensions.ext_extended_dynamic_state_3.name,
+    vk.extensions.khr_unified_image_layouts.name,
 };
 
 const Pipeline = gpu.Pipeline;
@@ -1978,7 +2414,6 @@ const ExecutionStage = gpu.ExecutionStage;
 const HazardFlags = gpu.HazardFlags;
 const ColorTarget = gpu.ColorTarget;
 const RasterPassDescription = gpu.RasterPassDescription;
-const DescriptorHeapMapping = gpu.DescriptorHeapMapping;
 const AccelerationStructureBuildDescription = gpu.AccelerationStructureBuildDescription;
 const RasterDrawCommand = gpu.RasterDrawCommand;
 const RasterDrawMeshesCommand = gpu.RasterDrawMeshesCommand;

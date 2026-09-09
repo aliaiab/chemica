@@ -455,13 +455,13 @@ pub fn queueStartCommandRecording(
 pub fn queueSubmit(
     queue: Queue,
     command_buffers: []const *CommandBuffer,
-    ///Semaphores to signal when each respective command buffer completes
-    signal_semaphores: []const *Semaphore,
+    ///Semaphores to signal/wait when each respective command buffer completes
+    semaphores: []const SemaphoreSignalDescription,
 ) void {
     return backendCall(@src(), .{
         queue,
         command_buffers,
-        signal_semaphores,
+        semaphores,
     });
 }
 
@@ -496,6 +496,25 @@ pub fn queryTimestampValue(
     });
 }
 
+pub fn createSemaphore(initial_value: u64) *Semaphore {
+    return backendCall(@src(), .{
+        initial_value,
+    });
+}
+
+pub fn destroySemaphore(semaphore: *Semaphore) void {
+    return backendCall(@src(), .{
+        semaphore,
+    });
+}
+
+pub fn semaphoreWait(semaphore: *Semaphore, wait_value: u64) void {
+    return backendCall(@src(), .{
+        semaphore,
+        wait_value,
+    });
+}
+
 ///Creates a swapchain from a platform-specific window handle
 pub fn createSwapchain(
     window_handle: *anyopaque,
@@ -515,14 +534,14 @@ pub fn swapchainObtainTexture(
     return backendCall(@src(), .{swapchain});
 }
 
-///Encodes a swapchain presentation command into command_buffer
+///Present the previously obtained swapchain texture to the presentation engine
 pub fn swapchainPresent(
-    command_buffer: *CommandBuffer,
     swapchain: *Swapchain,
+    semaphore: SemaphoreSignalDescription,
 ) void {
     return backendCall(@src(), .{
-        command_buffer,
         swapchain,
+        semaphore,
     });
 }
 
@@ -530,6 +549,13 @@ pub const Pipeline = opaque {};
 pub const CommandBuffer = opaque {};
 pub const Semaphore = opaque {};
 pub const Swapchain = opaque {};
+
+pub const SemaphoreSignalDescription = struct {
+    wait_semaphore: ?*Semaphore = null,
+    wait_value: ?u64 = null,
+    signal_semaphore: ?*Semaphore = null,
+    signal_value: ?u64 = null,
+};
 
 pub const TextureDescriptor = packed struct(u256) {
     value: u256,
@@ -655,6 +681,7 @@ pub const RasterPipelineDescription = struct {
 pub const ImageFormat = enum(u3) {
     none,
     rgba8_unorm32,
+    bgra8_srgb32,
     r32_u32,
     r16_u16,
     depth_f32,
@@ -936,7 +963,7 @@ pub const mem = struct {
         );
     }
 
-    pub inline fn copyToTexture(
+    pub fn copyToTexture(
         command_buffer: *CommandBuffer,
         comptime T: type,
         dest_slice: TextureSliceDescription,

@@ -29,7 +29,6 @@ window_size: [2]u32,
 pub fn init(
     context: *gpu.Context,
     arena: std.mem.Allocator,
-    window_size: [2]u32,
     voxel_materials: std.ArrayList(VoxelMaterial),
     voxel_materials_visual: std.ArrayList(VoxelMaterialVisual),
 ) !Simulation {
@@ -37,7 +36,7 @@ pub fn init(
         .width = 128,
         .height = 128,
         .depth = 128,
-        .window_size = window_size,
+        .window_size = undefined,
         .voxel_materials = voxel_materials,
         .voxel_materials_visual = voxel_materials_visual,
     };
