@@ -36,6 +36,8 @@ pub fn main(init: std.process.Init) !void {
 
     _ = imgui.createContext(.{});
 
+    try imgui.impl.glfw.initForOpenGL(@ptrCast(glaze.surfaceGetPlatformHandle(surface)), .{});
+
     var gpu_context = try gpu.Context.init(arena, init.io);
     defer gpu_context.deinit();
 
@@ -298,6 +300,12 @@ pub fn main(init: std.process.Init) !void {
 
     var next_frame: u64 = 1;
 
+    var gpu_transient_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
+
+    for (&gpu_transient_fbas) |*fba| {
+        fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 64 * 1024, .gpu_cpu_writable));
+    }
+
     while (try glaze.surfacePoll(arena, surface)) |surface_poll| {
         gpu_context.window_extents = .{
             surface_poll.surface_state.extent[0],
@@ -308,6 +316,12 @@ pub fn main(init: std.process.Init) !void {
             gpu.semaphoreWait(frame_semaphore, next_frame - 2);
         }
         defer next_frame += 1;
+
+        gpu_transient_fbas[next_frame % 2].end_index = 0;
+
+        const gpu_transient_arena = gpu_transient_fbas[next_frame % 2].allocator();
+
+        imgui.impl.glfw.newFrame();
 
         const keyboard_input = &surface_poll.keyboard_input;
 
@@ -559,7 +573,7 @@ pub fn main(init: std.process.Init) !void {
             }
         }
 
-        if (false) {
+        if (true) {
             imgui.newFrame();
 
             _ = imgui.dockspaceOverViewport(.{});
@@ -1056,7 +1070,7 @@ pub fn main(init: std.process.Init) !void {
                     .no_move = true,
                     .no_resize = true,
                     .no_mouse_inputs = true,
-                }, .size = .{ @floatFromInt(surface_poll.surface_state.extent()[0]), @floatFromInt(surface_poll.surface_state.extent[1]) } })) {
+                }, .size = .{ @floatFromInt(surface_poll.surface_state.extent[0]), @floatFromInt(surface_poll.surface_state.extent[1]) } })) {
                     var camera_rot: [4]f32 = .{ 0, 0, 0, 0 };
 
                     camera_rot[0] = -camera.view[2][0];
@@ -1129,10 +1143,10 @@ pub fn main(init: std.process.Init) !void {
 
                     //try imGuiCSGTreeNodeGizmos(csg_tree, .root);
 
-                    if (imgui.beginSpatial("Spatial Log", .{}, .{ 1, @floatCast(@sin(0) * 100), 1 })) {
+                    if (imgui.beginSpatial("Spatial Log", .{}, .{ 1, @floatCast(@sin(0.0) * 100), 1 })) {
                         imgui.text("Bum", .{});
 
-                        imgui.text("{:.2}", .{@sin(0)});
+                        imgui.text("{:.2}", .{@sin(0.0)});
                     }
                     imgui.end();
 
@@ -1501,15 +1515,15 @@ pub fn main(init: std.process.Init) !void {
             }},
         });
 
-        imgui_renderer.render(
+        try imgui_renderer.render(
             clear_cmds,
-            undefined,
-            undefined,
+            imgui.getDrawData(),
+            gpu_transient_arena,
         );
 
         gpu.rasterPassEnd(clear_cmds);
 
-        if (false) {
+        if (true) {
             gpu.queueSubmit(
                 .{},
                 &.{clear_cmds},

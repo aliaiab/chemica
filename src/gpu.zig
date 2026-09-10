@@ -38,9 +38,9 @@ pub fn memFree(memory: []u8) void {
     return backendCall(@src(), .{memory});
 }
 
-///Returns the device memory tag (upper 16 bits of the device address)
-pub inline fn memGetMemoryTag(memory: *const anyopaque) u16 {
-    return backendCall(@src(), .{memory});
+///Returns a pointer which is readable/writable for the given access domain
+pub fn memToAccessiblePointer(pointer: *anyopaque, access: mem.MemoryAccessDomain) *anyopaque {
+    return backendCall(@src(), .{ pointer, access });
 }
 
 ///Copy device memory from src to dst
@@ -402,7 +402,7 @@ pub fn launchRasterDrawIndexed(
     command_buffer: *CommandBuffer,
     pipeline: *Pipeline,
     root_data: []const *anyopaque,
-    commands: []const RasterDrawCommand,
+    commands: []const RasterDrawIndexedCommand,
     indices: []u8,
 ) void {
     return backendCall(@src(), .{
@@ -889,19 +889,22 @@ pub const mem = struct {
         allocation_handle: u12,
     };
 
+    pub const MemoryAccessDomain = enum {
+        gpu,
+        cpu,
+    };
+
     ///The maximum number of active (not-freed) root allocations (calls to memAlloc or page_allocator.alloc)
     pub const max_root_allocations = std.math.maxInt(u12);
 
     ///Converts a gpu pointer to a cpu/gpu accessible pointer
-    pub inline fn toAccessiblePointer(pointer: anytype) @TypeOf(pointer) {
-        var gpu_ptr: PointerData = @bitCast(@intFromPtr(pointer));
-        gpu_ptr.tag = memGetMemoryTag(@ptrCast(pointer));
-        return @ptrFromInt(@backingInt(gpu_ptr));
+    pub inline fn toAccessiblePointer(pointer: anytype, access: MemoryAccessDomain) @TypeOf(pointer) {
+        return @ptrCast(@alignCast(@constCast(memToAccessiblePointer(@ptrCast(@constCast(pointer)), access))));
     }
 
     ///Converts a gpu slice to a cpu/gpu accessible slice
-    pub inline fn toAccessibleSlice(slice: anytype) @TypeOf(slice) {
-        return toAccessiblePointer(slice.ptr)[0..slice.len];
+    pub inline fn toAccessibleSlice(slice: anytype, access: MemoryAccessDomain) @TypeOf(slice) {
+        return toAccessiblePointer(slice.ptr, access)[0..slice.len];
     }
 
     ///Returns the memory type of the slice or ptr
@@ -921,7 +924,7 @@ pub const mem = struct {
         return gpu_ptr.memory_type;
     }
 
-    const PointerData = packed struct(u64) {
+    pub const PointerData = packed struct(u64) {
         address: u48,
         tag: u16,
     };
@@ -1017,7 +1020,7 @@ pub const mem = struct {
 
             const duped = try allocator.alloc(T, input.len, .gpu_cpu_writable);
 
-            @memcpy(gpu.mem.toAccessibleSlice(duped), input);
+            @memcpy(gpu.mem.toAccessibleSlice(duped, .cpu), input);
 
             return duped;
         }

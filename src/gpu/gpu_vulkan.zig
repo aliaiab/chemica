@@ -55,6 +55,7 @@ const TextureData = struct {
 const MemoryAllocation = struct {
     buffer: vk.Buffer,
     device_address: u64,
+    mapped_address: u64,
     vma_alloc_info: vma.VmaAllocationInfo,
     vma_alloc: vma.VmaAllocation,
     textures: std.ArrayList(TextureData),
@@ -493,7 +494,8 @@ pub fn memAlloc(
     const allocation = try context.allocations.addOne(context.arena);
 
     allocation.* = .{
-        .device_address = if (memory_type != .gpu) @intFromPtr(vma_alloc_info.pMappedData) else address,
+        .device_address = address,
+        .mapped_address = if (memory_type != .gpu) @intFromPtr(vma_alloc_info.pMappedData) else 0,
         .buffer = buffer,
         .vma_alloc_info = vma_alloc_info,
         .vma_alloc = vma_alloc,
@@ -519,7 +521,22 @@ pub fn memFree(memory: []u8) void {
     vma.vmaFreeMemory(context.vma_allocator, allocation.vma_alloc);
 }
 
-pub fn memGetMemoryTag(memory: *const anyopaque) u16 {
+pub fn memToAccessiblePointer(pointer: *anyopaque, access: mem.MemoryAccessDomain) *anyopaque {
+    var gpu_ptr: gpu.mem.PointerData = @bitCast(@intFromPtr(pointer));
+    const gpu_ptr_data: gpu.mem.GpuPointerData = @bitCast(gpu_ptr);
+
+    switch (access) {
+        .cpu => {
+            gpu_ptr.address = @intCast(context.allocations.items[gpu_ptr_data.allocation_handle].mapped_address + getMemoryAllocationOffset(pointer));
+        },
+        .gpu => {},
+    }
+
+    gpu_ptr.tag = memGetMemoryTag(@ptrCast(pointer));
+    return @ptrFromInt(@backingInt(gpu_ptr));
+}
+
+fn memGetMemoryTag(memory: *const anyopaque) u16 {
     if (@import("builtin").os.tag == .macos) {
         return getMemoryAllocationTag(memory);
     }
@@ -834,7 +851,7 @@ pub fn registerTextureMemory(
     const image_create_info = toVkImageCreateInfo(description);
 
     const allocation = getMemoryAllocationPtr(@ptrCast(memory));
-    const allocation_offset = getMemoryAllocationOffset(@ptrCast(memory));
+    const allocation_offset = getMemoryAllocationOffset(memory);
 
     var image: vk.Image = .null_handle;
 
@@ -1460,7 +1477,7 @@ pub fn launchCompute(
     var push_constants: CommonPushConstants = undefined;
 
     for (root_data, 0..) |root_ptr, i| {
-        push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr);
+        push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
     }
 
     if (context.vk_ext_descriptor_heap_enabled) {
@@ -1508,7 +1525,7 @@ pub fn launchRasterDraw(
     var push_constants: CommonPushConstants = undefined;
 
     for (root_data, 0..) |root_ptr, i| {
-        push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr);
+        push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
     }
 
     if (context.vk_ext_descriptor_heap_enabled) {
@@ -1562,6 +1579,80 @@ pub fn launchRasterDraw(
     }
 }
 
+pub fn launchRasterDrawIndexed(
+    command_buffer: *CommandBuffer,
+    pipeline: *Pipeline,
+    root_data: []const *anyopaque,
+    commands: []const gpu.RasterDrawIndexedCommand,
+    indices: []u8,
+) void {
+    setStatePipeline(command_buffer, pipeline);
+    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+
+    const indices_allocation = getMemoryAllocation(indices);
+    const indices_offset = getMemoryAllocationOffset(indices);
+
+    var push_constants: CommonPushConstants = undefined;
+
+    for (root_data, 0..) |root_ptr, i| {
+        push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
+    }
+
+    if (context.vk_ext_descriptor_heap_enabled) {
+        context.device.cmdPushDataEXT(
+            vk_command_buffer,
+            &.{
+                .offset = 0,
+                .data = .{
+                    .address = &push_constants,
+                    .size = @sizeOf(CommonPushConstants),
+                },
+            },
+        );
+    } else {
+        context.device.cmdPushConstants(
+            vk_command_buffer,
+            context.raster_pipeline_layout,
+            .{
+                .vertex = true,
+                .fragment = true,
+            },
+            0,
+            @sizeOf(CommonPushConstants),
+            &push_constants,
+        );
+    }
+
+    context.device.cmdBindIndexBuffer(
+        vk_command_buffer,
+        indices_allocation.buffer,
+        indices_offset,
+        .uint16,
+    );
+
+    if (isGpuMemory(std.mem.sliceAsBytes(commands))) {
+        //Optimize for draw indirect
+        @branchHint(.likely);
+
+        const commands_allocation = getMemoryAllocation(std.mem.sliceAsBytes(commands));
+        _ = commands_allocation; // autofix
+        const commands_offset = getMemoryAllocationOffset(std.mem.sliceAsBytes(commands));
+        _ = commands_offset; // autofix
+        @panic("todo!");
+    } else {
+        for (commands) |command| {
+            context.device.cmdDrawIndexed(
+                vk_command_buffer,
+                command.index_count,
+                command.instance_count,
+                command.index_start,
+                @intCast(command.vertex_offset),
+                command.first_instance,
+            );
+        }
+    }
+}
+
 pub fn launchRasterDrawMeshes(
     command_buffer: *CommandBuffer,
     pipeline: *Pipeline,
@@ -1605,8 +1696,8 @@ pub fn queueStartCommandRecording(
             break :blk createDescriptorHeap(initial_state.sampler_heap) catch @panic("oom");
         };
 
-        const allocation = getMemoryAllocation(@ptrCast(heap_data.memory));
-        const allocation_offset = getMemoryAllocationOffset(@ptrCast(heap_data.memory));
+        const allocation = getMemoryAllocation(heap_data.memory);
+        const allocation_offset = getMemoryAllocationOffset(heap_data.memory);
 
         if (context.vk_ext_descriptor_heap_enabled) {
             context.device.cmdBindSamplerHeapEXT(
@@ -2412,8 +2503,14 @@ inline fn isGpuMemory(memory: []const u8) bool {
     return gpu.mem.getMemoryType(memory) != .cpu;
 }
 
-inline fn getMemoryAllocation(memory: []const u8) MemoryAllocation {
-    const gpu_ptr: gpu.mem.GpuPointerData = @bitCast(@intFromPtr(memory.ptr));
+inline fn getMemoryAllocation(memory: anytype) MemoryAllocation {
+    const gpu_ptr: gpu.mem.GpuPointerData = @bitCast(@intFromPtr(switch (@typeInfo(@TypeOf(memory))) {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .slice => memory.ptr,
+            else => memory,
+        },
+        else => @compileError("Memory not a pointer!"),
+    }));
 
     const allocation = context.allocations.items[gpu_ptr.allocation_handle];
 
@@ -2434,8 +2531,14 @@ inline fn getMemoryAllocationPtr(memory: []const u8) *MemoryAllocation {
     return allocation;
 }
 
-inline fn getMemoryAllocationOffset(memory: []const u8) u64 {
-    const gpu_ptr: gpu.mem.GpuPointerData = @bitCast(@intFromPtr(memory.ptr));
+inline fn getMemoryAllocationOffset(memory: anytype) u64 {
+    const gpu_ptr: gpu.mem.GpuPointerData = @bitCast(@intFromPtr(switch (@typeInfo(@TypeOf(memory))) {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .slice => memory.ptr,
+            else => memory,
+        },
+        else => @compileError("Memory not a pointer!"),
+    }));
 
     const allocation = context.allocations.items[gpu_ptr.allocation_handle];
 

@@ -158,7 +158,7 @@ pub const Context = struct {
             .gpu_cpu_writable,
         );
 
-        for (gpu.mem.toAccessibleSlice(env_map_staging_mem)) |*color_out| {
+        for (gpu.mem.toAccessibleSlice(env_map_staging_mem, .cpu)) |*color_out| {
             color_out.* = 0xffaaffaa;
         }
 

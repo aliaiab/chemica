@@ -39,7 +39,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    _ = cimgui_translate_c; // autofix
 
     const main_module = b.createModule(.{
         .target = target,
@@ -104,7 +103,8 @@ pub fn build(b: *std.Build) !void {
     main_module.link_libc = true;
 
     const cimgui_lib = cimgui_dep.artifact("cimgui");
-    const c_module = cimgui.createModule(b, cimgui_dep, cimgui_lib, b.path("src/cimgui.h"));
+    addIncludePathsToTranslateC(cimgui_translate_c, cimgui_lib);
+    const c_module = cimgui_translate_c.createModule();
     c_module.linkLibrary(cimgui_lib);
 
     if (target.result.os.tag == .macos) {

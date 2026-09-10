@@ -1216,7 +1216,13 @@ pub fn Matrix(comptime T: type, m: comptime_int, comptime n: comptime_int) type 
         }
 
         pub fn row(lhs: Self, i: usize) Vec(m, T) {
-            return .fromComponents(.fromArray(lhs.coeffs[i * m .. i * m + m].*));
+            var result: [m]f32 = undefined;
+
+            for (0..m) |k| {
+                result[k] = lhs.coeffs[i * m + k];
+            }
+
+            return .fromComponents(.fromArray(result));
         }
 
         pub fn column(lhs: Self, j: usize) Vec(n, T) {
@@ -1263,14 +1269,14 @@ pub fn Matrix(comptime T: type, m: comptime_int, comptime n: comptime_int) type 
             return .{ .coeffs = coeffs };
         }
 
-        pub fn mulVec(lhs: Self, rhs: Vec(T, n)) Vec(T, n) {
+        pub fn mulVec(lhs: Self, rhs: Vec(n, T)) Vec(n, T) {
             var coeffs: [n]T = undefined;
 
             inline for (0..m) |j| {
                 coeffs[j] = lhs.row(j).inner(rhs);
             }
 
-            return .{ .coeffs = coeffs };
+            return .fromComponents(.fromArray(coeffs));
         }
 
         pub fn det(a: Self) T {
