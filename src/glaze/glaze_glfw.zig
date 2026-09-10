@@ -10,6 +10,7 @@ pub fn init(
     if (@import("builtin").os.tag == .macos) {
         glfw.windowHint(.cocoa_retina_framebuffer, true);
     }
+    glfw.swapInterval(0);
 }
 
 pub fn deinit() void {

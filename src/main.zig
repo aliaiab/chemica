@@ -1509,7 +1509,7 @@ pub fn main(init: std.process.Init) !void {
 
         gpu.rasterPassEnd(clear_cmds);
 
-        if (true) {
+        if (false) {
             gpu.queueSubmit(
                 .{},
                 &.{clear_cmds},

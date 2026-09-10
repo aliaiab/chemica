@@ -47,19 +47,25 @@ pub fn vertexMain(
         .{ 0.5, -0.5, 0, 1 },
         .{ 0, 0.5, 0, 1 },
     };
-    return .{ triangle_verts[draw_parameters.vertex_index], undefined };
+    const triangle_colours: [3]@Vector(4, f32) = .{
+        .{ 1, 0, 0, 1 },
+        .{ 0, 1, 0, 1 },
+        .{ 0, 0, 1, 1 },
+    };
+
+    return .{ triangle_verts[draw_parameters.vertex_index], .{
+        .colour = triangle_colours[draw_parameters.vertex_index],
+    } };
 }
 
 pub fn fragmentMain(
     input: PipelinePacket,
 ) @Vector(4, f32) {
-    _ = input; // autofix
-
-    return @splat(1);
+    return input.colour;
 }
 
 const PipelinePacket = extern struct {
-    pad: u32 = 0,
+    colour: @Vector(4, f32),
 };
 
 comptime {

@@ -7,7 +7,6 @@ var context: struct {
 
     instance: vk.InstanceProxy,
     vkb: vk.BaseWrapper,
-    debug_messenger: vk.DebugUtilsMessengerEXT,
     device: vk.DeviceProxy,
     physical_device: vk.PhysicalDevice,
 
@@ -24,8 +23,8 @@ var context: struct {
     pipeline_pool: std.heap.MemoryPool(PipelineData),
 
     ///Indexed by @bitCast(queue)
-    command_pools: []vk.CommandPool,
-    queues: []vk.Queue,
+    command_pools: [1 + std.math.maxInt(std.meta.BackingInt(Queue))]vk.CommandPool,
+    queues: [1 + std.math.maxInt(std.meta.BackingInt(Queue))]vk.Queue,
 
     vk_ext_descriptor_heap_enabled: bool,
     vk_ext_swapchain_maintenance_enabled: bool,
@@ -36,6 +35,8 @@ var context: struct {
 
     raster_pipeline_layout: vk.PipelineLayout,
     compute_pipeline_layout: vk.PipelineLayout,
+
+    debug_messenger: if (enable_validation) vk.DebugUtilsMessengerEXT else void,
 } = undefined;
 
 const DescriptorHeapIndex = struct {
@@ -70,8 +71,6 @@ pub fn selectDevice(
     context.gpa = gpa;
     context.allocations = .empty;
     context.command_buffer_obtain_semaphores = .empty;
-    context.command_pools = try arena.alloc(vk.CommandPool, 1 + std.math.maxInt(@TypeOf(@backingInt(gpu.Queue{}))));
-    context.queues = try arena.alloc(vk.Queue, 1 + std.math.maxInt(@TypeOf(@backingInt(gpu.Queue{}))));
     context.vk_ext_descriptor_heap_enabled = false;
     //TODO: check for support
     context.vk_ext_swapchain_maintenance_enabled = true;
@@ -101,7 +100,7 @@ pub fn selectDevice(
     var extension_names: std.ArrayList([*:0]const u8) = .empty;
     defer extension_names.deinit(allocator);
 
-    if (@import("builtin").mode == .debug) {
+    if (enable_validation) {
         try extension_names.append(allocator, vk.extensions.ext_debug_utils.name);
     }
 
@@ -148,8 +147,8 @@ pub fn selectDevice(
             .engine_version = vk.makeApiVersion(0, 0, 0, 0).toU32(),
             .api_version = vk.API_VERSION_1_3.toU32(),
         },
-        .enabled_layer_count = required_layer_names.len,
-        .pp_enabled_layer_names = @ptrCast(&required_layer_names),
+        .enabled_layer_count = if (enable_validation) required_layer_names.len else 0,
+        .pp_enabled_layer_names = if (enable_validation) @ptrCast(&required_layer_names) else null,
         .enabled_extension_count = @intCast(extension_names.items.len),
         .pp_enabled_extension_names = extension_names.items.ptr,
         .flags = .{ .enumerate_portability_khr = @import("builtin").os.tag == .macos },
@@ -161,7 +160,7 @@ pub fn selectDevice(
     context.instance = vk.InstanceProxy.init(instance, vki);
     errdefer context.instance.destroyInstance(null);
 
-    if (@import("builtin").mode == .debug) {
+    if (enable_validation) {
         context.debug_messenger = try context.instance.createDebugUtilsMessengerEXT(&.{
             .message_severity = .{
                 .verbose_ext = false,
@@ -313,7 +312,7 @@ pub fn selectDevice(
 
     _ = vma.vmaCreateAllocator(&vma_allocator_create_info, &context.vma_allocator);
 
-    for (context.command_pools, context.queues) |*command_pool, *queue| {
+    for (&context.command_pools, &context.queues) |*command_pool, *queue| {
         command_pool.* = try context.device.createCommandPool(&.{
             .queue_family_index = context.graphics_queue.family,
         }, null);
@@ -1221,7 +1220,7 @@ pub fn setStateScissor(
         &.{
             .{
                 .offset = .{ .x = @intCast(scissor[0]), .y = @intCast(scissor[1]) },
-                .extent = .{ .width = @intCast(scissor[1]), .height = @intCast(scissor[2]) },
+                .extent = .{ .width = @intCast(scissor[2]), .height = @intCast(scissor[3]) },
             },
         },
     );
@@ -1322,8 +1321,8 @@ pub fn rasterPassBegin(
     defer allocator.free(color_attachments);
 
     var default_render_area: vk.Extent2D = .{
-        .width = 0,
-        .height = 0,
+        .width = std.math.maxInt(u32),
+        .height = std.math.maxInt(u32),
     };
 
     for (color_attachments, description.color_attachments) |*color_attachment, input_color_attachment| {
@@ -1347,8 +1346,8 @@ pub fn rasterPassBegin(
             texture_data.view = view;
         }
 
-        default_render_area.width = texture_data.description.dimensions[0];
-        default_render_area.height = texture_data.description.dimensions[1];
+        default_render_area.width = @min(default_render_area.width, texture_data.description.dimensions[0]);
+        default_render_area.height = @min(default_render_area.height, texture_data.description.dimensions[1]);
 
         color_attachment.* = .{
             .image_layout = .general,
@@ -1403,6 +1402,18 @@ pub fn rasterPassBegin(
     setStatePolygonMode(command_buffer, .fill);
     setStateBlend(command_buffer, .{});
     setStateDepthStencil(command_buffer, .{});
+    setStateViewport(command_buffer, .{
+        0,
+        0,
+        @floatFromInt(default_render_area.width),
+        @floatFromInt(default_render_area.height),
+    });
+    setStateScissor(command_buffer, .{
+        0,
+        0,
+        default_render_area.width,
+        default_render_area.height,
+    });
 
     context.device.cmdSetRasterizerDiscardEnable(
         vk_command_buffer,
@@ -2482,6 +2493,7 @@ fn createShaderModule(ir: []const u8) vk.ShaderModule {
 }
 
 const required_layer_names = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
+const enable_validation = @import("builtin").mode == .debug;
 
 const required_device_extensions = [_][*:0]const u8{
     vk.extensions.khr_swapchain.name,
