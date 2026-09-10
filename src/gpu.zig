@@ -496,18 +496,21 @@ pub fn queryTimestampValue(
     });
 }
 
+///Creates a timeline semaphore with an initial value
 pub fn createSemaphore(initial_value: u64) *Semaphore {
     return backendCall(@src(), .{
         initial_value,
     });
 }
 
+///Destroy a semaphore and its associated memory
 pub fn destroySemaphore(semaphore: *Semaphore) void {
     return backendCall(@src(), .{
         semaphore,
     });
 }
 
+///Waits for a semaphore value to be equal to wait_value
 pub fn semaphoreWait(semaphore: *Semaphore, wait_value: u64) void {
     return backendCall(@src(), .{
         semaphore,
@@ -561,11 +564,10 @@ pub const TextureDescriptor = packed struct(u256) {
     value: u256,
 };
 
-pub const Queue = packed struct(u4) {
+pub const Queue = packed struct(u3) {
     compute: bool = true,
     raster: bool = true,
     transfer: bool = true,
-    present: bool = true,
 };
 
 pub const PolygonMode = enum(u2) {
@@ -713,12 +715,13 @@ pub const RasterPassDescription = struct {
     color_attachments: []const ColorAttachment,
     depth_attachment: ?DepthAttachment = null,
     stencil_attachment: ?StencilAttachment = null,
-    render_area: struct {
+    ///When set to null, the rendering area is the min of all the image extents of the attachments
+    render_area: ?struct {
         x: i32,
         y: i32,
         width: u32,
         height: u32,
-    },
+    } = null,
 
     pub const ColorAttachment = struct {
         texture: []gpu.TextureByte,
@@ -825,25 +828,25 @@ pub const ResourceMemoryDescription = struct {
 
 pub const RasterDrawCommand = extern struct {
     count: u32,
-    instance_count: u32,
-    first: u32,
-    first_instance: u32,
+    instance_count: u32 = 1,
+    first: u32 = 0,
+    first_instance: u32 = 0,
 };
 
 pub const RasterDrawIndexedCommand = extern struct {
     index_count: u32,
-    instance_count: u32,
+    instance_count: u32 = 1,
     index_start: u32,
     vertex_offset: u32,
-    first_instance: u32,
+    first_instance: u32 = 0,
 };
 
 pub const RasterDrawMeshesCommand = extern struct {
     index_count: u32,
-    instance_count: u32,
+    instance_count: u32 = 1,
     index_start: u32,
     vertex_offset: u32,
-    first_instance: u32,
+    first_instance: u32 = 0,
 };
 
 pub const ComputeCommand = extern struct {

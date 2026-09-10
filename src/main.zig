@@ -137,6 +137,11 @@ pub fn main(init: std.process.Init) !void {
     const frame_semaphore = gpu.createSemaphore(0);
     defer gpu.destroySemaphore(frame_semaphore);
 
+    const imgui_renderer = renderer_imgui.init(
+        gpu_context.sampler_heap,
+        gpu_context.sampler_heap_alloc,
+    );
+
     imguiStyleSetup();
 
     if (@import("builtin").mode == .debug) {
@@ -1494,13 +1499,14 @@ pub fn main(init: std.process.Init) !void {
                 .texture = swapchain_texture,
                 .clear = .{ 1, 0.6, 0, 1 },
             }},
-            .render_area = .{
-                .x = 0,
-                .y = 0,
-                .width = 500,
-                .height = 200,
-            },
         });
+
+        imgui_renderer.render(
+            clear_cmds,
+            undefined,
+            undefined,
+        );
+
         gpu.rasterPassEnd(clear_cmds);
 
         if (true) {
@@ -2142,5 +2148,6 @@ const zigimg = @import("zigimg");
 const std = @import("std");
 const stb_image = @import("stb_image.zig");
 const imguizmo = @import("imguizmo.zig");
+const renderer_imgui = @import("renderer_imgui.zig");
 const gpu = @import("gpu.zig");
 const glaze = @import("glaze.zig");

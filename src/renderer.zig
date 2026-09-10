@@ -605,18 +605,13 @@ pub const Context = struct {
         }
 
         const framebuffer_size = context.window_extents;
+        _ = framebuffer_size; // autofix
 
         gpu.rasterPassBegin(context.command_buffer, .{
             .color_attachments = &.{.{
                 .texture = context.swapchain_texture,
                 .clear = .{ 0, 0, 1, 0 },
             }},
-            .render_area = .{
-                .x = 0,
-                .y = 0,
-                .width = @intCast(framebuffer_size[0]),
-                .height = @intCast(framebuffer_size[1]),
-            },
         });
         defer gpu.rasterPassEnd(context.command_buffer);
 
@@ -1181,18 +1176,13 @@ pub const Simulation = struct {
         );
 
         const framebuffer_size = context.window_extents;
+        _ = framebuffer_size; // autofix
 
         gpu.rasterPassBegin(context.command_buffer, .{
             .color_attachments = &.{.{
                 .texture = context.swapchain_texture,
                 .clear = .{ 0, 0, 1, 0 },
             }},
-            .render_area = .{
-                .x = 0,
-                .y = 0,
-                .width = @intCast(framebuffer_size[0]),
-                .height = @intCast(framebuffer_size[1]),
-            },
         });
 
         if (render_texture) |texture| {

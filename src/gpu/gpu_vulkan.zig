@@ -113,13 +113,19 @@ pub fn selectDevice(
     }
 
     try extension_names.append(allocator, vk.extensions.khr_surface.name);
-    try extension_names.append(allocator, vk.extensions.ext_surface_maintenance_1.name);
+
+    if (context.vk_ext_swapchain_maintenance_enabled) {
+        try extension_names.append(allocator, vk.extensions.ext_surface_maintenance_1.name);
+    }
 
     switch (@import("builtin").os.tag) {
         .linux => {
             //TODO: check the relevant environ variable to choose which window system to support
-            //try extension_names.append(allocator, vk.extensions.khr_xcb_surface.name);
-            try extension_names.append(allocator, vk.extensions.khr_wayland_surface.name);
+            if (true) {
+                try extension_names.append(allocator, vk.extensions.khr_xcb_surface.name);
+            } else {
+                try extension_names.append(allocator, vk.extensions.khr_wayland_surface.name);
+            }
         },
         .windows => {
             try extension_names.append(allocator, vk.extensions.khr_win_32_surface.name);
@@ -1114,7 +1120,7 @@ pub fn setStateDepthStencil(
     const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
 
     context.device.cmdSetDepthCompareOp(vk_command_buffer, .less);
-    context.device.cmdSetDepthTestEnable(vk_command_buffer, .true);
+    context.device.cmdSetDepthTestEnable(vk_command_buffer, .false);
     context.device.cmdSetDepthWriteEnable(vk_command_buffer, .true);
     context.device.cmdSetDepthBiasEnable(vk_command_buffer, .false);
 
@@ -1142,14 +1148,14 @@ pub fn setStateBlend(
         vk_command_buffer,
         0,
         &.{
-            .true,
+            .false,
         },
     );
     context.device.cmdSetColorWriteMaskEXT(
         vk_command_buffer,
         1,
         &.{
-            .{},
+            .{ .r = true, .g = true, .b = true, .a = true },
         },
     );
 }
@@ -1162,7 +1168,7 @@ pub fn setStateCull(
     const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
     context.device.cmdSetCullMode(vk_command_buffer, .{
         .front = false,
-        .back = true,
+        .back = false,
     });
 }
 
@@ -1215,7 +1221,7 @@ pub fn setStateScissor(
         &.{
             .{
                 .offset = .{ .x = @intCast(scissor[0]), .y = @intCast(scissor[1]) },
-                .extent = .{ .width = @intCast(scissor[0]), .height = @intCast(scissor[1]) },
+                .extent = .{ .width = @intCast(scissor[1]), .height = @intCast(scissor[2]) },
             },
         },
     );
@@ -1315,6 +1321,11 @@ pub fn rasterPassBegin(
     ) catch @panic("oom");
     defer allocator.free(color_attachments);
 
+    var default_render_area: vk.Extent2D = .{
+        .width = 0,
+        .height = 0,
+    };
+
     for (color_attachments, description.color_attachments) |*color_attachment, input_color_attachment| {
         const texture_data = getMemoryAllocationTexture(@ptrCast(input_color_attachment.texture));
 
@@ -1335,6 +1346,9 @@ pub fn rasterPassBegin(
 
             texture_data.view = view;
         }
+
+        default_render_area.width = texture_data.description.dimensions[0];
+        default_render_area.height = texture_data.description.dimensions[1];
 
         color_attachment.* = .{
             .image_layout = .general,
@@ -1377,12 +1391,36 @@ pub fn rasterPassBegin(
         });
     }
 
+    context.device.cmdSetRasterizationSamplesEXT(vk_command_buffer, .{
+        .@"1" = true,
+    });
+    context.device.cmdSetSampleMaskEXT(vk_command_buffer, .{ .@"1" = true }, &.{0xff});
+    context.device.cmdSetFrontFace(vk_command_buffer, .counter_clockwise);
+    context.device.cmdSetAlphaToCoverageEnableEXT(vk_command_buffer, .false);
+    context.device.cmdSetLineWidth(vk_command_buffer, 1);
+
+    setStateCull(command_buffer, .none);
+    setStatePolygonMode(command_buffer, .fill);
+    setStateBlend(command_buffer, .{});
+    setStateDepthStencil(command_buffer, .{});
+
+    context.device.cmdSetRasterizerDiscardEnable(
+        vk_command_buffer,
+        .false,
+    );
+
     context.device.cmdBeginRendering(
         vk_command_buffer,
         &.{
             .render_area = .{
-                .offset = .{ .x = description.render_area.x, .y = description.render_area.y },
-                .extent = .{ .width = description.render_area.width, .height = description.render_area.height },
+                .offset = .{
+                    .x = if (description.render_area) |render_area| render_area.x else 0,
+                    .y = if (description.render_area) |render_area| render_area.y else 0,
+                },
+                .extent = .{
+                    .width = if (description.render_area) |render_area| render_area.width else default_render_area.width,
+                    .height = if (description.render_area) |render_area| render_area.height else default_render_area.height,
+                },
             },
             .layer_count = 1,
             .view_mask = 0,
@@ -1592,11 +1630,6 @@ pub fn queueStartCommandRecording(
         }
     }
 
-    context.device.cmdSetRasterizerDiscardEnable(
-        command_buffer,
-        .true,
-    );
-
     return @ptrFromInt(@backingInt(command_buffer));
 }
 
@@ -1676,7 +1709,6 @@ const SwapchainData = struct {
     current_extent: vk.Extent2D = undefined,
     images: []vk.Image = &.{},
     image_views: []vk.ImageView = &.{},
-    images_presented: []bool = &.{},
     image_to_present: u32 = undefined,
     semaphores: []vk.Semaphore = &.{},
     fences: []vk.Fence = &.{},
@@ -1765,7 +1797,9 @@ fn internalCreateSwapchain(
         .scaling_behavior = .{},
     };
 
-    if (scaling_caps.min_scaled_image_extent.width != 0 and scaling_caps.max_scaled_image_extent.width != 0) {
+    if (scaling_caps.min_scaled_image_extent.width != 0 and
+        scaling_caps.max_scaled_image_extent.width != 0)
+    {
         scaling_info.scaling_behavior.aspect_ratio_stretch_khr = true;
     }
 
@@ -1799,8 +1833,7 @@ fn internalCreateSwapchain(
     swapchain_data.image_views = context.gpa.alloc(vk.ImageView, swapchain_data.images.len) catch @panic("oom");
     swapchain_data.semaphores = context.gpa.alloc(vk.Semaphore, swapchain_data.images.len) catch @panic("oom");
     swapchain_data.fences = context.gpa.alloc(vk.Fence, swapchain_data.images.len) catch @panic("oom");
-    swapchain_data.images_presented = context.gpa.alloc(bool, swapchain_data.images.len) catch @panic("oom");
-    @memset(swapchain_data.images_presented, false);
+    @memset(swapchain_data.image_views, .null_handle);
 
     for (
         swapchain_data.semaphores,
@@ -1834,7 +1867,6 @@ pub fn destroySwapchain(swapchain: *gpu.Swapchain) void {
 
     context.gpa.free(swapchain_data.semaphores);
     context.gpa.free(swapchain_data.fences);
-    context.gpa.free(swapchain_data.images_presented);
     context.gpa.free(swapchain_data.images);
 
     context.device.destroySwapchainKHR(swapchain_data.handle, null);
@@ -1848,14 +1880,24 @@ pub fn swapchainObtainTexture(
 
     recreateSwapchain(swapchain_data) catch @panic("oom");
 
-    const semaphore = swapchain_data.semaphores[(swapchain_data.image_to_present + 1) % swapchain_data.images.len];
+    const semaphore = context.device.createSemaphore(&.{}, null) catch unreachable;
+    //const semaphore = swapchain_data.semaphores[(swapchain_data.image_to_present + 1) % swapchain_data.images.len];
 
     const result = context.device.acquireNextImageKHR(
         swapchain_data.handle,
         std.math.maxInt(u64),
         semaphore,
         .null_handle,
-    ) catch @panic("oom");
+    ) catch |e| {
+        switch (e) {
+            error.OutOfDateKHR => {
+                recreateSwapchain(swapchain_data) catch @panic("oom");
+
+                return swapchainObtainTexture(swapchain);
+            },
+            else => @panic("oom"),
+        }
+    };
 
     switch (result.result) {
         .error_out_of_date_khr, .suboptimal_khr => {
@@ -1870,7 +1912,7 @@ pub fn swapchainObtainTexture(
     swapchain_data.image_to_present = result.image_index;
 
     if (context.vk_ext_swapchain_maintenance_enabled) blk: {
-        if (swapchain_data.image_views[result.image_index] == .null_handle) {
+        if (swapchain_data.image_views[result.image_index] != .null_handle) {
             break :blk;
         }
 
@@ -1890,13 +1932,15 @@ pub fn swapchainObtainTexture(
     }
 
     //Use a special constant for the pointer, as we're essentially creating a dummy texture
-    const ptr: [*]u8 = @ptrFromInt(0xfafa);
+    const ptr: [*]u8 = @ptrFromInt(0xaaaa00 + result.image_index);
 
     for (context.allocations.items[0].textures.items) |*texture| {
         if (texture.allocation.ptr == ptr) {
             texture.handle = swapchain_data.images[result.image_index];
             texture.view = swapchain_data.image_views[result.image_index];
             texture.obtain_semaphore = semaphore;
+            texture.description.dimensions[0] = swapchain_data.current_extent.width;
+            texture.description.dimensions[1] = swapchain_data.current_extent.height;
             break;
         }
     } else {
@@ -1907,7 +1951,11 @@ pub fn swapchainObtainTexture(
             .handle = swapchain_data.images[result.image_index],
             .view = swapchain_data.image_views[result.image_index],
             .description = .{
-                .dimensions = .{ 1, 1, 1 },
+                .dimensions = .{
+                    swapchain_data.current_extent.width,
+                    swapchain_data.current_extent.height,
+                    1,
+                },
                 .format = .bgra8_srgb32,
             },
             .obtain_semaphore = semaphore,
@@ -2021,8 +2069,6 @@ pub fn swapchainPresent(
         .success => {},
         else => @panic("oom"),
     }
-
-    swapchain_data.images_presented[swapchain_data.image_to_present] = true;
 }
 
 pub fn waitIdle() void {
@@ -2105,6 +2151,7 @@ fn debugUtilsMessengerCallback(
     is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "SPIR-V");
     is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "MemoryRequirements::alignment");
     is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "pNext<VkMemoryDedicatedAllocateInfo>.pNext->buffer");
+    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "renderArea");
 
     if (is_spirv) {
         return .false;
@@ -2137,6 +2184,7 @@ fn checkSuitable(
     allocator: std.mem.Allocator,
 ) !?DeviceCandidate {
     if (!try checkExtensionSupport(instance, pdev, allocator)) {
+        std.debug.print("Extensions not supported!\n", .{});
         return null;
     }
 
@@ -2213,7 +2261,7 @@ fn checkExtensionSupport(
 
     for (required_device_extensions) |ext| {
         for (propsv) |props| {
-            std.debug.print("ext = {s}\n", .{std.mem.sliceTo(&props.extension_name, 0)});
+            std.debug.print("pdev[{}]: ext = {s}\n", .{ pdev, std.mem.sliceTo(&props.extension_name, 0) });
 
             if (std.mem.eql(u8, std.mem.span(ext), std.mem.sliceTo(&props.extension_name, 0))) {
                 break;
@@ -2438,7 +2486,7 @@ const required_layer_names = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 const required_device_extensions = [_][*:0]const u8{
     vk.extensions.khr_swapchain.name,
     vk.extensions.ext_extended_dynamic_state_3.name,
-    vk.extensions.khr_unified_image_layouts.name,
+    //vk.extensions.khr_unified_image_layouts.name,
 };
 
 const Pipeline = gpu.Pipeline;

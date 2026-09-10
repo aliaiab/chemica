@@ -161,7 +161,7 @@ fn fragmentMain() callconv(.{ .spirv_fragment = .{} }) void {
     });
 
     const in = @extern(
-        *addrspace(.output) @typeInfo(@typeInfo(@TypeOf(root.vertexMain)).@"fn".return_type.?).@"struct".field_types[1],
+        *addrspace(.input) @typeInfo(@typeInfo(@TypeOf(root.vertexMain)).@"fn".return_type.?).@"struct".field_types[1],
         .{
             .name = "in",
             .decoration = .{

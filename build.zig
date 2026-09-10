@@ -165,6 +165,7 @@ pub fn build(b: *std.Build) !void {
     });
 
     shader_start_module.addImport("lib", root_module);
+    exe.root_module.addImport("shader_start", shader_start_module);
 
     const renderer_shader_module = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/renderer.zig");
     _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/renderer.zig");
@@ -181,6 +182,8 @@ pub fn build(b: *std.Build) !void {
     _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/sdf_renderer.zig");
     _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/sdf_texture.zig");
     _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/depth_prepass.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/renderer_imgui.zig");
+    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/renderer_imgui.zig");
 
     exe.root_module.addImport("renderer_shader", renderer_shader_module);
 

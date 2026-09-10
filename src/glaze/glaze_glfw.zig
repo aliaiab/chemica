@@ -2,6 +2,7 @@ pub fn init(
     arena: std.mem.Allocator,
 ) !void {
     _ = arena; // autofix
+    try glfw.initHint(.platform, glfw.Platform.x11);
     try glfw.init();
 
     glfw.windowHint(.client_api, .no_api);
