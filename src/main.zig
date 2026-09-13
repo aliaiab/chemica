@@ -41,6 +41,20 @@ pub fn main(init: std.process.Init) !void {
     var gpu_context = try gpu.Context.init(arena, init.io);
     defer gpu_context.deinit();
 
+    var pipeline_compiler_io: gpu.pipelines.IoCompiler = .{
+        .io = init.io,
+        .gpa = gpa,
+        .module_path = "main.spv",
+    };
+    var pipeline_watch_compiler: gpu.pipelines.WatchCompiler = try .init(
+        init.io,
+        gpa,
+        pipeline_compiler_io.compiler(),
+    );
+    const pipeline_compiler = pipeline_watch_compiler.compiler();
+
+    _ = try pipeline_compiler.addModuleFile(@ptrCast(@import("options").exe_kernel_object));
+
     var gpu_start_timestamp: ?*gpu.debug.TimestampQuery = null;
     var gpu_end_timestamp: ?*gpu.debug.TimestampQuery = null;
 
@@ -139,10 +153,18 @@ pub fn main(init: std.process.Init) !void {
     const frame_semaphore = gpu.createSemaphore(0);
     defer gpu.destroySemaphore(frame_semaphore);
 
-    const imgui_renderer = renderer_imgui.init(
+    gpu_context.sampler_heap_alloc = gpu_context.sampler_heap_fba.allocator();
+
+    var imgui_renderer = try renderer_imgui.init(
+        pipeline_compiler,
         gpu_context.sampler_heap,
+        gpu.heap.page_allocator,
         gpu_context.sampler_heap_alloc,
     );
+
+    const AsymRenderer = @import("AsymRenderer.zig");
+
+    const asym_renderer: AsymRenderer = try .init(pipeline_compiler);
 
     imguiStyleSetup();
 
@@ -303,7 +325,7 @@ pub fn main(init: std.process.Init) !void {
     var gpu_transient_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
 
     for (&gpu_transient_fbas) |*fba| {
-        fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 64 * 1024, .gpu_cpu_writable));
+        fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 128 * 1024, .gpu_cpu_writable));
     }
 
     while (try glaze.surfacePoll(arena, surface)) |surface_poll| {
@@ -313,7 +335,7 @@ pub fn main(init: std.process.Init) !void {
         };
 
         if (next_frame > 2) {
-            gpu.semaphoreWait(frame_semaphore, next_frame - 2);
+            frame_semaphore.wait(next_frame - 2);
         }
         defer next_frame += 1;
 
@@ -337,7 +359,7 @@ pub fn main(init: std.process.Init) !void {
 
         asym_geo_context.beginSubmission();
 
-        const swapchain_texture = gpu.swapchainObtainTexture(gpu_swapchain);
+        const swapchain_texture = gpu_swapchain.obtainTexture();
 
         gpu_context.swapchain_texture = swapchain_texture;
         gpu_context.beginFrame();
@@ -448,16 +470,7 @@ pub fn main(init: std.process.Init) !void {
                 csg_program.clear();
 
                 const scene_root = try scene.compile(gpa, &csg_program);
-
-                try simulation.updateCSGProgram(&gpu_context, csg_program);
-
-                _ = try simulation.gpu_sim.renderSceneThumbnail(
-                    gpu_context,
-                    &simulation,
-                    scene_root,
-                    scene_path,
-                    arena,
-                );
+                _ = scene_root; // autofix
             }
         }
 
@@ -511,11 +524,9 @@ pub fn main(init: std.process.Init) !void {
         csg_program.clear();
 
         const scene_2d_root_index = try csg_tree_2d.compile(arena, &csg_program);
+        _ = scene_2d_root_index; // autofix
         const scene_root_index = try csg_tree_3d.compile(arena, &csg_program);
-
-        try simulation.updateCSGProgram(&gpu_context, csg_program);
-
-        try simulation.update(scene_root_index);
+        _ = scene_root_index; // autofix
 
         const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
 
@@ -523,24 +534,6 @@ pub fn main(init: std.process.Init) !void {
         heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] /= @floatFromInt(1);
 
         enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
-
-        const scene_2d_texture = try simulation.gpu_sim.render2DScene(
-            gpu_context,
-            &simulation,
-            scene_2d_root_index,
-            gpa,
-            512,
-            512,
-        );
-
-        simulation.render(
-            gpu_context,
-            null,
-            scene_root_index,
-            .{
-                .render_sdf_raymarched = render_sdf_raymarched,
-            },
-        );
 
         if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Space)) {
             simulation.enable_simulation = !simulation.enable_simulation;
@@ -690,11 +683,6 @@ pub fn main(init: std.process.Init) !void {
                 var csg_editor_window_pos: [2]f32 = undefined;
 
                 const enable_nfd = @import("options").enable_nfd;
-
-                if (imgui.begin("Texture Editor", .{})) {
-                    imgui.image(scene_2d_texture, .{ 512, 512 }, .{});
-                }
-                imgui.end();
 
                 if (imgui.begin("CSG Editor", .{})) {
                     csg_editor_window_pos[0] = imgui.cimgui.ImGui_GetWindowPos().x;
@@ -1490,38 +1478,60 @@ pub fn main(init: std.process.Init) !void {
 
         const gizmo_views = asym_geo_context.endSubmission();
 
-        gpu.rasterPassEnd(gpu_context.command_buffer);
-
-        try gpu_context.renderGizmos(
-            gpa,
-            &asym_geo_context,
-            gizmo_views,
-            gizmo_views.views.items,
-            typeface_textures,
-        );
-
         gpu_context.endFrame();
 
         if (gpu_end_timestamp == null or gpu.queryTimestampValue(gpu_start_timestamp.?) != null) {
             gpu_end_timestamp = gpu.placeCommandTimestampQuery(gpu_context.command_buffer);
         }
 
-        const clear_cmds = gpu.queueStartCommandRecording(.{}, .{});
+        const clear_cmds = gpu.queueStartCommandRecording(.{}, .{
+            .sampler_heap = gpu_context.sampler_heap,
+        });
 
-        gpu.rasterPassBegin(clear_cmds, .{
+        clear_cmds.rasterPassBegin(.{
             .color_attachments = &.{.{
                 .texture = swapchain_texture,
                 .clear = .{ 1, 0.6, 0, 1 },
             }},
         });
 
-        try imgui_renderer.render(
+        clear_cmds.setStateDepthStencil(.{});
+        clear_cmds.setStatePolygonMode(.line);
+
+        if (false) {
+            clear_cmds.launchRasterDraw(
+                gpu_context.shaders.env_map_shader,
+                &.{},
+                &.{
+                    .{
+                        .count = 36,
+                        .instance_count = 1,
+                        .first = 0,
+                        .first_instance = 0,
+                    },
+                },
+                .{},
+            );
+        }
+
+        try asym_renderer.render(
             clear_cmds,
-            imgui.getDrawData(),
             gpu_transient_arena,
+            &asym_geo_context,
+            gizmo_views,
+            gizmo_views.views.items,
         );
 
-        gpu.rasterPassEnd(clear_cmds);
+        if (true) {
+            try imgui_renderer.render(
+                init.io,
+                clear_cmds,
+                imgui.getDrawData(),
+                gpu_transient_arena,
+            );
+        }
+
+        clear_cmds.rasterPassEnd();
 
         if (true) {
             gpu.queueSubmit(
@@ -1547,8 +1557,7 @@ pub fn main(init: std.process.Init) !void {
             );
         }
 
-        gpu.swapchainPresent(
-            gpu_swapchain,
+        gpu_swapchain.present(
             .{
                 .wait_semaphore = frame_semaphore,
                 .wait_value = next_frame,
@@ -2124,8 +2133,8 @@ pub const std_options: std.Options = .{
     .logFn = logMessage,
 };
 
-export const font_data = @embedFile("assets/JetBrainsMono_regular.ttf");
-export const font_data_size: u32 = font_data.len;
+const font_data = @embedFile("assets/JetBrainsMono_regular.ttf");
+const font_data_size: u32 = font_data.len;
 
 extern fn imguiStyleSetup() void;
 
@@ -2151,12 +2160,25 @@ test {
     _ = std.testing.refAllDecls(@This());
 }
 
-pub const math = @import("lib").math;
-pub const zmath = @import("lib").zmath;
+comptime {
+    if (@import("builtin").os.tag == .vulkan) {
+        //Recurse the modules
+        _ = @import("AsymRenderer.zig");
+        _ = renderer_imgui;
+        _ = Simulation2;
+    } else {
+        @export(font_data, .{ .name = "font_data" });
+        @export(&font_data_size, .{ .name = "font_data_size" });
+    }
+}
+
+pub const math = @import("math.zig");
+pub const zmath = @import("zmath");
 pub const shaders = @import("lib").shaders;
 
 const imgui = @import("imgui.zig");
 const Simulation = @import("Simulation.zig");
+const Simulation2 = @import("Simulation2.zig");
 const asym = @import("asym.zig");
 const zigimg = @import("zigimg");
 const std = @import("std");

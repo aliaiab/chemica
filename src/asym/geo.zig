@@ -48,9 +48,6 @@ pub const Colour = packed struct(u32) {
 ///Represents the full scene produced from a set of commands
 pub const Scene = struct {
     views: std.ArrayList(View) = .empty,
-    instance_ids_by_type: std.EnumArray(PrimitiveType, std.ArrayList(InstanceId)) = .initFill(.empty),
-    transforms_by_type: std.EnumArray(PrimitiveType, std.ArrayList(AffineTransform3D)) = .initFill(.empty),
-    materials_by_type: std.EnumArray(PrimitiveType, std.ArrayList(Material)) = .initFill(.empty),
     text_buffer: std.ArrayList(u8) = .empty,
     text_buffer_entires: std.ArrayList([]const u8) = .empty,
     vertex_positions_3d: std.ArrayList([3]f32) = .empty,
@@ -61,15 +58,6 @@ pub const Scene = struct {
 
     ///Clear the scene
     pub fn clear(self: *Scene) void {
-        for (&self.instance_ids_by_type.values) |*val| {
-            val.clearRetainingCapacity();
-        }
-        for (&self.transforms_by_type.values) |*val| {
-            val.clearRetainingCapacity();
-        }
-        for (&self.materials_by_type.values) |*val| {
-            val.clearRetainingCapacity();
-        }
         self.text_buffer.clearRetainingCapacity();
         self.text_buffer_entires.clearRetainingCapacity();
         self.vertex_positions_3d.clearRetainingCapacity();
@@ -106,7 +94,10 @@ pub const Scene = struct {
     pub const Group = struct {
         parameters_by_type: std.EnumArray(PrimitiveType, std.ArrayList(f32)) = .initFill(.empty),
         draws_by_type: std.EnumArray(PrimitiveType, std.ArrayList(DrawCommand)) = .initFill(.empty),
+        transforms_by_type: std.EnumArray(PrimitiveType, std.ArrayList(AffineTransform3D)) = .initFill(.empty),
+        materials_by_type: std.EnumArray(PrimitiveType, std.ArrayList(Material)) = .initFill(.empty),
         text_typefaces: std.ArrayList(TextTypeFaceHandle) = .empty,
+        instance_ids_by_type: std.EnumArray(PrimitiveType, std.ArrayList(InstanceId)) = .initFill(.empty),
 
         pub fn clear(draw_group: *Group) void {
             for (draw_group.draws_by_type.values) |*val| {
@@ -117,27 +108,43 @@ pub const Scene = struct {
                 val.clearRetainingCapacity();
             }
 
+            for (draw_group.transforms_by_type.values) |*val| {
+                val.clearRetainingCapacity();
+            }
+
+            for (draw_group.materials_by_type.values) |*val| {
+                val.clearRetainingCapacity();
+            }
+
             draw_group.text_typefaces.clearRetainingCapacity();
         }
 
         pub fn slice(draw_group: *const Group) GroupSlice {
             var parameters_by_type: std.EnumArray(PrimitiveType, []const f32) = .initFill(&.{});
             var draws_by_type: std.EnumArray(PrimitiveType, []const DrawCommand) = .initFill(&.{});
+            var transforms_by_type: std.EnumArray(PrimitiveType, []const AffineTransform3D) = .initFill(&.{});
+            var materials_by_type: std.EnumArray(PrimitiveType, []const Material) = .initFill(&.{});
 
             inline for (
                 comptime std.meta.fieldNames(PrimitiveType),
                 draw_group.parameters_by_type.values,
                 draw_group.draws_by_type.values,
-            ) |enum_name, val, draw| {
+                draw_group.transforms_by_type.values,
+                draw_group.materials_by_type.values,
+            ) |enum_name, val, draw, transforms, materials| {
                 const prim_type = @field(PrimitiveType, enum_name);
 
                 parameters_by_type.set(prim_type, val.items);
+                transforms_by_type.set(prim_type, transforms.items);
+                materials_by_type.set(prim_type, materials.items);
                 draws_by_type.set(prim_type, draw.items);
             }
 
             return .{
                 .parameters_by_type = parameters_by_type,
                 .draws_by_type = draws_by_type,
+                .materials_by_type = materials_by_type,
+                .transforms_by_type = transforms_by_type,
                 .text_typefaces = draw_group.text_typefaces.items,
             };
         }
@@ -146,6 +153,8 @@ pub const Scene = struct {
     pub const GroupSlice = struct {
         parameters_by_type: std.EnumArray(PrimitiveType, []const f32),
         draws_by_type: std.EnumArray(PrimitiveType, []const DrawCommand),
+        transforms_by_type: std.EnumArray(PrimitiveType, []const AffineTransform3D),
+        materials_by_type: std.EnumArray(PrimitiveType, []const Material),
         text_typefaces: []const TextTypeFaceHandle,
 
         pub fn empty(self: GroupSlice) bool {
@@ -294,13 +303,7 @@ pub fn beginView(
     std.debug.assert(current_context.?.draw_data[current_context.?.active_draw_data].views.items.len == 1);
 
     for (&current_context.?.draw_data[current_context.?.active_draw_data].views.items[0].draws_by_state) |*draw_group| {
-        draw_group.* = .{
-            .parameters_by_type = .initFill(.empty),
-        };
-
-        for (&draw_group.parameters_by_type.values) |*params| {
-            params.items = &.{};
-        }
+        draw_group.* = .{};
     }
 }
 
@@ -339,17 +342,17 @@ pub fn box(
 
     const primitive_type: PrimitiveType = .box;
 
-    const materials_begin: u32 = @intCast(scene.materials_by_type.get(primitive_type).items.len);
-    const transforms_begin: u32 = @intCast(scene.transforms_by_type.get(primitive_type).items.len);
+    const materials_begin: u32 = @intCast(group.materials_by_type.get(primitive_type).items.len);
+    const transforms_begin: u32 = @intCast(group.transforms_by_type.get(primitive_type).items.len);
     const parameters_begin: u32 = @intCast(group.parameters_by_type.get(primitive_type).items.len);
-    const instance_ids_begin: u32 = @intCast(scene.instance_ids_by_type.get(primitive_type).items.len);
+    const instance_ids_begin: u32 = @intCast(group.instance_ids_by_type.get(primitive_type).items.len);
 
-    scene.transforms_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.transform) catch @panic("oom");
-    scene.materials_by_type.getPtr(primitive_type).append(context.arena.allocator(), .{ .colour = options.colour }) catch @panic("oom");
+    group.transforms_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.transform) catch @panic("oom");
+    group.materials_by_type.getPtr(primitive_type).append(context.arena.allocator(), .{ .colour = options.colour }) catch @panic("oom");
     group.parameters_by_type.getPtr(primitive_type).append(context.arena.allocator(), undefined) catch @panic("oom");
-    scene.instance_ids_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.id) catch @panic("oom");
+    group.instance_ids_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.id) catch @panic("oom");
 
-    scene.instance_ids_by_type.getPtr(primitive_type).append(
+    group.instance_ids_by_type.getPtr(primitive_type).append(
         context.arena.allocator(),
         options.id,
     ) catch @panic("oom");
@@ -488,10 +491,10 @@ pub fn text(
 
     const primitive_type: PrimitiveType = .text;
 
-    const materials_begin: u32 = @intCast(scene.materials_by_type.get(primitive_type).items.len);
-    const transforms_begin: u32 = @intCast(scene.transforms_by_type.get(primitive_type).items.len);
+    const materials_begin: u32 = @intCast(group.materials_by_type.get(primitive_type).items.len);
+    const transforms_begin: u32 = @intCast(group.transforms_by_type.get(primitive_type).items.len);
     const parameters_begin: u32 = @intCast(group.parameters_by_type.get(primitive_type).items.len);
-    const instance_ids_begin: u32 = @intCast(scene.instance_ids_by_type.get(primitive_type).items.len);
+    const instance_ids_begin: u32 = @intCast(group.instance_ids_by_type.get(primitive_type).items.len);
 
     const typeface = if (options.type_face == .default) context.default_type_face else options.type_face;
 
@@ -511,12 +514,12 @@ pub fn text(
         .type_face = typeface,
     });
 
-    scene.transforms_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.transform) catch @panic("oom");
-    scene.materials_by_type.getPtr(primitive_type).append(context.arena.allocator(), .{ .colour = options.foreground_colour }) catch @panic("oom");
+    group.transforms_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.transform) catch @panic("oom");
+    group.materials_by_type.getPtr(primitive_type).append(context.arena.allocator(), .{ .colour = options.foreground_colour }) catch @panic("oom");
     group.parameters_by_type.getPtr(primitive_type).appendSlice(context.arena.allocator(), &bounds) catch @panic("oom");
-    scene.instance_ids_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.id) catch @panic("oom");
+    group.instance_ids_by_type.getPtr(primitive_type).append(context.arena.allocator(), options.id) catch @panic("oom");
 
-    scene.instance_ids_by_type.getPtr(primitive_type).append(
+    group.instance_ids_by_type.getPtr(primitive_type).append(
         context.arena.allocator(),
         options.id,
     ) catch @panic("oom");
@@ -579,17 +582,17 @@ pub fn circle(
     const view = scene.views.last().?;
     const group = view.drawGroup(options.draw_state);
 
-    const materials_begin: u32 = @intCast(scene.materials_by_type.get(.circle).items.len);
-    const transforms_begin: u32 = @intCast(scene.transforms_by_type.get(.circle).items.len);
+    const materials_begin: u32 = @intCast(group.materials_by_type.get(.circle).items.len);
+    const transforms_begin: u32 = @intCast(group.transforms_by_type.get(.circle).items.len);
     const parameters_begin: u32 = @intCast(group.parameters_by_type.get(.circle).items.len);
-    const instance_ids_begin: u32 = @intCast(scene.instance_ids_by_type.get(.circle).items.len);
+    const instance_ids_begin: u32 = @intCast(group.instance_ids_by_type.get(.circle).items.len);
 
-    scene.transforms_by_type.getPtr(.circle).append(context.arena.allocator(), options.transform) catch @panic("oom");
-    scene.materials_by_type.getPtr(.circle).append(context.arena.allocator(), .{ .colour = options.colour }) catch @panic("oom");
+    group.transforms_by_type.getPtr(.circle).append(context.arena.allocator(), options.transform) catch @panic("oom");
+    group.materials_by_type.getPtr(.circle).append(context.arena.allocator(), .{ .colour = options.colour }) catch @panic("oom");
     group.parameters_by_type.getPtr(.circle).append(context.arena.allocator(), options.radius) catch @panic("oom");
-    scene.instance_ids_by_type.getPtr(.circle).append(context.arena.allocator(), options.id) catch @panic("oom");
+    group.instance_ids_by_type.getPtr(.circle).append(context.arena.allocator(), options.id) catch @panic("oom");
 
-    scene.instance_ids_by_type.getPtr(.circle).append(
+    group.instance_ids_by_type.getPtr(.circle).append(
         context.arena.allocator(),
         options.id,
     ) catch @panic("oom");
@@ -628,5 +631,5 @@ pub const AffineTransform2D = extern struct {
     };
 };
 
-const amath = @import("lib").math;
+const amath = @import("../math.zig");
 const std = @import("std");

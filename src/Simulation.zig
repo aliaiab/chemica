@@ -233,7 +233,66 @@ pub const CSGProgram = struct {
     }
 };
 
-pub const AffineTransform3D = @import("lib").shaders.AffineTransform3D;
+pub const AffineTransform3D = extern struct {
+    position: [3]f32 = .{ 0, 0, 0 },
+    uniform_scale: f32 = 1,
+    rotation: [4]f32 = .{ 0, 0, 0, 1 },
+
+    pub const identity: AffineTransform3D = .{
+        .position = .{ 0, 0, 0 },
+        .uniform_scale = 1,
+        .rotation = .{ 0, 0, 0, 1 },
+    };
+
+    pub fn compose(lhs: AffineTransform3D, rhs: AffineTransform3D) AffineTransform3D {
+        var result: AffineTransform3D = .identity;
+        const rotated_pos = zmath.rotate(lhs.rotation, .{ rhs.position[0], rhs.position[1], rhs.position[2], 0 });
+        result.position = .{
+            lhs.position[0] + rotated_pos[0] * lhs.uniform_scale,
+            lhs.position[1] + rotated_pos[1] * lhs.uniform_scale,
+            lhs.position[2] + rotated_pos[2] * lhs.uniform_scale,
+        };
+        result.uniform_scale = lhs.uniform_scale * rhs.uniform_scale;
+        result.rotation = math.mulQuat(lhs.rotation, rhs.rotation);
+
+        return result;
+    }
+
+    pub inline fn transformInverseVector(
+        transform: AffineTransform3D,
+        vector: @Vector(3, f32),
+    ) @Vector(3, f32) {
+        const transform_position: @Vector(3, f32) = .{ transform.position[0], transform.position[1], transform.position[2] };
+        _ = transform_position; // autofix
+        var translated = vector;
+
+        translated[0] -= transform.position[0];
+
+        if (false) {
+            const rotated = zmath.rotate(
+                transform.rotation,
+                .{ translated[0], translated[1], translated[2], 0 },
+            );
+            _ = rotated; // autofix
+        }
+        const rotated = translated;
+
+        if (true) {
+            return translated;
+        }
+
+        var scaled: @Vector(3, f32) = .{ rotated[0], rotated[1], rotated[2] };
+
+        scaled *= @splat(1 / transform.uniform_scale);
+
+        return scaled;
+    }
+
+    test {
+        std.testing.refAllDecls(@This());
+    }
+};
+
 pub const CSGMaterialComponent = extern struct {
     material: VoxelMaterialHandle,
     density: f32,
@@ -246,7 +305,19 @@ pub const CSGMaterial = extern struct {
     max_temperature: f32,
 };
 
-pub const RendererViewType = @import("lib").shaders.RendererViewType;
+pub const RendererViewType = enum(u32) {
+    pbr,
+    albedo,
+    roughness,
+    metalness,
+    ambient_occlusion,
+    normal,
+    material,
+    deviation,
+    temperature,
+    ray_steps,
+};
+
 pub const VoxelMaterialHandle = enum(u32) {
     air = 0,
     _,
@@ -274,8 +345,7 @@ pub const RayStats = extern struct {
 
 const std = @import("std");
 const Simulation = @This();
-const gl = @import("gl");
-const math = @import("lib").math;
-const zmath = @import("lib").zmath;
+const math = @import("math.zig");
+const zmath = @import("zmath");
 const Texture = gpu.Texture;
 const gpu = @import("gpu.zig");

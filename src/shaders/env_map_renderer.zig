@@ -1,31 +1,89 @@
 pub fn vertexMain(
-    draw_parameters: start.RasterDrawCommandParameters,
+    draw_parameters: kernel.RasterDrawCommandParameters,
 ) struct { @Vector(4, f32), PipelinePacket } {
-    _ = draw_parameters; // autofix
-    return .{ @splat(0), undefined };
+    const vertex_positions = [36]@Vector(3, f32){
+        .{ 0.0, 0.0, 0.0 },
+        .{ 1.0, 1.0, 0.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 1.0, 0.0 },
+        .{ 0.0, 0.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 0.0, 0.0, 1.0 },
+        .{ 1.0, 0.0, 1.0 },
+        .{ 1.0, 1.0, 1.0 },
+        .{ 1.0, 1.0, 1.0 },
+        .{ 0.0, 1.0, 1.0 },
+        .{ 0.0, 0.0, 1.0 },
+        .{ 0.0, 1.0, 1.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 0.0, 0.0, 0.0 },
+        .{ 0.0, 0.0, 0.0 },
+        .{ 0.0, 0.0, 1.0 },
+        .{ 0.0, 1.0, 1.0 },
+        .{ 1.0, 1.0, 1.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 1.0, 0.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 1.0, 1.0 },
+        .{ 1.0, 0.0, 1.0 },
+        .{ 0.0, 0.0, 0.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 0.0, 1.0 },
+        .{ 1.0, 0.0, 1.0 },
+        .{ 0.0, 0.0, 1.0 },
+        .{ 0.0, 0.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 1.0, 1.0, 1.0 },
+        .{ 1.0, 1.0, 0.0 },
+        .{ 1.0, 1.0, 1.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 0.0, 1.0, 1.0 },
+    };
+
+    var vertex_pos = vertex_positions[draw_parameters.vertex_index];
+
+    vertex_pos -= @splat(0.5);
+
+    const output_vertex: @Vector(4, f32) = .{ vertex_pos[0], vertex_pos[1], vertex_pos[2], 1 };
+
+    return .{ output_vertex, undefined };
 }
 
 pub fn fragmentMain(
+    sampler_index: kernel.SamplerHeap.Index,
     input: PipelinePacket,
+    sampler_heap: kernel.SamplerHeap,
 ) @Vector(4, f32) {
-    _ = input; // autofix
+    _ = sampler_index; // autofix
+    _ = sampler_heap; // autofix
+    const uv = sampleSphericalMap(input.local_pos);
+    _ = uv; // autofix
 
-    return @splat(0);
+    return @splat(1);
+}
+
+fn sampleSphericalMap(v: @Vector(3, f32)) @Vector(2, f32) {
+    if (true) return @splat(0);
+
+    var uv: @Vector(2, f32) = .{
+        std.math.atan2(v[2], v[0]),
+        std.math.asin(v[1]),
+    };
+    uv *= @Vector(2, f32){ 0.1591, 0.3183 };
+    uv += @splat(0.5);
+
+    return uv;
 }
 
 const PipelinePacket = extern struct {
-    pad: u32 = 0,
+    local_pos: @Vector(3, f32),
 };
 
 comptime {
-    start.exportPipeline(@import("shader_options").shader_module_type);
+    kernel.exportPipeline(@import("shader_options").shader_module_type);
 }
 
-const start = @import("shader_start");
+const kernel = @import("shader_start");
 const common = @import("lib").shaders.common;
-const GpuPointer = spirv_ext.GpuPointer;
-const GpuSlice = spirv_ext.GpuSlice;
 const math = @import("lib").math;
 const std = @import("std");
-const spirv = std.spirv;
-const spirv_ext = @import("lib").shaders.spirv_ext;

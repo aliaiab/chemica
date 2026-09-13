@@ -1,35 +1,84 @@
-pipeline: *gpu.Pipeline,
+pipeline_compiler: gpu.pipelines.Compiler,
+pipeline: gpu.pipelines.Compiler.PipelineIndex,
+font_texture: []gpu.TextureByte,
+font_texture_sampler_index: gpu.kernel.SamplerHeap.Index,
 
 pub fn init(
+    pipeline_compiler: gpu.pipelines.Compiler,
     sampler_heap: []gpu.TextureDescriptor,
+    gpu_gpa: gpu.mem.Allocator,
     sampler_allocator: gpu.mem.Allocator,
-) RendererImGui {
-    _ = sampler_allocator; // autofix
-    _ = sampler_heap; // autofix
+) !RendererImGui {
+    const io = imgui.getIO();
+
+    var pixel_pointer: [*c]u8 = undefined;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    var out_bytes_per_pixel: c_int = 0;
+
+    imgui.cimgui.ImFontAtlas_GetTexDataAsAlpha8(
+        io.Fonts,
+        &pixel_pointer,
+        &width,
+        &height,
+        &out_bytes_per_pixel,
+    );
+
+    const font_texture = try gpu_gpa.allocTexture(.{
+        .format = .r8_unorm8,
+        .dimensions = .{ @intCast(width), @intCast(height), 1 },
+    });
+
+    const pixel_bytes: []u8 = pixel_pointer[0..@intCast(width * height)];
+
+    const texture_src = try gpu_gpa.allocDupe(u8, pixel_bytes);
+
+    const cmds = gpu.queueStartCommandRecording(.{}, .{});
+    defer gpu.queueSubmit(.{}, &.{cmds}, &.{});
+
+    gpu.mem.copyToTexture(
+        cmds,
+        u8,
+        .{
+            .dimensions = .{ @intCast(width), @intCast(height), 1 },
+            .format = .r8_unorm8,
+        },
+        font_texture,
+        texture_src,
+    );
+
+    gpu.barrier(cmds, .transfer, .raster_fragment, .{});
+
     const self: RendererImGui = .{
-        .pipeline = gpu.createRasterVertexPipeline(
-            @embedFile("renderer_imgui_vertex.spv"),
-            @embedFile("renderer_imgui_fragment.spv"),
-            .{
-                .color_targets = &.{.{
-                    .format = .bgra8_srgb32,
-                    .write_mask = 0xff,
-                }},
-                .depth_format = .depth_stencil_u24_u8,
-                .stencil_format = .depth_stencil_u24_u8,
-            },
+        .pipeline = try pipeline_compiler.compileRasterVertexPipeline(pipeline_comptime, .{
+            .color_targets = &.{.{
+                .format = .bgra8_srgb32,
+                .write_mask = 0xff,
+            }},
+            .depth_format = .depth_stencil_u24_u8,
+            .stencil_format = .depth_stencil_u24_u8,
+        }),
+        .font_texture = font_texture,
+        .font_texture_sampler_index = try sampler_allocator.allocTextureDescriptor(
+            sampler_heap,
+            font_texture,
         ),
+        .pipeline_compiler = pipeline_compiler,
     };
 
     return self;
 }
 
 pub fn render(
-    self: RendererImGui,
-    command_buffer: *gpu.CommandBuffer,
+    self: *RendererImGui,
+    io: std.Io,
+    commands: *gpu.CommandBuffer,
     draw_data: *const imgui.DrawData,
     transient_arena: gpu.mem.Allocator,
 ) !void {
+    _ = io; // autofix
+    const pipeline = self.pipeline_compiler.getPipeline(self.pipeline) orelse return;
+
     var vertex_count: usize = 0;
     var index_count: usize = 0;
 
@@ -72,9 +121,17 @@ pub fn render(
         for (0..@intCast(command_list.CmdBuffer.Size)) |command_index| {
             const command: imgui.cimgui.ImDrawCmd = command_list.CmdBuffer.Data[command_index];
 
-            gpu.launchRasterDrawIndexed(command_buffer, self.pipeline, &.{
+            commands.setStateScissor(.{
+                @intFromFloat(command.ClipRect.x),
+                @intFromFloat(command.ClipRect.y),
+                @intFromFloat(command.ClipRect.z + command.ClipRect.x),
+                @intFromFloat(command.ClipRect.w + command.ClipRect.y),
+            });
+
+            commands.launchRasterDrawIndexed(pipeline, &.{
                 gpu_projection,
                 gpu_vertices.ptr,
+                @ptrFromInt(@backingInt(self.font_texture_sampler_index)),
             }, &.{
                 .{
                     .index_count = @intCast(command.ElemCount),
@@ -91,15 +148,16 @@ pub fn render(
 
 pub const Vertex = extern struct {
     position: [2]f32,
-    uv: [2]u32,
+    uv: [2]f32,
     color: u32,
 };
 
-pub fn vertexMain(
-    projection: *addrspace(gpu_start.address_space) math.Matrix(f32, 4, 4),
-    vertices: [*]addrspace(gpu_start.address_space) Vertex,
-    draw_parameters: gpu_start.RasterDrawCommandParameters,
-) struct { @Vector(4, f32), PipelinePacket } {
+pub fn vertexKernel(
+    projection: *addrspace(gpu.kernel.address_space) const math.Matrix(f32, 4, 4),
+    vertices: [*]addrspace(gpu.kernel.address_space) const Vertex,
+    sampler_index: gpu.kernel.SamplerHeap.Index,
+    draw_parameters: gpu.kernel.RasterDrawCommandParameters,
+) struct { [4]f32, PipelinePacket } {
     _ = projection; // autofix
     const vertex = vertices[draw_parameters.vertex_index];
 
@@ -132,35 +190,48 @@ pub fn vertexMain(
         .{ vertex4.x, vertex4.y, vertex4.z, vertex4.w },
         .{
             .colour = out_colour,
+            .uv = vertex.uv,
+            .sampler_index = sampler_index,
         },
     };
 }
 
-pub fn fragmentMain(
+const PipelinePacket = extern struct {
+    colour: [4]f32,
+    uv: [2]f32,
+    sampler_index: gpu.kernel.SamplerHeap.Index,
+};
+
+pub fn fragmentKernel(
     input: PipelinePacket,
-) @Vector(4, f32) {
+) ?[4]f32 {
+    if (false) {
+        var sampler_heap: gpu.kernel.SamplerHeap = undefined;
+        var texel = sampler_heap.imageSample(
+            @fromBackingInt(1),
+            input.uv,
+        );
+
+        texel[1] = 1;
+        texel[2] = 1;
+        texel[3] = 1;
+    }
+
+    if (input.colour[0] < 0.5) {
+        //return null;
+    }
+
     return input.colour;
 }
 
-const PipelinePacket = extern struct {
-    colour: @Vector(4, f32),
-};
+pub const pipeline_comptime = gpu.kernel.exportRasterVertexPipeline(@This(), "vertexKernel", "fragmentKernel", .{});
 
 comptime {
-    if (@import("builtin").os.tag == .vulkan) {
-        gpu_start.exportPipeline(@import("shader_options").shader_module_type);
-    }
+    _ = pipeline_comptime;
 }
 
-const gpu_start = @import("shader_start");
-const common = @import("lib").shaders.common;
-const GpuPointer = spirv_ext.GpuPointer;
-const GpuSlice = spirv_ext.GpuSlice;
-const math = @import("lib").math;
-const spirv = std.spirv;
-const spirv_ext = @import("lib").shaders.spirv_ext;
-
-const std = @import("std");
+const math = @import("math.zig");
 const gpu = @import("gpu.zig");
 const imgui = @import("imgui.zig");
+const std = @import("std");
 const RendererImGui = @This();

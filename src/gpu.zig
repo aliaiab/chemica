@@ -25,7 +25,7 @@ pub fn memAlloc(
     size: usize,
     alignment: std.mem.Alignment,
     memory_type: mem.Allocator.MemoryType,
-) std.mem.Allocator.Error![]u8 {
+) std.mem.Allocator.Error![*]u8 {
     return backendCall(@src(), .{
         size,
         alignment,
@@ -34,13 +34,23 @@ pub fn memAlloc(
 }
 
 ///Free device memory
-pub fn memFree(memory: []u8) void {
+pub fn memFree(memory: [*]u8) void {
     return backendCall(@src(), .{memory});
 }
 
 ///Returns a pointer which is readable/writable for the given access domain
-pub fn memToAccessiblePointer(pointer: *anyopaque, access: mem.MemoryAccessDomain) *anyopaque {
+pub fn memToAccessiblePointer(pointer: *anyopaque, access: mem.AccessDomain) *anyopaque {
     return backendCall(@src(), .{ pointer, access });
+}
+
+///Returns the memory format of the pointer
+pub fn memGetMemoryFormat(pointer: *anyopaque) mem.MemoryFormat {
+    return backendCall(@src(), .{pointer});
+}
+
+///Returns the memory device index of the pointer
+pub fn memGetMemoryDevice(pointer: *anyopaque) u32 {
+    return backendCall(@src(), .{pointer});
 }
 
 ///Copy device memory from src to dst
@@ -179,8 +189,9 @@ pub fn textureMemoryDescription(
     return backendCall(@src(), .{description});
 }
 
-///Creates and registers a backend texture handle for the specified memory region
-pub fn registerTextureMemory(
+///Formats the specified memory region as a texture
+///It is then illegal behaviour to directly modify, read or take memory slices of the specified memory
+pub fn formatTextureMemory(
     memory: []TextureByte,
     description: TextureDescription,
 ) void {
@@ -190,9 +201,26 @@ pub fn registerTextureMemory(
     });
 }
 
-///Destroys the texture for the specified memory region
-pub fn unregisterTextureMemory(
+///Unformats the specifed memory region as a texture
+///It is then illegal behaviour to create texture descriptors from the specified memory region
+pub fn unformatTextureMemory(
     memory: []const TextureByte,
+) void {
+    return backendCall(@src(), .{
+        memory,
+    });
+}
+
+pub fn formatAccelerationStructureMemory(
+    memory: []AccelerationStructureByte,
+) void {
+    return backendCall(@src(), .{
+        memory,
+    });
+}
+
+pub fn unformatAccelerationStructureMemory(
+    memory: []AccelerationStructureByte,
 ) void {
     return backendCall(@src(), .{
         memory,
@@ -440,6 +468,19 @@ pub fn launchBuildAccelerationStructures(
     });
 }
 
+///Launch a set of device generated command sequences
+pub fn launchCommandSequences(
+    command_buffer: *CommandBuffer,
+    pipeline_set: []*Pipeline,
+    sequences: []const u8,
+) void {
+    return backendCall(@src(), .{
+        command_buffer,
+        pipeline_set,
+        sequences,
+    });
+}
+
 ///Returns a fresh, transient command buffer from the queue, ready to have command encoded into it
 pub fn queueStartCommandRecording(
     queue: Queue,
@@ -548,10 +589,183 @@ pub fn swapchainPresent(
     });
 }
 
+///Represents an execution pipeline containing kernels and state
 pub const Pipeline = opaque {};
-pub const CommandBuffer = opaque {};
-pub const Semaphore = opaque {};
-pub const Swapchain = opaque {};
+
+///Represents a list of device commands
+pub const CommandBuffer = opaque {
+    ///Begin a raster pass
+    pub fn rasterPassBegin(
+        command_buffer: *CommandBuffer,
+        description: RasterPassDescription,
+    ) void {
+        return gpu.rasterPassBegin(command_buffer, description);
+    }
+
+    ///End a raster pass
+    pub fn rasterPassEnd(
+        command_buffer: *CommandBuffer,
+    ) void {
+        return gpu.rasterPassEnd(command_buffer);
+    }
+
+    ///Sets the rasterizer depth and stencil state
+    pub fn setStateDepthStencil(
+        command_buffer: *CommandBuffer,
+        state: DepthStencilState,
+    ) void {
+        gpu.setStateDepthStencil(command_buffer, state);
+    }
+
+    ///Sets the rasterizer blending state
+    pub fn setStateBlend(
+        command_buffer: *CommandBuffer,
+        state: BlendState,
+    ) void {
+        gpu.setStateBlend(command_buffer, state);
+    }
+
+    ///Sets the rasterization state for the current/following raster pass
+    pub fn setStateRasterization(
+        command_buffer: *CommandBuffer,
+        state: RasterizationState,
+    ) void {
+        gpu.setStateRasterization(command_buffer, state);
+    }
+
+    ///Sets the culling for the current/following raster pass
+    pub fn setStateCull(
+        command_buffer: *CommandBuffer,
+        cull: RasterPipelineDescription.Cull,
+    ) void {
+        gpu.setStateCull(command_buffer, cull);
+    }
+
+    ///Sets the polygon mode for the current/following raster pass
+    pub fn setStatePolygonMode(
+        command_buffer: *CommandBuffer,
+        mode: PolygonMode,
+    ) void {
+        gpu.setStatePolygonMode(command_buffer, mode);
+    }
+
+    ///Sets the viewport transforms
+    pub fn setStateViewport(
+        command_buffer: *CommandBuffer,
+        viewport: [4]f32,
+    ) void {
+        gpu.setStateViewport(command_buffer, viewport);
+    }
+
+    ///Set the scissor rectangles
+    pub fn setStateScissor(
+        command_buffer: *CommandBuffer,
+        scissor: [4]u32,
+    ) void {
+        gpu.setStateScissor(command_buffer, scissor);
+    }
+
+    ///Launch a set of compute commands
+    pub fn launchCompute(
+        command_buffer: *CommandBuffer,
+        pipeline: *Pipeline,
+        root_data: []const *anyopaque,
+        commands: []const ComputeCommand,
+    ) void {
+        return gpu.launchCompute(command_buffer, pipeline, root_data, commands);
+    }
+
+    ///Launch a set of raster draw commands
+    pub fn launchRasterDraw(
+        command_buffer: *CommandBuffer,
+        pipeline: *Pipeline,
+        root_data: []const *anyopaque,
+        commands: []const RasterDrawCommand,
+        options: DispatchRasterDrawOptions,
+    ) void {
+        return gpu.launchRasterDraw(
+            command_buffer,
+            pipeline,
+            root_data,
+            commands,
+            options,
+        );
+    }
+
+    ///Launch a set of raster draw commands
+    pub fn launchRasterDrawIndexed(
+        command_buffer: *CommandBuffer,
+        pipeline: *Pipeline,
+        root_data: []const *anyopaque,
+        commands: []const RasterDrawIndexedCommand,
+        indices: []u8,
+    ) void {
+        return gpu.launchRasterDrawIndexed(
+            command_buffer,
+            pipeline,
+            root_data,
+            commands,
+            indices,
+        );
+    }
+
+    ///Launch a set of raster mesh draw commands
+    pub fn launchRasterDrawMeshes(
+        command_buffer: *CommandBuffer,
+        pipeline: *Pipeline,
+        root_data: []const *anyopaque,
+        commands: []const RasterDrawMeshesCommand,
+    ) void {
+        return backendCall(@src(), .{
+            command_buffer,
+            pipeline,
+            root_data,
+            commands,
+        });
+    }
+
+    ///Build a set of ray tracing acceleration structures
+    pub fn launchBuildAccelerationStructures(
+        command_buffer: *CommandBuffer,
+        commands: []const AccelerationStructureBuildDescription,
+    ) void {
+        return backendCall(@src(), .{
+            command_buffer,
+            commands,
+        });
+    }
+
+    ///Launch a set of device generated command sequences
+    pub fn launchCommandSequences(
+        command_buffer: *CommandBuffer,
+        pipeline_set: []*Pipeline,
+        sequences: []const u8,
+    ) void {
+        return backendCall(@src(), .{
+            command_buffer,
+            pipeline_set,
+            sequences,
+        });
+    }
+};
+
+///Represents a timeline semaphore synchronisation primitive
+pub const Semaphore = opaque {
+    pub fn wait(semaphore: *Semaphore, wait_value: u64) void {
+        semaphoreWait(semaphore, wait_value);
+    }
+};
+
+///Represents a synchronisation primitive for presenting surface images
+pub const Swapchain = opaque {
+    pub fn obtainTexture(swapchain: *Swapchain) []TextureByte {
+        return swapchainObtainTexture(swapchain);
+    }
+
+    pub fn present(swapchain: *Swapchain, semaphore: SemaphoreSignalDescription) void {
+        swapchainPresent(swapchain, semaphore);
+    }
+};
 
 pub const SemaphoreSignalDescription = struct {
     wait_semaphore: ?*Semaphore = null,
@@ -560,6 +774,7 @@ pub const SemaphoreSignalDescription = struct {
     signal_value: ?u64 = null,
 };
 
+///An opaque, fixed sized texture descriptor for providing sampling and kernel access to textures
 pub const TextureDescriptor = packed struct(u256) {
     value: u256,
 };
@@ -655,15 +870,15 @@ pub const PipelineOptimization = enum {
 
 pub const RasterPipelineDescription = struct {
     topology: Topology = .triangle_list,
-    cull: Cull = .none,
-    alpha_to_coverage: bool = false,
-    support_dual_source_blending: bool = false,
     sample_count: u32 = 1,
     depth_format: ImageFormat = .none,
     stencil_format: ImageFormat = .none,
     color_targets: []const ColorTarget = &.{},
-    blend_state: ?*BlendState = null,
     optimize_mode: PipelineOptimization = .fast,
+
+    ///An entry point name which is used to fetch the correct function within the ir
+    vertex_entry_point: [:0]const u8 = "main",
+    fragment_entry_point: [:0]const u8 = "main",
 
     pub const Topology = enum(u2) {
         triangle_list,
@@ -672,22 +887,31 @@ pub const RasterPipelineDescription = struct {
         line_list,
     };
 
-    pub const Cull = enum {
-        none,
-        clockwise,
-        anticlockwise,
-        all,
+    pub const Cull = packed struct {
+        front: bool = false,
+        back: bool = false,
     };
 };
 
 pub const ImageFormat = enum(u3) {
     none,
     rgba8_unorm32,
+    r8_unorm8,
     bgra8_srgb32,
     r32_u32,
     r16_u16,
     depth_f32,
     depth_stencil_u24_u8,
+
+    ///For a packed struct or enum type, returns the image format appropriate to store it
+    pub fn backingFormat(comptime T: type) ImageFormat {
+        //TODO: support variable with integers
+        return switch (std.meta.BackingInt(T)) {
+            u32, i32 => .r32_u32,
+            u16, i16 => .r16_u16,
+            else => @compileError("Type unsupported!"),
+        };
+    }
 };
 
 pub const ExecutionStage = enum {
@@ -873,6 +1097,8 @@ pub const PipelineMachineCodeEntry = extern struct {
 pub const DeviceSelectionOptions = packed struct {
     ///Prefer a discrete gpu device
     prefer_discrete: bool = true,
+    ///Prefer an integrated gpu device
+    prefer_integrated: bool = false,
 };
 
 pub const DeviceSelectionError = error{
@@ -889,21 +1115,27 @@ pub const mem = struct {
         allocation_handle: u12,
     };
 
-    pub const MemoryAccessDomain = enum {
+    pub const AccessDomain = enum {
         gpu,
         cpu,
+    };
+
+    pub const MemoryFormat = enum {
+        unformatted,
+        texture,
+        acceleration_structure,
     };
 
     ///The maximum number of active (not-freed) root allocations (calls to memAlloc or page_allocator.alloc)
     pub const max_root_allocations = std.math.maxInt(u12);
 
     ///Converts a gpu pointer to a cpu/gpu accessible pointer
-    pub inline fn toAccessiblePointer(pointer: anytype, access: MemoryAccessDomain) @TypeOf(pointer) {
+    pub fn toAccessiblePointer(pointer: anytype, access: AccessDomain) @TypeOf(pointer) {
         return @ptrCast(@alignCast(@constCast(memToAccessiblePointer(@ptrCast(@constCast(pointer)), access))));
     }
 
     ///Converts a gpu slice to a cpu/gpu accessible slice
-    pub inline fn toAccessibleSlice(slice: anytype, access: MemoryAccessDomain) @TypeOf(slice) {
+    pub inline fn toAccessibleSlice(slice: anytype, access: AccessDomain) @TypeOf(slice) {
         return toAccessiblePointer(slice.ptr, access)[0..slice.len];
     }
 
@@ -1046,7 +1278,7 @@ pub const mem = struct {
                 texture_mem_description.memory_type,
             );
 
-            gpu.registerTextureMemory(
+            gpu.formatTextureMemory(
                 memory,
                 texture_description,
             );
@@ -1058,12 +1290,20 @@ pub const mem = struct {
             allocator: Allocator,
             sampler_heap: []const TextureDescriptor,
             texture: []const TextureByte,
-        ) !u32 {
-            const descriptor = try allocator.create(TextureDescriptor, gpu.mem.getMemoryType(sampler_heap));
+        ) !gpu.kernel.SamplerHeap.Index {
+            const descriptor = try allocator.create(
+                TextureDescriptor,
+                gpu.mem.getMemoryType(sampler_heap),
+            );
 
-            descriptor.* = createTextureDescriptor(texture);
+            gpu.mem.toAccessiblePointer(
+                descriptor,
+                .cpu,
+            ).* = createTextureDescriptor(texture);
 
-            return @intCast((@intFromPtr(descriptor) - @intFromPtr(sampler_heap.ptr)) / @sizeOf(gpu.TextureDescriptor));
+            return @fromBackingInt(
+                @intCast((@intFromPtr(descriptor) - @intFromPtr(sampler_heap.ptr)) / @sizeOf(gpu.TextureDescriptor)),
+            );
         }
 
         ///Defer a free memory command
@@ -1083,7 +1323,7 @@ pub const mem = struct {
         ///Defer a free texture command
         pub fn freeTexture(
             allocator: Allocator,
-            memory: []u8,
+            memory: []TextureByte,
         ) void {
             _ = memory; // autofix
             _ = allocator; // autofix
@@ -1166,6 +1406,9 @@ pub const heap = struct {
         },
     };
 
+    ///Interface for streaming memory onto the gpu from file systems
+    pub const MemoryStreamer = struct {};
+
     pub const PageAllocator = struct {
         pub fn alloc(
             _: *anyopaque,
@@ -1174,7 +1417,7 @@ pub const heap = struct {
             memory_type: mem.Allocator.MemoryType,
             _: usize,
         ) ?[*]u8 {
-            return (memAlloc(len, alignment, memory_type) catch return null).ptr;
+            return (memAlloc(len, alignment, memory_type) catch return null);
         }
 
         pub fn resize(
@@ -1212,7 +1455,7 @@ pub const heap = struct {
             _: mem.Allocator.MemoryType,
             _: usize,
         ) void {
-            return memFree(memory);
+            return memFree(memory.ptr);
         }
     };
 
@@ -1229,53 +1472,130 @@ pub const heap = struct {
 };
 
 pub const pipelines = struct {
-    ///Performs hot reloading functionality
-    pub fn Compiler(
-        options: struct {
-            enable_hot_reload: bool = @import("builtin").mode == .debug,
-            ///If true, ir modules will be loaded through @embedFile (only available through moduleFromFileComptime)
-            enable_embed_file: bool = @import("builtin").mode != .debug,
-        },
-    ) type {
-        return struct {
-            ///Directory from which shaders are loaded
-            directory: []const u8,
-            io: std.Io,
+    ///Interface for compiling pipelines, allowing for asynchronous compilation
+    pub const Compiler = struct {
+        ptr: *anyopaque,
+        modules: *[]ModuleEntry,
+        pipelines: *[]PipelineEntry,
+        vtable: *const VTable,
 
-            pub const Module = union(enum) {
-                ir: []const u8,
-                file_path: []const u8,
+        pub const PipelineEntry = struct {
+            pipeline: ?*Pipeline = null,
+            description: PipelineDescription = undefined,
+        };
+
+        pub const PipelineDescription = union(enum) {
+            raster_vertex: RasterVertex,
+            compute: Compute,
+
+            pub const RasterVertex = struct {
+                description: RasterPipelineDescription,
+                exported: gpu.kernel.ExportedRasterPipeline,
             };
 
-            pub fn moduleFromFile(
-                file_path: []const u8,
-            ) !Module {
-                _ = file_path; // autofix
-            }
-
-            pub fn moduleFromFileComptime(
-                comptime file_path: []const u8,
-            ) !Module {
-                if (options.enable_embed_file) {
-                    return .{ .ir = @embedFile(file_path) };
-                }
-
-                return moduleFromFile(file_path);
-            }
-
-            pub fn createRasterVertexPipeline(
-                compiler: *Compiler,
-                vertex_module: Module,
-                fragment_module: Module,
-                out_pipeline: **Pipeline,
-            ) void {
-                _ = compiler; // autofix
-                _ = out_pipeline; // autofix
-                _ = vertex_module; // autofix
-                _ = fragment_module; // autofix
-            }
+            pub const Compute = struct {
+                exported: gpu.kernel.ExportedComputePipeline,
+            };
         };
-    }
+
+        ///Adds a module from which entry points can be fetched
+        pub fn addModule(
+            compiler: Compiler,
+            module_ir: [:0]const u8,
+        ) !ModuleIndex {
+            _ = compiler; // autofix
+            _ = module_ir; // autofix
+        }
+
+        ///Adds a module by file path
+        pub fn addModuleFile(
+            compiler: Compiler,
+            module_path: [:0]const u8,
+        ) !ModuleIndex {
+            return compiler.vtable.addModuleFile(compiler.ptr, module_path);
+        }
+
+        pub fn getModuleFromPath(
+            compiler: Compiler,
+            path: []const u8,
+        ) ?ModuleIndex {
+            for (compiler.modules.*, 0..) |entry, i| {
+                if (entry.file_path.len == 0) continue;
+
+                if (std.mem.eql(u8, entry.file_path, path)) {
+                    return @fromBackingInt(@intCast(i));
+                }
+            }
+
+            return null;
+        }
+
+        pub fn getPipeline(
+            compiler: Compiler,
+            index: PipelineIndex,
+        ) ?*gpu.Pipeline {
+            return compiler.pipelines.*[@backingInt(index)].pipeline;
+        }
+
+        pub fn compileRasterVertexPipeline(
+            compiler: Compiler,
+            exported: gpu.kernel.ExportedRasterPipeline,
+            description: RasterPipelineDescription,
+        ) !PipelineIndex {
+            return compiler.vtable.compileRasterVertexPipeline(
+                compiler.ptr,
+                exported,
+                description,
+            );
+        }
+
+        pub fn compileComputePipeline(
+            compiler: Compiler,
+            exported: gpu.kernel.ExportedComputePipeline,
+        ) !PipelineIndex {
+            return compiler.vtable.compileComputePipeline(compiler.ptr, exported);
+        }
+
+        pub fn freePipeline(
+            compiler: Compiler,
+            pipeline: PipelineIndex,
+        ) void {
+            return compiler.vtable.freePipeline(compiler.ptr, pipeline);
+        }
+
+        pub const VTable = struct {
+            addModuleFile: *const fn (
+                compiler: *anyopaque,
+                module_path: [:0]const u8,
+            ) anyerror!ModuleIndex,
+            compileRasterVertexPipeline: *const fn (
+                ptr: *anyopaque,
+                exported: gpu.kernel.ExportedRasterPipeline,
+                description: gpu.RasterPipelineDescription,
+            ) anyerror!PipelineIndex,
+            compileComputePipeline: *const fn (
+                ptr: *anyopaque,
+                exported: kernel.ExportedComputePipeline,
+            ) anyerror!PipelineIndex,
+            freePipeline: *const fn (
+                ptr: *anyopaque,
+                pipeline: PipelineIndex,
+            ) void,
+        };
+
+        pub const PipelineIndex = enum(u32) { _ };
+
+        pub const ModuleIndex = enum(u32) { _ };
+        pub const ModuleEntry = struct {
+            contents: []const u8,
+            file_path: []const u8,
+        };
+    };
+
+    pub const WatchCompiler = @import("gpu/pipelines/WatchCompiler.zig");
+
+    ///Pipeline compiler that uses the std.Io to do async compilation
+    pub const IoCompiler = @import("gpu/pipelines/IoCompiler.zig");
 };
 
 ///The texturing module (contains mipmapping and compression code)
@@ -1317,6 +1637,8 @@ pub const debug = struct {
 
     pub const TimestampQuery = opaque {};
 };
+
+pub const kernel = @import("gpu/kernel.zig");
 
 inline fn backendCall(
     comptime src: std.lang.SourceLocation,
@@ -1377,8 +1699,6 @@ pub const Context = switch (@import("builtin").os.tag) {
 test {
     _ = std.testing.refAllDecls(@This());
 }
-
-pub const use_vulkan = false;
 
 const gpu = @This();
 const std = @import("std");

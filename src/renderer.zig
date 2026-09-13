@@ -89,9 +89,7 @@ pub const Context = struct {
     asym_materials_buffer: []asym.geo.Material,
     asym_parameters_buffer: []f32,
     asym_grapheme_buffers: []shtmap.Sheetmap,
-    asym_grapheme_pigeon_hole_buffers: []@import("lib").shaders.common.asym.GraphemePidgeonHole,
     asym_grapheme_instances_buffer: [][4]f32,
-    asym_glyph_metrics_buffer: []@import("lib").shaders.common.asym.GlyphMetric,
     asym_transform_offsets_by_type_buffer: []u32,
     asym_parameter_offsets_by_type_buffer: []u32,
 
@@ -198,7 +196,6 @@ pub const Context = struct {
         context.asym_transforms_buffer = try context.gpu_gpa.alloc(asym.geo.AffineTransform3D, 1024, .gpu);
         context.asym_materials_buffer = try context.gpu_gpa.alloc(asym.geo.Material, 1024, .gpu);
         context.asym_grapheme_buffers = try context.gpu_gpa.alloc(shtmap.Sheetmap, 1024, .gpu);
-        context.asym_grapheme_pigeon_hole_buffers = try context.gpu_gpa.alloc(@import("lib").shaders.common.asym.GraphemePidgeonHole, 1024, .gpu);
         context.asym_grapheme_instances_buffer = try context.gpu_gpa.alloc([4]f32, 1024, .gpu);
         context.asym_transform_offsets_by_type_buffer = try context.gpu_gpa.alloc(
             u32,
@@ -313,10 +310,10 @@ pub const Context = struct {
 
         @memset(sdfs, null);
 
-        const glyph_metrics = try gpa.alloc(@import("lib").shaders.common.asym.GlyphMetric, typeface.codepoints_to_glyph.count());
+        const glyph_metrics = try gpa.alloc(u32, typeface.codepoints_to_glyph.count());
         defer gpa.free(glyph_metrics);
 
-        @memset(glyph_metrics, .{});
+        //@memset(glyph_metrics, .{});
 
         var max_width: u32 = 0;
         var max_height: u32 = 0;
@@ -360,12 +357,13 @@ pub const Context = struct {
             if (data.pixels.len == 0) {
                 continue;
             }
-
-            metrics.width = @floatFromInt(data.metrics.width);
-            metrics.height = @floatFromInt(data.metrics.height);
-            metrics.advance = @floatCast(data.metrics.advance);
-            metrics.bearing_x = @floatCast(data.metrics.bearing_x);
-            metrics.bearing_y = @floatCast(data.metrics.bearing_y);
+            if (false) {
+                metrics.width = @floatFromInt(data.metrics.width);
+                metrics.height = @floatFromInt(data.metrics.height);
+                metrics.advance = @floatCast(data.metrics.advance);
+                metrics.bearing_x = @floatCast(data.metrics.bearing_x);
+                metrics.bearing_y = @floatCast(data.metrics.bearing_y);
+            }
 
             if (false) {
                 gpu.mem.copyToTexture(
@@ -390,19 +388,6 @@ pub const Context = struct {
             }
         }
 
-        context.asym_glyph_metrics_buffer = try context.gpu_gpa.alloc(
-            @import("lib").shaders.common.asym.GlyphMetric,
-            glyph_metrics.len,
-            .gpu,
-        );
-
-        gpu.mem.copy(
-            commands,
-            @import("lib").shaders.common.asym.GlyphMetric,
-            context.asym_glyph_metrics_buffer,
-            try context.gpu_staging_arena.allocDupe(@import("lib").shaders.common.asym.GlyphMetric, glyph_metrics),
-        );
-
         if (false) {
             gpu.queueSubmit(
                 .{},
@@ -414,252 +399,6 @@ pub const Context = struct {
         return texture_memory;
     }
 
-    pub fn renderGizmos(
-        context: *Context,
-        gpa: std.mem.Allocator,
-        geo_context: *const asym.geo.Context,
-        scene: *const asym.geo.Scene,
-        views: []const asym.geo.Scene.View,
-        typeface_textures: []?[]gpu.TextureByte,
-    ) !void {
-        const command_buffer = context.command_buffer;
-
-        _ = typeface_textures; // autofix
-        gpu.setStateViewport(
-            command_buffer,
-            .{ 0, 0, @floatFromInt(context.window_extents[0]), @floatFromInt(context.window_extents[1]) },
-        );
-        gpu.setStateScissor(
-            command_buffer,
-            .{ 0, 0, @intCast(context.window_extents[0]), @intCast(context.window_extents[1]) },
-        );
-
-        const staging_arena = context.gpu_staging_fbas[1].allocator();
-
-        var transforms_offset: usize = 0;
-        var materials_offset: usize = 0;
-
-        for (scene.transforms_by_type.values, scene.materials_by_type.values, 0..) |transforms, materials, type_index| {
-            if (transforms.items.len == 0) {
-                continue;
-            }
-
-            gpu.mem.copy(
-                command_buffer,
-                u32,
-                context.asym_transform_offsets_by_type_buffer[type_index..],
-                try staging_arena.allocDupe(u32, &.{@intCast(transforms_offset)}),
-            );
-
-            gpu.mem.copy(
-                command_buffer,
-                asym.geo.AffineTransform3D,
-                context.asym_transforms_buffer[transforms_offset..],
-                try staging_arena.allocDupe(asym.geo.AffineTransform3D, transforms.items),
-            );
-
-            gpu.mem.copy(
-                command_buffer,
-                asym.geo.Material,
-                context.asym_materials_buffer[materials_offset..],
-                try staging_arena.allocDupe(asym.geo.Material, materials.items),
-            );
-
-            transforms_offset += transforms.items.len;
-            materials_offset += materials.items.len;
-        }
-
-        for (views) |*view| {
-            var iter = view.iterate();
-
-            const Mat4x4 = [4]@Vector(4, f32);
-
-            const view_projection = zmath.mul(@as(Mat4x4, @bitCast(view.view)), @as(Mat4x4, @bitCast(view.projection)));
-
-            gpu.mem.copy(
-                command_buffer,
-                [2][4][4]f32,
-                context.asym_uniforms_buffer,
-                try staging_arena.allocDupe([2][4][4]f32, &.{
-                    .{
-                        @bitCast(view_projection),
-                        @splat(@splat(@floatCast(glfw.getTime()))),
-                    },
-                }),
-            );
-
-            var text_buffer_entry_begin: usize = 0;
-
-            var draw_buffer_offset: usize = 0;
-            var parameter_buffer_offset: usize = 0;
-
-            while (iter.next()) |tuple| {
-                const state, const group = tuple;
-                _ = state; // autofix
-
-                defer text_buffer_entry_begin += group.draws_by_type.get(.text).len;
-
-                var quadrat_buffer_begin: usize = 0;
-
-                for (group.draws_by_type.get(.text), 0..) |draws, draw_command_index| {
-                    for (0..draws.instance_count) |instance_id| {
-                        const draw_index = draw_command_index + instance_id;
-                        const text_buffer = scene.text_buffer_entires.items[text_buffer_entry_begin + draw_index];
-
-                        var line_iter: std.mem.SplitIterator(u8, .sequence) = .{
-                            .delimiter = "\n",
-                            .buffer = text_buffer,
-                            .index = 0,
-                        };
-
-                        const typeface_data = &geo_context.type_faces.items[0];
-
-                        var grapheme_buffer_height: u32 = 0;
-                        var grapheme_buffer_width: u32 = 0;
-
-                        while (line_iter.next()) |line| {
-                            grapheme_buffer_width = @max(grapheme_buffer_width, @as(u32, @intCast(line.len)));
-                            grapheme_buffer_height += 1;
-                        }
-
-                        line_iter.reset();
-
-                        const GraphemeBin = @import("lib").shaders.common.asym.GraphemePidgeonHole;
-
-                        const grapheme_buffer_bins = gpa.alloc(GraphemeBin, grapheme_buffer_width * grapheme_buffer_height) catch @panic("oom");
-                        defer gpa.free(grapheme_buffer_bins);
-                        var line_index: u32 = 0;
-
-                        while (line_iter.next()) |line| {
-                            defer line_index += 1;
-
-                            for (line, 0..) |char, column_index| {
-                                const bin = &grapheme_buffer_bins[column_index + line_index * grapheme_buffer_width];
-
-                                const glyph_index: u16 = @intCast(typeface_data.codepoints_to_glyph.getIndex(char).?);
-                                bin.grapheme_slice = @bitCast(@as(u32, glyph_index));
-                                if (char == ' ') {
-                                    bin.grapheme_slice = @bitCast(@as(u32, std.math.maxInt(u32)));
-                                }
-                            }
-                        }
-
-                        gpu.mem.copy(
-                            command_buffer,
-                            shtmap.Sheetmap,
-                            context.asym_grapheme_buffers[draw_index..],
-                            try staging_arena.allocDupe(shtmap.Sheetmap, &.{
-                                shtmap.Sheetmap{
-                                    .quadrat_buffer_begin = @intCast(quadrat_buffer_begin),
-                                    .width = grapheme_buffer_width,
-                                    .height = grapheme_buffer_height,
-                                },
-                            }),
-                        );
-
-                        gpu.mem.copy(
-                            command_buffer,
-                            GraphemeBin,
-                            context.asym_grapheme_pigeon_hole_buffers[quadrat_buffer_begin..],
-                            try staging_arena.allocDupe(GraphemeBin, grapheme_buffer_bins),
-                        );
-
-                        quadrat_buffer_begin += grapheme_buffer_bins.len * @sizeOf(GraphemeBin);
-                    }
-                }
-
-                for (group.draws_by_type.values, group.parameters_by_type.values, 0..) |
-                    draws,
-                    params,
-                    type_index,
-                | {
-                    if (draws.len == 0) {
-                        continue;
-                    }
-
-                    gpu.mem.copySingle(
-                        command_buffer,
-                        u32,
-                        &context.asym_parameter_offsets_by_type_buffer[type_index],
-                        &(try staging_arena.allocDupe(u32, &.{@intCast(parameter_buffer_offset)}))[0],
-                    );
-
-                    gpu.mem.copy(
-                        command_buffer,
-                        f32,
-                        context.asym_parameters_buffer[parameter_buffer_offset..],
-                        try staging_arena.allocDupe(f32, params),
-                    );
-
-                    gpu.mem.copy(
-                        command_buffer,
-                        asym.geo.DrawCommand,
-                        context.gizmo_draw_buffer[draw_buffer_offset..],
-                        try staging_arena.allocDupe(asym.geo.DrawCommand, draws),
-                    );
-
-                    draw_buffer_offset += draws.len;
-                    parameter_buffer_offset += params.len;
-                }
-            }
-        }
-
-        const framebuffer_size = context.window_extents;
-        _ = framebuffer_size; // autofix
-
-        gpu.rasterPassBegin(context.command_buffer, .{
-            .color_attachments = &.{.{
-                .texture = context.swapchain_texture,
-                .clear = .{ 0, 0, 1, 0 },
-            }},
-        });
-        defer gpu.rasterPassEnd(context.command_buffer);
-
-        for (views) |*view| {
-            var iter = view.iterate();
-
-            gpu.setStateScissor(command_buffer, .{
-                @intFromFloat(view.scissor[0]),
-                @intFromFloat(view.scissor[1]),
-                @intFromFloat(view.scissor[2]),
-                @intFromFloat(view.scissor[3]),
-            });
-
-            var draw_buffer_offset: usize = 0;
-
-            while (iter.next()) |tuple| {
-                const state, const group = tuple;
-                _ = state; // autofix
-                for (group.draws_by_type.values, group.parameters_by_type.values, 0..) |
-                    draws,
-                    params,
-                    type_index,
-                | {
-                    _ = params; // autofix
-                    _ = type_index; // autofix
-                    if (draws.len == 0) {
-                        continue;
-                    }
-
-                    draw_buffer_offset += draws.len;
-                }
-
-                gpu.setStateBlend(command_buffer, .{});
-                gpu.setStateDepthStencil(command_buffer, .{});
-
-                gpu.launchRasterDraw(
-                    command_buffer,
-                    context.shaders.gizmo_shader,
-                    &.{},
-                    @as([*]gpu.RasterDrawCommand, @ptrCast(context.gizmo_draw_buffer[0..].ptr))[0..draw_buffer_offset],
-                    .{
-                        .command_stride = @sizeOf(asym.geo.DrawCommand),
-                    },
-                );
-            }
-        }
-    }
-
     pub fn loadRasterVertexPipeline(
         context: *Context,
         arena: std.mem.Allocator,
@@ -669,18 +408,21 @@ pub const Context = struct {
     ) !void {
         _ = context; // autofix
         _ = arena; // autofix
-        pipeline.* = gpu.createRasterVertexPipeline(
-            @embedFile(vertex_ir_path),
-            @embedFile(fragment_ir_path),
-            .{
-                .color_targets = &.{.{
-                    .format = .bgra8_srgb32,
-                    .write_mask = 0xff,
-                }},
-                .depth_format = .depth_stencil_u24_u8,
-                .stencil_format = .depth_stencil_u24_u8,
-            },
-        );
+
+        if (false) {
+            pipeline.* = gpu.createRasterVertexPipeline(
+                @embedFile(vertex_ir_path),
+                @embedFile(fragment_ir_path),
+                .{
+                    .color_targets = &.{.{
+                        .format = .bgra8_srgb32,
+                        .write_mask = 0xff,
+                    }},
+                    .depth_format = .depth_stencil_u24_u8,
+                    .stencil_format = .depth_stencil_u24_u8,
+                },
+            );
+        }
     }
 
     pub fn loadComputePipeline(
@@ -689,11 +431,13 @@ pub const Context = struct {
         comptime compute_path: []const u8,
         pipeline: **gpu.Pipeline,
     ) !void {
-        _ = context; // autofix
-        _ = arena; // autofix
-        pipeline.* = gpu.createComputePipeline(
-            @embedFile(compute_path),
-        );
+        if (false) {
+            _ = context; // autofix
+            _ = arena; // autofix
+            pipeline.* = gpu.createComputePipeline(
+                @embedFile(compute_path),
+            );
+        }
     }
 };
 
@@ -740,9 +484,6 @@ pub const Simulation = struct {
 
     voxel_heap_bit_buffer: []u32 = undefined,
     voxel_positions_buffer: []u32 = undefined,
-
-    simulation_state: *@import("lib").shaders.common.SimulationState = undefined,
-    simulation_rendering_state: *@import("lib").shaders.common.SimulationRenderingState = undefined,
 
     scene_thumbnails: std.StringHashMapUnmanaged(?[]gpu.TextureByte) = .empty,
     scene_2d_texture: ?[]gpu.TextureByte = null,
@@ -872,9 +613,6 @@ pub const Simulation = struct {
         gpu_sim.simulation_bounds_buffer = try context.gpu_gpa.alloc([4]u32, 2, .gpu);
         gpu_sim.ray_stats_buffer = try context.gpu_gpa.create(RayStats, .gpu);
         gpu_sim.vertex_buffer = try context.gpu_gpa.alloc(u8, 1024, .gpu);
-
-        gpu_sim.simulation_state = try context.gpu_gpa.create(@import("lib").shaders.common.SimulationState, .gpu);
-        gpu_sim.simulation_rendering_state = try context.gpu_gpa.create(@import("lib").shaders.common.SimulationRenderingState, .gpu);
 
         context.gpu_staging_fbas[0].end_index = 0;
         context.gpu_staging_fbas[1].end_index = 0;
@@ -1068,7 +806,6 @@ pub const Simulation = struct {
                 gpu_sim.shaders.thermal_shader,
                 &.{
                     undefined,
-                    gpu_sim.simulation_state,
                 },
                 &.{
                     .{
@@ -1120,8 +857,6 @@ pub const Simulation = struct {
             &.{
                 gpu_sim.vertex_buffer.ptr,
                 undefined,
-                gpu_sim.simulation_state,
-                gpu_sim.simulation_rendering_state,
             },
             &.{
                 .{
@@ -1245,8 +980,6 @@ pub const Simulation = struct {
             sim.shaders.depth_prepass_shader,
             &.{
                 sim.vertex_buffer.ptr,
-                sim.simulation_state,
-                sim.simulation_rendering_state,
             },
             sim.simulation_draws_buffer,
             .{},
@@ -1461,5 +1194,5 @@ const Texture = @import("gpu.zig").Texture;
 const imgui = @import("imgui.zig");
 const glfw = @import("zglfw");
 const stb_image = @import("stb_image.zig");
-const zmath = @import("lib").zmath;
+const zmath = @import("zmath");
 const gpu = @import("gpu.zig");

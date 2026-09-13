@@ -213,8 +213,13 @@ pub fn selectDevice(
             .swapchain_maintenance_1 = .true,
         };
 
+        var mutable_descriptor_type_features: vk.PhysicalDeviceMutableDescriptorTypeFeaturesEXT = .{
+            .p_next = &swapchain_maint_features,
+            .mutable_descriptor_type = .true,
+        };
+
         var dynamic_state_features_3: vk.PhysicalDeviceExtendedDynamicState3FeaturesEXT = .{};
-        dynamic_state_features_3.p_next = &swapchain_maint_features;
+        dynamic_state_features_3.p_next = &mutable_descriptor_type_features;
         dynamic_state_features_3.extended_dynamic_state_3_depth_clamp_enable = .true;
         dynamic_state_features_3.extended_dynamic_state_3_polygon_mode = .true;
         dynamic_state_features_3.extended_dynamic_state_3_rasterization_samples = .true;
@@ -245,6 +250,7 @@ pub fn selectDevice(
         var features_12: vk.PhysicalDeviceVulkan12Features = .{
             .p_next = &features_11,
         };
+        features_12.runtime_descriptor_array = .true;
         features_12.buffer_device_address = .true;
         features_12.descriptor_indexing = .true;
         features_12.descriptor_binding_partially_bound = .true;
@@ -324,6 +330,19 @@ pub fn selectDevice(
         context.descriptor_set_layouts = try arena.alloc(vk.DescriptorSetLayout, 3);
 
         const descriptor_set_flags: vk.DescriptorSetLayoutBindingFlagsCreateInfo = .{
+            .p_next = &vk.MutableDescriptorTypeCreateInfoEXT{
+                .mutable_descriptor_type_list_count = 1,
+                .p_mutable_descriptor_type_lists = &[_]vk.MutableDescriptorTypeListEXT{
+                    .{
+                        .descriptor_type_count = 3,
+                        .p_descriptor_types = &[_]vk.DescriptorType{
+                            vk.DescriptorType.sampler,
+                            vk.DescriptorType.sampled_image,
+                            vk.DescriptorType.storage_image,
+                        },
+                    },
+                },
+            },
             .binding_count = 1,
             .p_binding_flags = &[_]vk.DescriptorBindingFlags{.{
                 .update_after_bind = true,
@@ -331,7 +350,7 @@ pub fn selectDevice(
             }},
         };
 
-        const max_textures = 1024 * 8;
+        const max_textures = 1024 * 2;
 
         context.descriptor_set_layouts[0] = try context.device.createDescriptorSetLayout(&.{
             .p_next = &descriptor_set_flags,
@@ -339,39 +358,7 @@ pub fn selectDevice(
             .binding_count = 1,
             .p_bindings = &[_]vk.DescriptorSetLayoutBinding{.{
                 .binding = 0,
-                .descriptor_type = .sampled_image,
-                .descriptor_count = max_textures,
-                .stage_flags = .{
-                    .vertex = true,
-                    .fragment = true,
-                    .compute = true,
-                },
-            }},
-        }, null);
-
-        context.descriptor_set_layouts[1] = try context.device.createDescriptorSetLayout(&.{
-            .p_next = &descriptor_set_flags,
-            .flags = .{ .update_after_bind_pool = true },
-            .binding_count = 1,
-            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{.{
-                .binding = 0,
-                .descriptor_type = .storage_image,
-                .descriptor_count = max_textures,
-                .stage_flags = .{
-                    .vertex = true,
-                    .fragment = true,
-                    .compute = true,
-                },
-            }},
-        }, null);
-
-        context.descriptor_set_layouts[2] = try context.device.createDescriptorSetLayout(&.{
-            .p_next = &descriptor_set_flags,
-            .flags = .{ .update_after_bind_pool = true },
-            .binding_count = 1,
-            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{.{
-                .binding = 0,
-                .descriptor_type = .sampler,
+                .descriptor_type = .mutable_ext,
                 .descriptor_count = max_textures,
                 .stage_flags = .{
                     .vertex = true,
@@ -391,7 +378,7 @@ pub fn selectDevice(
                 },
             },
             .p_set_layouts = context.descriptor_set_layouts.ptr,
-            .set_layout_count = @intCast(context.descriptor_set_layouts.len),
+            .set_layout_count = 1,
         }, null);
         context.compute_pipeline_layout = try context.device.createPipelineLayout(&.{
             .push_constant_range_count = 1,
@@ -403,7 +390,7 @@ pub fn selectDevice(
                 },
             },
             .p_set_layouts = context.descriptor_set_layouts.ptr,
-            .set_layout_count = @intCast(context.descriptor_set_layouts.len),
+            .set_layout_count = 1,
         }, null);
     }
 }
@@ -418,7 +405,7 @@ pub fn memAlloc(
     size: usize,
     alignment: std.mem.Alignment,
     memory_type: mem.Allocator.MemoryType,
-) std.mem.Allocator.Error![]u8 {
+) std.mem.Allocator.Error![*]u8 {
     if (size == 0) return &.{};
 
     var vma_usage: u32 = 0;
@@ -436,7 +423,7 @@ pub fn memAlloc(
                 .host_visible = true,
             };
         },
-        .cpu => return std.heap.page_allocator.rawAlloc(size, alignment, @returnAddress()).?[0..size],
+        .cpu => return std.heap.page_allocator.rawAlloc(size, alignment, @returnAddress()).?,
         .readback => {
             vma_usage = vma.VMA_MEMORY_USAGE_GPU_TO_CPU;
             properties = .{
@@ -472,6 +459,8 @@ pub fn memAlloc(
         .usage = vma_usage,
         .requiredFlags = @bitCast(properties),
     };
+    allocation_create_info.minAlignment = alignment.toByteUnits();
+    allocation_create_info.flags |= vma.VMA_ALLOCATION_CREATE_CAN_ALIAS_BIT;
 
     var vma_alloc: vma.VmaAllocation = undefined;
     var vma_alloc_info: vma.VmaAllocationInfo = undefined;
@@ -511,37 +500,37 @@ pub fn memAlloc(
 
     const ptr: [*]u8 = @ptrFromInt(@as(u64, @bitCast(gpu_ptr)));
 
-    return ptr[0..size];
+    std.debug.assert(std.mem.isAligned(allocation.vma_alloc_info.offset + getMemoryAllocationOffset(ptr), alignment.toByteUnits()));
+
+    return ptr;
 }
 
-pub fn memFree(memory: []u8) void {
+pub fn memFree(memory: [*]u8) void {
     const allocation = getMemoryAllocation(memory);
 
     context.device.destroyBuffer(allocation.buffer, null);
     vma.vmaFreeMemory(context.vma_allocator, allocation.vma_alloc);
 }
 
-pub fn memToAccessiblePointer(pointer: *anyopaque, access: mem.MemoryAccessDomain) *anyopaque {
+pub fn memToAccessiblePointer(pointer: *anyopaque, access: mem.AccessDomain) *anyopaque {
     var gpu_ptr: gpu.mem.PointerData = @bitCast(@intFromPtr(pointer));
     const gpu_ptr_data: gpu.mem.GpuPointerData = @bitCast(gpu_ptr);
 
     switch (access) {
         .cpu => {
+            if (gpu.mem.getMemoryType(pointer) == .cpu) {
+                return pointer;
+            }
+
             gpu_ptr.address = @intCast(context.allocations.items[gpu_ptr_data.allocation_handle].mapped_address + getMemoryAllocationOffset(pointer));
         },
-        .gpu => {},
+        .gpu => {
+            std.debug.assert(gpu.mem.getMemoryType(pointer) != .cpu);
+        },
     }
 
     gpu_ptr.tag = memGetMemoryTag(@ptrCast(pointer));
     return @ptrFromInt(@backingInt(gpu_ptr));
-}
-
-fn memGetMemoryTag(memory: *const anyopaque) u16 {
-    if (@import("builtin").os.tag == .macos) {
-        return getMemoryAllocationTag(memory);
-    }
-
-    return 0;
 }
 
 pub fn memCopy(
@@ -706,8 +695,8 @@ pub fn createRasterVertexPipeline(
             .subpass = 0,
             .base_pipeline_index = 0,
             .p_stages = &.{
-                .{ .stage = .{ .vertex = true }, .module = vertex_module, .p_name = "main" },
-                .{ .stage = .{ .fragment = true }, .module = fragment_module, .p_name = "main" },
+                .{ .stage = .{ .vertex = true }, .module = vertex_module, .p_name = description.vertex_entry_point.ptr },
+                .{ .stage = .{ .fragment = true }, .module = fragment_module, .p_name = description.fragment_entry_point.ptr },
             },
             .p_vertex_input_state = &.{},
             .p_input_assembly_state = &.{
@@ -844,7 +833,7 @@ pub fn textureMemoryDescription(
     };
 }
 
-pub fn registerTextureMemory(
+pub fn formatTextureMemory(
     memory: []gpu.TextureByte,
     description: TextureDescription,
 ) void {
@@ -853,12 +842,18 @@ pub fn registerTextureMemory(
     const allocation = getMemoryAllocationPtr(@ptrCast(memory));
     const allocation_offset = getMemoryAllocationOffset(memory);
 
+    const mem_desc = gpu.textureMemoryDescription(description);
+
+    const aligned_offset = std.mem.alignForward(u64, allocation.vma_alloc_info.offset + allocation_offset, mem_desc.alignment.toByteUnits());
+
+    const actual_offset = aligned_offset;
+
     var image: vk.Image = .null_handle;
 
     std.debug.assert(vma.vmaCreateAliasingImage2(
         context.vma_allocator,
         allocation.vma_alloc,
-        allocation_offset,
+        actual_offset - allocation.vma_alloc_info.offset,
         @ptrCast(&image_create_info),
         @ptrCast(&image),
     ) >= 0);
@@ -898,7 +893,7 @@ pub fn registerTextureMemory(
     }) catch @panic("oom");
 }
 
-pub fn unregisterTextureMemory(
+pub fn unformatTextureMemory(
     texture: []const gpu.TextureByte,
 ) void {
     const texture_data = getMemoryAllocationTexture(texture);
@@ -1041,16 +1036,14 @@ fn createDescriptorHeap(
     } else {
         data.descriptor_pool = try context.device.createDescriptorPool(
             &.{
-                .max_sets = 3,
+                .max_sets = 1,
                 .flags = .{
                     .free_descriptor_set = true,
                     .update_after_bind = true,
                 },
-                .pool_size_count = 3,
+                .pool_size_count = 1,
                 .p_pool_sizes = &[_]vk.DescriptorPoolSize{
-                    .{ .type = .sampled_image, .descriptor_count = @intCast(memory.len * 4) },
-                    .{ .type = .storage_image, .descriptor_count = @intCast(memory.len * 4) },
-                    .{ .type = .sampler, .descriptor_count = @intCast(memory.len * 4) },
+                    .{ .type = .mutable_ext, .descriptor_count = @intCast(memory.len) },
                 },
             },
             null,
@@ -1059,7 +1052,7 @@ fn createDescriptorHeap(
         context.device.allocateDescriptorSets(
             &.{
                 .descriptor_pool = data.descriptor_pool,
-                .descriptor_set_count = @intCast(context.descriptor_set_layouts.len),
+                .descriptor_set_count = 1,
                 .p_set_layouts = context.descriptor_set_layouts.ptr,
             },
             &data.descriptor_sets,
@@ -1180,11 +1173,10 @@ pub fn setStateCull(
     command_buffer: *CommandBuffer,
     cull: gpu.RasterPipelineDescription.Cull,
 ) void {
-    _ = cull; // autofix
     const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
     context.device.cmdSetCullMode(vk_command_buffer, .{
-        .front = false,
-        .back = false,
+        .front = cull.front,
+        .back = cull.back,
     });
 }
 
@@ -1415,7 +1407,7 @@ pub fn rasterPassBegin(
     context.device.cmdSetAlphaToCoverageEnableEXT(vk_command_buffer, .false);
     context.device.cmdSetLineWidth(vk_command_buffer, 1);
 
-    setStateCull(command_buffer, .none);
+    setStateCull(command_buffer, .{});
     setStatePolygonMode(command_buffer, .fill);
     setStateBlend(command_buffer, .{});
     setStateDepthStencil(command_buffer, .{});
@@ -1477,7 +1469,9 @@ pub fn launchCompute(
     var push_constants: CommonPushConstants = undefined;
 
     for (root_data, 0..) |root_ptr, i| {
-        push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
+        if (gpu.mem.getMemoryType(root_ptr) != .cpu) {
+            push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
+        }
     }
 
     if (context.vk_ext_descriptor_heap_enabled) {
@@ -1595,7 +1589,9 @@ pub fn launchRasterDrawIndexed(
     var push_constants: CommonPushConstants = undefined;
 
     for (root_data, 0..) |root_ptr, i| {
-        push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
+        if (gpu.mem.getMemoryType(root_ptr) != .cpu) {
+            push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
+        }
     }
 
     if (context.vk_ext_descriptor_heap_enabled) {
@@ -1717,7 +1713,7 @@ pub fn queueStartCommandRecording(
                 .graphics,
                 context.raster_pipeline_layout,
                 0,
-                &heap_data.descriptor_sets,
+                heap_data.descriptor_sets[0..1],
                 null,
             );
 
@@ -1726,7 +1722,7 @@ pub fn queueStartCommandRecording(
                 .compute,
                 context.compute_pipeline_layout,
                 0,
-                &heap_data.descriptor_sets,
+                heap_data.descriptor_sets[0..1],
                 null,
             );
         }
@@ -2036,6 +2032,8 @@ pub fn swapchainObtainTexture(
     //Use a special constant for the pointer, as we're essentially creating a dummy texture
     const ptr: [*]u8 = @ptrFromInt(0xaaaa00 + result.image_index);
 
+    std.debug.assert(@as(gpu.mem.GpuPointerData, @bitCast(@intFromPtr(ptr))).allocation_handle == 0);
+
     for (context.allocations.items[0].textures.items) |*texture| {
         if (texture.allocation.ptr == ptr) {
             texture.handle = swapchain_data.images[result.image_index];
@@ -2046,7 +2044,7 @@ pub fn swapchainObtainTexture(
             break;
         }
     } else {
-        const allocation = getMemoryAllocationPtr(ptr[0..1]);
+        const allocation = &context.allocations.items[0];
 
         allocation.textures.append(context.gpa, .{
             .allocation = ptr[0..1],
@@ -2286,7 +2284,6 @@ fn checkSuitable(
     allocator: std.mem.Allocator,
 ) !?DeviceCandidate {
     if (!try checkExtensionSupport(instance, pdev, allocator)) {
-        std.debug.print("Extensions not supported!\n", .{});
         return null;
     }
 
@@ -2363,8 +2360,6 @@ fn checkExtensionSupport(
 
     for (required_device_extensions) |ext| {
         for (propsv) |props| {
-            std.debug.print("pdev[{}]: ext = {s}\n", .{ pdev, std.mem.sliceTo(&props.extension_name, 0) });
-
             if (std.mem.eql(u8, std.mem.span(ext), std.mem.sliceTo(&props.extension_name, 0))) {
                 break;
             }
@@ -2437,6 +2432,7 @@ inline fn toVkImageFormat(
 ) vk.Format {
     return switch (format) {
         .rgba8_unorm32 => .r8g8b8a8_unorm,
+        .r8_unorm8 => .r8_unorm,
         .bgra8_srgb32 => .b8g8r8a8_srgb,
         .none => @panic("Unsupported"),
         .r32_u32 => .r32_uint,
@@ -2545,6 +2541,14 @@ inline fn getMemoryAllocationOffset(memory: anytype) u64 {
     return gpu_ptr.address - allocation.device_address;
 }
 
+inline fn memGetMemoryTag(memory: *const anyopaque) u16 {
+    if (@import("builtin").os.tag == .macos) {
+        return getMemoryAllocationTag(memory);
+    }
+
+    return 0;
+}
+
 inline fn getMemoryAllocationTag(memory: *const anyopaque) u16 {
     const gpu_ptr: gpu.mem.GpuPointerData = @bitCast(@intFromPtr(memory));
 
@@ -2601,6 +2605,7 @@ const enable_validation = @import("builtin").mode == .debug;
 const required_device_extensions = [_][*:0]const u8{
     vk.extensions.khr_swapchain.name,
     vk.extensions.ext_extended_dynamic_state_3.name,
+    vk.extensions.ext_mutable_descriptor_type.name,
     //vk.extensions.khr_unified_image_layouts.name,
 };
 

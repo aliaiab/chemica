@@ -7,6 +7,9 @@ extern "C"
 
     void imguiStyleSetup()
     {
+        if (true)
+            return;
+
         ImGuiStyle &style = ImGui::GetStyle();
         ImVec4 *colors = style.Colors;
 

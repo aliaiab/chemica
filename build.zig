@@ -46,17 +46,11 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/main.zig"),
     });
 
-    const root_module = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
-    });
-
-    root_module.addImport("zmath", zmath.module("root"));
-
     const zglfw_mod = zglfw.module("root");
 
+    main_module.addImport("zmath", zmath.module("root"));
     main_module.addImport("zglfw", zglfw_mod);
     main_module.addImport("zigimg", zigimg.module("zigimg"));
-    main_module.addImport("lib", root_module);
     main_module.addImport("msdf-zig", mist_dep.module("msdf-zig"));
     main_module.linkSystemLibrary("vulkan", .{ .weak = true });
 
@@ -160,70 +154,35 @@ pub fn build(b: *std.Build) !void {
 
     check_step.dependOn(&exe_check.step);
 
-    const shader_start_module = b.createModule(.{
-        .root_source_file = b.path("src/shaders/start.zig"),
-    });
+    const exe_kernel_object_path = compileModuleKernels(b, optimize, exe, main_module, "src/main.zig");
 
-    shader_start_module.addImport("lib", root_module);
-    exe.root_module.addImport("shader_start", shader_start_module);
-
-    const renderer_shader_module = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/thermal_compute.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/fill_region.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/grain_simulation.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/generate_chunk_draws.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/env_map_renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/env_map_renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/gizmo_renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/gizmo_renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/shaders/asym_renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/asym_renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/sdf_renderer.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .compute, "src/shaders/sdf_texture.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/shaders/depth_prepass.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .vertex, "src/renderer_imgui.zig");
-    _ = compileZigShader(b, shader_start_module, root_module, target, optimize, exe, .fragment, "src/renderer_imgui.zig");
-
-    exe.root_module.addImport("renderer_shader", renderer_shader_module);
+    exe_options.addOptionPath("exe_kernel_object", exe_kernel_object_path);
 
     exe.is_linking_libcpp = true;
 
     b.installArtifact(exe);
 }
 
-fn compileZigShader(
+///Compile the source as a zig kernel object and import import from root_module
+///Returns a path to the generated kernel object
+pub fn compileModuleKernels(
     b: *std.Build,
-    start_module: *std.Build.Module,
-    shader_lib_module: *std.Build.Module,
-    target: std.Build.ResolvedTarget,
     mode: std.builtin.OptimizeMode,
     exe_step: *std.Build.Step.Compile,
-    shader_type: enum {
-        vertex,
-        fragment,
-        compute,
-    },
+    root_module: *std.Build.Module,
     source: []const u8,
-) *std.Build.Module {
+) std.Build.LazyPath {
     const source_basename = std.fs.path.stem(source);
 
     const output_path = std.mem.concat(b.allocator, u8, &.{
         source_basename,
-        "_",
-        @tagName(shader_type),
         "_pre_opt",
         ".spv",
     }) catch @panic("");
     const actual_output_path = std.mem.concat(b.allocator, u8, &.{
         source_basename,
-        "_",
-        @tagName(shader_type),
         ".spv",
     }) catch @panic("");
-    const options = b.addOptions();
-
-    options.addOption(@TypeOf(shader_type), "shader_module_type", shader_type);
 
     const compile_zig_shader = b.addObject(.{
         .name = std.fs.path.stem(output_path),
@@ -239,24 +198,31 @@ fn compileZigShader(
                     .draw_parameters,
                     .sampled_image_array_non_uniform_indexing,
                     .storage_image_array_non_uniform_indexing,
+                    .runtime_descriptor_array,
                     .variable_pointers_storage_buffer,
                     .variable_pointers,
                     .untyped_pointers_khr,
                     .SPV_KHR_untyped_pointers,
                     .SPV_EXT_physical_storage_buffer,
                     .SPV_EXT_descriptor_indexing,
+                    .float64,
                 }),
                 .os_tag = .vulkan,
             }),
-            .imports = &.{
-                .{ .name = "lib", .module = shader_lib_module },
-                .{ .name = "shader_start", .module = start_module },
-                .{ .name = "shader_options", .module = options.createModule() },
-            },
         }),
         .use_llvm = false,
         .use_lld = false,
     });
+
+    for (root_module.import_table.keys(), root_module.import_table.values()) |key, value| {
+        _ = key; // autofix
+        const has_c = if (value.link_libc) |link_libc| link_libc else false;
+
+        if (!has_c) {
+            //compile_zig_shader.root_module.addImport(key, value);
+        }
+    }
+
     var compile_shader_step: *std.Build.Step = undefined;
     compile_shader_step = &compile_zig_shader.step;
     const output_file_path = compile_zig_shader.getEmittedBin();
@@ -278,18 +244,14 @@ fn compileZigShader(
     exe_step.root_module.addImport(actual_output_path, b.createModule(.{
         .root_source_file = output_lazy_path,
     }));
-    //exe_step.step.dependOn(&val.step);
 
-    return b.createModule(.{
-        .root_source_file = b.path(source),
-        .optimize = mode,
-        .target = target,
-        .imports = &.{
-            .{ .name = "lib", .module = shader_lib_module },
-            .{ .name = "shader_start", .module = start_module },
-            .{ .name = "shader_options", .module = options.createModule() },
-        },
-    });
+    const copy_file = b.addInstallBinFile(output_lazy_path, actual_output_path);
+
+    b.getInstallStep().dependOn(&copy_file.step);
+
+    //exe_step.step.dependOn(&val.step);
+    //
+    return .{ .cwd_relative = std.fs.path.join(b.allocator, &.{ "zig-out/bin/", actual_output_path }) catch @panic("oom") };
 }
 
 fn addIncludePathsToTranslateC(translate_c: *std.Build.Step.TranslateC, lib: *std.Build.Step.Compile) void {
