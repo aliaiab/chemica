@@ -44,14 +44,14 @@ pub fn main(init: std.process.Init) !void {
     var pipeline_compiler_io: gpu.pipelines.IoCompiler = .{
         .io = init.io,
         .gpa = gpa,
-        .module_path = "main.spv",
     };
     var pipeline_watch_compiler: gpu.pipelines.WatchCompiler = try .init(
         init.io,
         gpa,
         pipeline_compiler_io.compiler(),
     );
-    const pipeline_compiler = pipeline_watch_compiler.compiler();
+
+    const pipeline_compiler = if (@import("builtin").mode == .debug) pipeline_watch_compiler.compiler() else pipeline_compiler_io.compiler();
 
     _ = try pipeline_compiler.addModuleFile(@ptrCast(@import("options").exe_kernel_object));
 
@@ -1488,6 +1488,15 @@ pub fn main(init: std.process.Init) !void {
             .sampler_heap = gpu_context.sampler_heap,
         });
 
+        try imgui_renderer.update(
+            clear_cmds,
+            imgui.getDrawData(),
+            gpu_context.sampler_heap,
+            gpu_context.gpu_gpa,
+            gpu_transient_arena,
+            gpu_context.sampler_heap_alloc,
+        );
+
         clear_cmds.rasterPassBegin(.{
             .color_attachments = &.{.{
                 .texture = swapchain_texture,
@@ -1496,7 +1505,7 @@ pub fn main(init: std.process.Init) !void {
         });
 
         clear_cmds.setStateDepthStencil(.{});
-        clear_cmds.setStatePolygonMode(.line);
+        clear_cmds.setStatePolygonMode(.fill);
 
         if (false) {
             clear_cmds.launchRasterDraw(

@@ -13,7 +13,7 @@ pub fn exportRasterVertexPipeline(
     };
 
     _ = options; // autofix
-    if (@import("builtin").os.tag != .vulkan) {
+    if (!can_export_spirv) {
         //Return the spirv module
         return result;
     }
@@ -117,7 +117,6 @@ pub fn exportRasterVertexPipeline(
                             },
                             kernel.SamplerHeap => {
                                 arg.* = .{
-                                    .sampler_count = samplers_2d.data.len,
                                     .backend_data = .{},
                                 };
                             },
@@ -166,7 +165,7 @@ pub fn exportComputePipeline(
         .compute_entry_point = compute_entry_point,
     };
 
-    if (@import("builtin").os.tag != .vulkan) {
+    if (!can_export_spirv) {
         //Return the spirv module
         return result;
     }
@@ -557,9 +556,15 @@ extern const global_invocation_id: @Vector(3, u32) addrspace(.input);
 
 ///Address space to use for heterogenous compute
 pub const address_space: std.builtin.AddressSpace = switch (@import("builtin").cpu.arch) {
-    .spirv32, .spirv64 => .physical_storage_buffer,
+    .spirv32, .spirv64 => switch (@import("builtin").os.tag) {
+        .vulkan => .physical_storage_buffer,
+        .opencl => .global,
+        else => @compileError("Os not supported for spirv compilation!"),
+    },
     else => .generic,
 };
+
+const can_export_spirv = @import("builtin").os.tag == .vulkan or @import("builtin").os.tag == .opencl;
 
 const std = @import("std");
 const kernel = @import("kernel.zig");

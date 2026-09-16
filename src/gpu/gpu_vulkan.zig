@@ -1058,43 +1058,7 @@ fn createDescriptorHeap(
             &data.descriptor_sets,
         ) catch @panic("oom");
 
-        const descriptor_infos: []vk.DescriptorImageInfo = try context.gpa.alloc(
-            vk.DescriptorImageInfo,
-            memory.len,
-        );
-
-        var descriptor_count: u32 = 0;
-
-        for (memory, descriptor_infos) |descriptor, *info| {
-            const descriptor_data: DescriptorSetDescriptor = @bitCast(descriptor);
-            if (descriptor_data.view == .null_handle) {
-                break;
-            }
-
-            info.* = .{
-                .image_layout = .general,
-                .image_view = descriptor_data.view,
-                .sampler = descriptor_data.sampler,
-            };
-
-            descriptor_count += 1;
-        }
-
-        context.device.updateDescriptorSets(
-            &.{
-                .{
-                    .dst_set = data.descriptor_sets[0],
-                    .dst_binding = 0,
-                    .dst_array_element = 0,
-                    .descriptor_count = descriptor_count,
-                    .descriptor_type = .sampled_image,
-                    .p_image_info = descriptor_infos.ptr,
-                    .p_buffer_info = &.{},
-                    .p_texel_buffer_view = &.{},
-                },
-            },
-            &.{},
-        );
+        try updateDescriptorSets(data);
     }
 
     const descriptor_set_index = allocation.descriptor_sets.items.len;
@@ -1265,9 +1229,11 @@ pub fn barrier(
         if (!context.vk_ext_descriptor_heap_enabled) {
             for (context.descriptor_heaps.items) |heap_index| {
                 const heap_data = context.allocations.items[heap_index.allocation_index].descriptor_sets.items[heap_index.descriptor_heap_index];
-                _ = heap_data; // autofix
-                //TODO: write descriptors
+                //TODO: do something better than just updating the whole heap
+                updateDescriptorSets(heap_data) catch @panic("oom");
             }
+
+            return;
         }
     }
 
@@ -1589,9 +1555,7 @@ pub fn launchRasterDrawIndexed(
     var push_constants: CommonPushConstants = undefined;
 
     for (root_data, 0..) |root_ptr, i| {
-        if (gpu.mem.getMemoryType(root_ptr) != .cpu) {
-            push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
-        }
+        push_constants.data[i] = root_ptr;
     }
 
     if (context.vk_ext_descriptor_heap_enabled) {
@@ -2433,6 +2397,7 @@ inline fn toVkImageFormat(
     return switch (format) {
         .rgba8_unorm32 => .r8g8b8a8_unorm,
         .r8_unorm8 => .r8_unorm,
+        .a8_unorm8 => .a8_unorm,
         .bgra8_srgb32 => .b8g8r8a8_srgb,
         .none => @panic("Unsupported"),
         .r32_u32 => .r32_uint,
@@ -2584,6 +2549,47 @@ fn getMemoryAllocationDescriptorHeap(memory: []const TextureDescriptor) ?Descrip
     return null;
 }
 
+fn updateDescriptorSets(data: DescriptorHeapData) !void {
+    const memory = data.memory;
+    const descriptor_infos: []vk.DescriptorImageInfo = try context.gpa.alloc(
+        vk.DescriptorImageInfo,
+        memory.len,
+    );
+
+    var descriptor_count: u32 = 0;
+
+    for (memory, descriptor_infos) |descriptor, *info| {
+        const descriptor_data: DescriptorSetDescriptor = @bitCast(descriptor);
+        if (descriptor_data.view == .null_handle) {
+            break;
+        }
+
+        info.* = .{
+            .image_layout = .general,
+            .image_view = descriptor_data.view,
+            .sampler = descriptor_data.sampler,
+        };
+
+        descriptor_count += 1;
+    }
+
+    context.device.updateDescriptorSets(
+        &.{
+            .{
+                .dst_set = data.descriptor_sets[0],
+                .dst_binding = 0,
+                .dst_array_element = 0,
+                .descriptor_count = descriptor_count,
+                .descriptor_type = .sampled_image,
+                .p_image_info = descriptor_infos.ptr,
+                .p_buffer_info = &.{},
+                .p_texel_buffer_view = &.{},
+            },
+        },
+        &.{},
+    );
+}
+
 const CommonPushConstants = extern struct {
     data: [8]*anyopaque,
 };
@@ -2605,6 +2611,7 @@ const enable_validation = @import("builtin").mode == .debug;
 const required_device_extensions = [_][*:0]const u8{
     vk.extensions.khr_swapchain.name,
     vk.extensions.ext_extended_dynamic_state_3.name,
+    vk.extensions.khr_maintenance_5.name,
     vk.extensions.ext_mutable_descriptor_type.name,
     //vk.extensions.khr_unified_image_layouts.name,
 };

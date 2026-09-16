@@ -777,6 +777,8 @@ pub const SemaphoreSignalDescription = struct {
 ///An opaque, fixed sized texture descriptor for providing sampling and kernel access to textures
 pub const TextureDescriptor = packed struct(u256) {
     value: u256,
+
+    pub const nil: TextureDescriptor = @fromBackingInt(0);
 };
 
 pub const Queue = packed struct(u3) {
@@ -893,10 +895,11 @@ pub const RasterPipelineDescription = struct {
     };
 };
 
-pub const ImageFormat = enum(u3) {
+pub const ImageFormat = enum(u4) {
     none,
     rgba8_unorm32,
     r8_unorm8,
+    a8_unorm8,
     bgra8_srgb32,
     r32_u32,
     r16_u16,
@@ -1684,7 +1687,8 @@ const layer: type = layer_none;
 const layer_none = struct {};
 
 const backend = switch (@import("builtin").os.tag) {
-    .macos, .linux, .windows => @import("gpu/gpu_vulkan.zig"),
+    .linux, .windows => @import("gpu/gpu_vulkan.zig"),
+    .macos => @import("gpu/gpu_metal.zig"),
     else => @compileError("Os not supported!"),
 };
 

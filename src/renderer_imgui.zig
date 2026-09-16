@@ -1,7 +1,5 @@
 pipeline_compiler: gpu.pipelines.Compiler,
 pipeline: gpu.pipelines.Compiler.PipelineIndex,
-font_texture: []gpu.TextureByte,
-font_texture_sampler_index: gpu.kernel.SamplerHeap.Index,
 
 pub fn init(
     pipeline_compiler: gpu.pipelines.Compiler,
@@ -9,6 +7,9 @@ pub fn init(
     gpu_gpa: gpu.mem.Allocator,
     sampler_allocator: gpu.mem.Allocator,
 ) !RendererImGui {
+    _ = sampler_heap; // autofix
+    _ = gpu_gpa; // autofix
+    _ = sampler_allocator; // autofix
     const io = imgui.getIO();
 
     var pixel_pointer: [*c]u8 = undefined;
@@ -24,31 +25,6 @@ pub fn init(
         &out_bytes_per_pixel,
     );
 
-    const font_texture = try gpu_gpa.allocTexture(.{
-        .format = .r8_unorm8,
-        .dimensions = .{ @intCast(width), @intCast(height), 1 },
-    });
-
-    const pixel_bytes: []u8 = pixel_pointer[0..@intCast(width * height)];
-
-    const texture_src = try gpu_gpa.allocDupe(u8, pixel_bytes);
-
-    const cmds = gpu.queueStartCommandRecording(.{}, .{});
-    defer gpu.queueSubmit(.{}, &.{cmds}, &.{});
-
-    gpu.mem.copyToTexture(
-        cmds,
-        u8,
-        .{
-            .dimensions = .{ @intCast(width), @intCast(height), 1 },
-            .format = .r8_unorm8,
-        },
-        font_texture,
-        texture_src,
-    );
-
-    gpu.barrier(cmds, .transfer, .raster_fragment, .{});
-
     const self: RendererImGui = .{
         .pipeline = try pipeline_compiler.compileRasterVertexPipeline(pipeline_comptime, .{
             .color_targets = &.{.{
@@ -58,15 +34,68 @@ pub fn init(
             .depth_format = .depth_stencil_u24_u8,
             .stencil_format = .depth_stencil_u24_u8,
         }),
-        .font_texture = font_texture,
-        .font_texture_sampler_index = try sampler_allocator.allocTextureDescriptor(
-            sampler_heap,
-            font_texture,
-        ),
         .pipeline_compiler = pipeline_compiler,
     };
 
     return self;
+}
+
+pub fn update(
+    self: *RendererImGui,
+    commands: *gpu.CommandBuffer,
+    draw_data: *const imgui.DrawData,
+    sampler_heap: []gpu.TextureDescriptor,
+    gpa: gpu.mem.Allocator,
+    transient_arena: gpu.mem.Allocator,
+    sampler_allocator: gpu.mem.Allocator,
+) !void {
+    _ = self; // autofix
+    var was_texture_updates: bool = false;
+
+    for (0..@intCast(draw_data.Textures.*.Size)) |i| {
+        const texture = draw_data.Textures[i].Data[0];
+
+        if (texture.*.Status == imgui.cimgui.ImTextureStatus_WantCreate) {
+            std.debug.print("wanna create tex[{}] = {}\n", .{ i, texture.* });
+            was_texture_updates = true;
+
+            const width: u32 = @intCast(texture.*.Width);
+            const height: u32 = @intCast(texture.*.Height);
+
+            const format: gpu.ImageFormat = imFormatToGpuFormat(texture.*.Format);
+
+            const font_texture = try gpa.allocTexture(.{
+                .format = format,
+                .dimensions = .{ width, height, 1 },
+            });
+
+            const sampler_index = try sampler_allocator.allocTextureDescriptor(
+                sampler_heap,
+                font_texture,
+            );
+            texture.*.BackendUserData = @ptrFromInt(@backingInt(sampler_index));
+            texture.*.Status = imgui.cimgui.ImTextureStatus_OK;
+
+            const pixel_bytes: []u8 = texture.*.Pixels[0..@intCast(width * height)];
+
+            const texture_src = try transient_arena.allocDupe(u8, pixel_bytes);
+
+            gpu.mem.copyToTexture(
+                commands,
+                u8,
+                .{
+                    .dimensions = .{ @intCast(width), @intCast(height), 1 },
+                    .format = format,
+                },
+                font_texture,
+                texture_src,
+            );
+        }
+    }
+
+    if (was_texture_updates) {
+        gpu.barrier(commands, .transfer, .raster_fragment, .{ .descriptors = true });
+    }
 }
 
 pub fn render(
@@ -128,10 +157,22 @@ pub fn render(
                 @intFromFloat(command.ClipRect.w + command.ClipRect.y),
             });
 
+            var sampler_index: gpu.kernel.SamplerHeap.Index = .null;
+
+            if (command.TexRef._TexData) |tex_data| {
+                if (tex_data.*.TexID != 0) {
+                    std.debug.print("tex_id: {}\n", .{tex_data.*.TexID});
+                    std.debug.print("tex_backend: {?}\n", .{tex_data.*.BackendUserData});
+                }
+                sampler_index = @fromBackingInt(@truncate(@intFromPtr(tex_data.*.BackendUserData)));
+            }
+
+            //const sampler_index: gpu.kernel.SamplerHeap.Index = @fromBackingInt(1);
+
             commands.launchRasterDrawIndexed(pipeline, &.{
-                gpu_projection,
-                gpu_vertices.ptr,
-                @ptrFromInt(@backingInt(self.font_texture_sampler_index)),
+                @ptrFromInt(@backingInt(sampler_index)),
+                gpu.mem.toAccessiblePointer(gpu_projection, .gpu),
+                gpu.mem.toAccessiblePointer(gpu_vertices.ptr, .gpu),
             }, &.{
                 .{
                     .index_count = @intCast(command.ElemCount),
@@ -146,6 +187,14 @@ pub fn render(
     }
 }
 
+fn imFormatToGpuFormat(format: imgui.cimgui.ImTextureFormat) gpu.ImageFormat {
+    return switch (format) {
+        imgui.cimgui.ImTextureFormat_RGBA32 => .rgba8_unorm32,
+        imgui.cimgui.ImTextureFormat_Alpha8 => .a8_unorm8,
+        else => unreachable,
+    };
+}
+
 pub const Vertex = extern struct {
     position: [2]f32,
     uv: [2]f32,
@@ -153,11 +202,12 @@ pub const Vertex = extern struct {
 };
 
 pub fn vertexKernel(
+    sampler_index: gpu.kernel.SamplerHeap.Index,
     projection: *addrspace(gpu.kernel.address_space) const math.Matrix(f32, 4, 4),
     vertices: [*]addrspace(gpu.kernel.address_space) const Vertex,
-    sampler_index: gpu.kernel.SamplerHeap.Index,
     draw_parameters: gpu.kernel.RasterDrawCommandParameters,
 ) struct { [4]f32, PipelinePacket } {
+    _ = sampler_index; // autofix
     _ = projection; // autofix
     const vertex = vertices[draw_parameters.vertex_index];
 
@@ -191,7 +241,6 @@ pub fn vertexKernel(
         .{
             .colour = out_colour,
             .uv = vertex.uv,
-            .sampler_index = sampler_index,
         },
     };
 }
@@ -199,29 +248,24 @@ pub fn vertexKernel(
 const PipelinePacket = extern struct {
     colour: [4]f32,
     uv: [2]f32,
-    sampler_index: gpu.kernel.SamplerHeap.Index,
 };
 
 pub fn fragmentKernel(
+    sampler: gpu.kernel.SamplerHeap.Index,
     input: PipelinePacket,
+    samplers: gpu.kernel.SamplerHeap,
 ) ?[4]f32 {
-    if (false) {
-        var sampler_heap: gpu.kernel.SamplerHeap = undefined;
-        var texel = sampler_heap.imageSample(
-            @fromBackingInt(1),
-            input.uv,
-        );
+    const texel = samplers.imageSample(
+        sampler,
+        [4]f32,
+        input.uv,
+    );
 
-        texel[1] = 1;
-        texel[2] = 1;
-        texel[3] = 1;
-    }
+    const res = if (sampler != .null) input.colour else texel;
 
-    if (input.colour[0] < 0.5) {
-        //return null;
-    }
+    if (res[0] < 0.5) {}
 
-    return input.colour;
+    return res;
 }
 
 pub const pipeline_comptime = gpu.kernel.exportRasterVertexPipeline(@This(), "vertexKernel", "fragmentKernel", .{});

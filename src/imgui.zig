@@ -180,7 +180,7 @@ pub fn pushId(value: anytype) void {
             cimgui.ImGui_PushIDInt(cint);
         },
         .@"enum" => {
-            const cint: c_int = @bitCast(@intFromEnum(value));
+            const cint: c_int = @bitCast(@backingInt(value));
 
             cimgui.ImGui_PushIDInt(cint);
         },
@@ -383,15 +383,15 @@ pub const StyleColor = enum(i32) {
     NavWindowingDimBg = 61,
     ModalWindowDimBg = 62,
 
-    pub const TabActive: StyleColor = @enumFromInt(37);
-    pub const TabUnfocused: StyleColor = @enumFromInt(39);
-    pub const TabUnfocusedActive: StyleColor = @enumFromInt(40);
-    pub const NavHighlight: StyleColor = @enumFromInt(59);
+    pub const TabActive: StyleColor = @fromBackingInt(@intCast(37));
+    pub const TabUnfocused: StyleColor = @fromBackingInt(@intCast(39));
+    pub const TabUnfocusedActive: StyleColor = @fromBackingInt(@intCast(40));
+    pub const NavHighlight: StyleColor = @fromBackingInt(@intCast(59));
 };
 
 pub fn pushStyleColor(index: StyleColor, color: [4]f32) void {
     cimgui.ImGui_PushStyleColorImVec4(
-        @intFromEnum(index),
+        @backingInt(index),
         .{ .x = color[0], .y = color[1], .z = color[2], .w = color[3] },
     );
 }
@@ -967,7 +967,7 @@ fn userImageToImTextureID(
 
     const user_texture_integer: usize = blk: switch (@typeInfo(UserImage)) {
         .@"enum" => {
-            break :blk @intFromEnum(user_image);
+            break :blk @backingInt(user_image);
         },
         .@"struct" => |struct_info| {
             if (struct_info.layout != .@"packed") {

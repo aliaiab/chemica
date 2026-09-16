@@ -91,9 +91,6 @@ pub const RayQuery = opaque {};
 
 ///Represents a heap of sampler descriptors
 pub const SamplerHeap = struct {
-    ///Number of sampler descriptors in the heap
-    sampler_count: u32,
-
     backend_data: backend.SamplerHeap,
 
     ///Returns the dimensions of an image descriptor
@@ -323,7 +320,7 @@ pub fn exportComputePipeline(
     return result;
 }
 
-//TODO: remove when the lanugage gets scope and semantics builtin to @atomicAdd
+//TODO: remove when the language gets scope and semantics builtin to @atomicAdd
 pub inline fn atomicAdd(
     comptime T: type,
     ptr: *addrspace(address_space) T,

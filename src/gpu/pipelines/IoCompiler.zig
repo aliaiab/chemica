@@ -1,6 +1,5 @@
 io: std.Io,
 gpa: std.mem.Allocator,
-module_path: []const u8,
 modules: std.ArrayList(Compiler.ModuleEntry) = .empty,
 pipelines: std.ArrayList(Compiler.PipelineEntry) = .empty,
 
@@ -97,7 +96,7 @@ pub fn defaultCompileComputePipeline(
     const result = try self.pipelines.addOne(std.heap.page_allocator);
 
     result.pipeline = gpu.createComputePipeline(
-        @embedFile("main.spv"),
+        &.{},
     );
 
     return undefined;
@@ -108,7 +107,6 @@ pub fn defaultFreePipeline(
     pipeline: PipelineIndex,
 ) void {
     const self: *IoCompiler = @ptrCast(@alignCast(ptr));
-    _ = compiler; // autofix
     gpu.freePipeline(self.compiler().getPipeline(pipeline).?);
 }
 
