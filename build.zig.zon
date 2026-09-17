@@ -48,6 +48,10 @@
             .url = "git+https://github.com/aliaiab/mist.git#65b004486e1c0cbde8291cda2a919287d427e400",
             .hash = "msdf_zig-1.0.0-5-oN46gzBQASxm386LJm4K8_HhKxGNoGuA13BNZ84lM9",
         },
+        .@"macos-sdk" = .{
+            .url = "git+https://github.com/frostplexx/zig-build-macos-sdk#e98f2cf83eb57f65efadd93e896a51956ba5adc7",
+            .hash = "N-V-__8AACDrEQQ49TXhy6tl2QpY2w2QqKDz2VXmUUrEbfZ2",
+        },
     },
     .paths = .{
         "build.zig",

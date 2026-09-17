@@ -315,6 +315,19 @@ pub fn swapchainPresent(
     _ = swapchain; // autofix
     _ = semaphore; // autofix
 }
+pub fn placeCommandTimestampQuery(
+    command_buffer: *CommandBuffer,
+) *gpu.debug.TimestampQuery {
+    _ = command_buffer; // autofix
+    return undefined;
+}
+
+pub fn queryTimestampValue(
+    query: *gpu.debug.TimestampQuery,
+) ?u64 {
+    _ = query;
+    @panic("");
+}
 
 pub fn waitIdle() void {
     @panic("");

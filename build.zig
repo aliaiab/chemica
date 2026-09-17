@@ -52,6 +52,12 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         }).module("objc"));
     } else {
+        main_module.addCSourceFiles(.{
+            .files = &.{
+                "gpu/c.cpp",
+            },
+            .root = b.path("src/"),
+        });
         main_module.linkSystemLibrary("vulkan", .{ .weak = true });
         // Get the (lazy) path to vk.xml:
         const registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml");
@@ -102,7 +108,6 @@ pub fn build(b: *std.Build) !void {
         .files = &.{
             "ImGuizmo.cpp",
             "guizmo.cpp",
-            "gpu/c.cpp",
             "stb_image.c",
             "imgui_style.cpp",
         },

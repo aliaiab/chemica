@@ -74,7 +74,6 @@ pub const Context = struct {
     gpu_arena: gpu.mem.Allocator,
     swapchain_texture: []gpu.TextureByte,
     command_buffer: *gpu.CommandBuffer,
-    shaders_watcher: *watchers.Watcher,
     io: std.Io,
     watcher_context: *WatcherContext,
     watcher_thread: std.Thread,
@@ -102,13 +101,11 @@ pub const Context = struct {
         var context: Context = undefined;
 
         context.io = io;
-        context.shaders_watcher = try arena.create(watchers.Watcher);
         context.watcher_context = try arena.create(WatcherContext);
         context.watcher_context.* = .{
             .io = io,
             .gpa = arena,
         };
-        context.shaders_watcher.* = try .init(io, arena);
         context.shaders = try arena.create(Shaders);
 
         try gpu.selectDevice(
@@ -123,8 +120,6 @@ pub const Context = struct {
         context.gpu_staging_fbas[1] = .init(gpu_staging_buffer[gpu_staging_buffer.len / 2 ..]);
         context.gpu_staging_arena = context.gpu_staging_fbas[0].allocator();
         context.gpu_staging_fba_index = 0;
-
-        context.shaders_watcher.setCallback(watcherCallback, context.watcher_context);
 
         var env_map_width: c_int = 0;
         var env_map_height: c_int = 0;
@@ -222,13 +217,10 @@ pub const Context = struct {
             &context.shaders.gizmo_shader,
         );
 
-        context.watcher_thread = try std.Thread.spawn(.{}, watcherThread, .{context.shaders_watcher});
-
         return context;
     }
 
     pub fn deinit(context: Context) void {
-        context.shaders_watcher.stop();
         context.watcher_thread.join();
     }
 
