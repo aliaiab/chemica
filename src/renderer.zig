@@ -221,7 +221,7 @@ pub const Context = struct {
     }
 
     pub fn deinit(context: Context) void {
-        context.watcher_thread.join();
+        _ = context; // autofix
     }
 
     pub fn beginFrame(
