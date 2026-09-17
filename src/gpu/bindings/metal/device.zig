@@ -67,6 +67,13 @@ pub const MetalDevice = struct {
         return .{ .handle = queue };
     }
 
+    pub fn createHeap(self: *MetalDevice) MetalError!Heap {
+        const queue = self.handle.msgSend(objc.Object, objc.sel("makeHeap"), .{});
+        if (queue.value == null) return MetalError.BufferCreationFailed;
+
+        return .{ .handle = queue };
+    }
+
     /// Compile Metal shader from source code at runtime
     pub fn createLibraryFromSource(self: *MetalDevice, source: [:0]const u8) MetalError!Library {
         // Create NSString from source
@@ -181,3 +188,5 @@ pub fn getAllDevices(allocator: std.mem.Allocator) ![]MetalDevice {
     }
     return result;
 }
+
+const Heap = @import("../metal.zig").Heap;

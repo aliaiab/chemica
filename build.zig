@@ -51,6 +51,8 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
         }).module("objc"));
+        main_module.linkFramework("Metal", .{});
+        main_module.linkFramework("Foundation", .{});
     } else {
         main_module.addCSourceFiles(.{
             .files = &.{

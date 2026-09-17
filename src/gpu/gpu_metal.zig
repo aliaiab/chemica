@@ -1,4 +1,14 @@
-var context: struct {} = undefined;
+var context: struct {
+    device: metal.MetalDevice = undefined,
+    queue: metal.MetalCommandQueue = undefined,
+    memory_heap: metal.Heap = undefined,
+    gpa: std.mem.Allocator = undefined,
+    allocations: std.MultiArrayList(AllocationData) = .empty,
+} = .{};
+
+pub const AllocationData = struct {
+    buffer: metal.MetalBuffer,
+};
 
 pub fn selectDevice(
     options: DeviceSelectionOptions,
@@ -7,27 +17,34 @@ pub fn selectDevice(
 ) !void {
     _ = options; // autofix
     _ = arena; // autofix
-    _ = gpa; // autofix
+    context.gpa = gpa;
+    context.device = (try metal.getAllDevices(gpa))[0];
+    context.queue = try context.device.createCommandQueue();
+    context.memory_heap = try context.device.createHeap();
 }
 
-pub fn freeDevice() !void {
-    @panic("");
-}
+pub fn freeDevice() !void {}
 
 pub fn memAlloc(
     size: usize,
     alignment: std.mem.Alignment,
     memory_type: mem.Allocator.MemoryType,
 ) std.mem.Allocator.Error![*]u8 {
-    _ = size; // autofix
     _ = alignment; // autofix
-    _ = memory_type; // autofix
-    @panic("");
+    var buffer = context.device.createBufferWithOptions(@intCast(size), switch (memory_type) {
+        .gpu => .private,
+        .gpu_cpu_writable, .readback => .shared,
+        else => unreachable,
+    }) catch return std.mem.Allocator.Error.OutOfMemory;
+
+    try context.allocations.append(context.gpa, .{
+        .buffer = buffer,
+    });
+    return buffer.getContents().?.ptr;
 }
 
 pub fn memFree(memory: [*]u8) void {
     _ = memory; // autofix
-    @panic("");
 }
 
 pub fn memToAccessiblePointer(pointer: *anyopaque, access: mem.AccessDomain) *anyopaque {
@@ -103,14 +120,17 @@ pub fn freePipeline(
     pipeline: *Pipeline,
 ) void {
     _ = pipeline; // autofix
-    @panic("");
 }
 
 pub fn textureMemoryDescription(
     description: gpu.TextureDescription,
 ) gpu.ResourceMemoryDescription {
     _ = description; // autofix
-    @panic("");
+    return .{
+        .size = 0,
+        .alignment = .@"1",
+        .memory_type = .gpu,
+    };
 }
 
 pub fn formatTextureMemory(
@@ -119,7 +139,6 @@ pub fn formatTextureMemory(
 ) void {
     _ = memory; // autofix
     _ = description; // autofix
-    @panic("");
 }
 
 pub fn unformatTextureMemory(
@@ -269,13 +288,25 @@ pub fn launchRasterDrawIndexed(
     @panic("");
 }
 
+const CommandBufferData = struct {
+    handle: metal.MetalCommandBuffer,
+};
+
 pub fn queueStartCommandRecording(
     queue: gpu.Queue,
     initial_state: gpu.CommandBufferInitialState,
 ) *gpu.CommandBuffer {
     _ = queue; // autofix
     _ = initial_state; // autofix
-    @panic("");
+    const handle = context.queue.createCommandBuffer() catch @panic("oom");
+
+    const result = context.gpa.create(CommandBufferData) catch @panic("oom");
+
+    result.* = .{
+        .handle = handle,
+    };
+
+    return @ptrCast(result);
 }
 
 pub fn queueSubmit(

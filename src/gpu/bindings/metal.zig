@@ -29,6 +29,12 @@ pub const MetalRenderPassDescriptor = @import("metal/render_pass.zig").MetalRend
 pub const MetalTexture = @import("metal/texture.zig").MetalTexture;
 pub const MetalBuffer = @import("metal/buffer.zig").MetalBuffer;
 
+const objc = @import("objc");
+
+pub const Heap = struct {
+    handle: objc.Object,
+};
+
 // Re-export convenience functions
 pub const isAvailable = @import("metal/device.zig").isAvailable;
 pub const getDeviceCount = @import("metal/device.zig").getDeviceCount;
