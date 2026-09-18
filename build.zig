@@ -56,7 +56,7 @@ pub fn build(b: *std.Build) !void {
     } else {
         main_module.addCSourceFiles(.{
             .files = &.{
-                "gpu/c.cpp",
+                "cario/bindings/vulkan/c.cpp",
             },
             .root = b.path("src/"),
         });
@@ -173,7 +173,7 @@ pub fn compileModuleKernels(
         ".spv",
     }) catch @panic("");
 
-    const compile_zig_shader = b.addObject(.{
+    const compile_zig_shader = b.addExecutable(.{
         .name = std.fs.path.stem(output_path),
         .root_module = b.createModule(.{
             .root_source_file = b.path(source),
@@ -190,9 +190,6 @@ pub fn compileModuleKernels(
                     .runtime_descriptor_array,
                     .variable_pointers_storage_buffer,
                     .variable_pointers,
-                    .untyped_pointers_khr,
-                    .SPV_KHR_untyped_pointers,
-                    .SPV_EXT_physical_storage_buffer,
                     .SPV_EXT_descriptor_indexing,
                     .float64,
                 }),

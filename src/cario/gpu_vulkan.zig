@@ -207,6 +207,7 @@ pub fn selectDevice(
             .multi_draw_indirect = .true,
             .fill_mode_non_solid = .true,
             .shader_int_64 = .true,
+            .shader_float_64 = .true,
         };
 
         var swapchain_maint_features: vk.PhysicalDeviceSwapchainMaintenance1FeaturesEXT = .{
@@ -218,8 +219,13 @@ pub fn selectDevice(
             .mutable_descriptor_type = .true,
         };
 
+        var untyped_pointers_features: vk.PhysicalDeviceShaderUntypedPointersFeaturesKHR = .{
+            .p_next = &mutable_descriptor_type_features,
+            .shader_untyped_pointers = .true,
+        };
+
         var dynamic_state_features_3: vk.PhysicalDeviceExtendedDynamicState3FeaturesEXT = .{};
-        dynamic_state_features_3.p_next = &mutable_descriptor_type_features;
+        dynamic_state_features_3.p_next = &untyped_pointers_features;
         dynamic_state_features_3.extended_dynamic_state_3_depth_clamp_enable = .true;
         dynamic_state_features_3.extended_dynamic_state_3_polygon_mode = .true;
         dynamic_state_features_3.extended_dynamic_state_3_rasterization_samples = .true;
@@ -311,9 +317,9 @@ pub fn selectDevice(
     const vma_allocator_create_info: vma.VmaAllocatorCreateInfo = .{
         .flags = vma.VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT | vma.VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
         .vulkanApiVersion = vma.VK_API_VERSION_1_3,
-        .physicalDevice = @ptrFromInt(@intFromEnum(context.physical_device)),
-        .device = @ptrFromInt(@intFromEnum(context.device.handle)),
-        .instance = @ptrFromInt(@intFromEnum(context.instance.handle)),
+        .physicalDevice = @ptrFromInt(@backingInt(context.physical_device)),
+        .device = @ptrFromInt(@backingInt(context.device.handle)),
+        .instance = @ptrFromInt(@backingInt(context.instance.handle)),
         .pVulkanFunctions = &vma_vulkan_functions,
     };
 
@@ -565,7 +571,7 @@ pub fn memCopyToTexture(
     dest_gpu: []gpu.TextureByte,
     src_gpu: []const u8,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
 
     std.debug.assert(isGpuMemory(@ptrCast(dest_gpu)));
     std.debug.assert(isGpuMemory(src_gpu));
@@ -861,7 +867,7 @@ pub fn formatTextureMemory(
     const cmds = queueStartCommandRecording(.{}, .{});
     defer queueSubmit(.{}, &.{cmds}, &.{});
 
-    const cmd_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(cmds));
+    const cmd_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(cmds)));
 
     context.device.cmdPipelineBarrier2(cmd_buffer, &.{
         .image_memory_barrier_count = 1,
@@ -1076,7 +1082,7 @@ fn setStatePipeline(
     command_buffer: *CommandBuffer,
     pipeline: *Pipeline,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
     const pipeline_data: *PipelineData = @ptrCast(@alignCast(pipeline));
 
     context.device.cmdBindPipeline(
@@ -1090,7 +1096,7 @@ pub fn setStateDepthStencil(
     command_buffer: *CommandBuffer,
     state: DepthStencilState,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
 
     context.device.cmdSetDepthCompareOp(vk_command_buffer, .less);
     context.device.cmdSetDepthTestEnable(vk_command_buffer, .false);
@@ -1115,7 +1121,7 @@ pub fn setStateBlend(
     state: BlendState,
 ) void {
     _ = state; // autofix
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
 
     context.device.cmdSetColorBlendEnableEXT(
         vk_command_buffer,
@@ -1137,7 +1143,7 @@ pub fn setStateCull(
     command_buffer: *CommandBuffer,
     cull: gpu.RasterPipelineDescription.Cull,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
     context.device.cmdSetCullMode(vk_command_buffer, .{
         .front = cull.front,
         .back = cull.back,
@@ -1148,7 +1154,7 @@ pub fn setStatePolygonMode(
     command_buffer: *CommandBuffer,
     mode: gpu.PolygonMode,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
     context.device.cmdSetPolygonModeEXT(
         vk_command_buffer,
         switch (mode) {
@@ -1430,7 +1436,7 @@ pub fn launchCompute(
     commands: []const ComputeCommand,
 ) void {
     setStatePipeline(command_buffer, pipeline);
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
 
     var push_constants: CommonPushConstants = undefined;
 
@@ -1480,7 +1486,7 @@ pub fn launchRasterDraw(
     options: gpu.DispatchRasterDrawOptions,
 ) void {
     setStatePipeline(command_buffer, pipeline);
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
 
     var push_constants: CommonPushConstants = undefined;
 
@@ -1547,7 +1553,7 @@ pub fn launchRasterDrawIndexed(
     indices: []u8,
 ) void {
     setStatePipeline(command_buffer, pipeline);
-    const vk_command_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
 
     const indices_allocation = getMemoryAllocation(indices);
     const indices_offset = getMemoryAllocationOffset(indices);
@@ -1826,6 +1832,23 @@ fn recreateSwapchain(swapchain_data: *SwapchainData) !void {
 fn internalCreateSwapchain(
     swapchain_data: *SwapchainData,
 ) void {
+    const surface_capabilities = context.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
+        context.physical_device,
+        swapchain_data.surface,
+    ) catch @panic("oom");
+
+    var new_extent = surface_capabilities.current_extent;
+
+    if (new_extent.width == std.math.maxInt(u32) or new_extent.height == std.math.maxInt(u32)) {
+        //TODO: use native wayland calls
+        const glfw_window: *glfw.Window = @ptrCast(@alignCast(swapchain_data.window_handle));
+
+        new_extent.width = @intCast(glfw_window.getSize()[0]);
+        new_extent.height = @intCast(glfw_window.getSize()[1]);
+    }
+
+    swapchain_data.current_extent = new_extent;
+
     var scaling_caps: vk.SurfacePresentScalingCapabilitiesEXT = undefined;
     scaling_caps.s_type = .surface_present_scaling_capabilities_khr;
     scaling_caps.p_next = null;
@@ -1846,11 +1869,6 @@ fn internalCreateSwapchain(
             .surface = swapchain_data.surface,
         },
         &surface_caps,
-    ) catch @panic("oom");
-
-    const surface_capabilities = context.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
-        context.physical_device,
-        swapchain_data.surface,
     ) catch @panic("oom");
 
     const image_count = @min(@max(surface_capabilities.min_image_count, 3), surface_capabilities.max_image_count);
@@ -1953,7 +1971,9 @@ pub fn swapchainObtainTexture(
     ) catch |e| {
         switch (e) {
             error.OutOfDateKHR => {
-                recreateSwapchain(swapchain_data) catch @panic("oom");
+                internalCreateSwapchain(swapchain_data);
+
+                std.debug.print("out of date!!!\n", .{});
 
                 return swapchainObtainTexture(swapchain);
             },
@@ -1963,7 +1983,7 @@ pub fn swapchainObtainTexture(
 
     switch (result.result) {
         .error_out_of_date_khr, .suboptimal_khr => {
-            recreateSwapchain(swapchain_data) catch @panic("oom");
+            internalCreateSwapchain(swapchain_data);
 
             return swapchainObtainTexture(swapchain);
         },
@@ -2073,7 +2093,7 @@ pub fn swapchainPresent(
 
     const cmds = queueStartCommandRecording(.{}, .{});
 
-    const cmd_buffer: vk.CommandBuffer = @enumFromInt(@intFromPtr(cmds));
+    const cmd_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(cmds)));
 
     const present_semaphore = swapchain_data.semaphores[swapchain_data.image_to_present];
 
@@ -2119,7 +2139,7 @@ pub fn swapchainPresent(
     ) catch |e| {
         switch (e) {
             error.OutOfDateKHR => {
-                recreateSwapchain(swapchain_data) catch @panic("oom");
+                internalCreateSwapchain(swapchain_data);
                 return;
             },
             else => @panic("oom"),
@@ -2128,7 +2148,7 @@ pub fn swapchainPresent(
 
     switch (result) {
         .error_out_of_date_khr, .suboptimal_khr => {
-            recreateSwapchain(swapchain_data) catch @panic("oom");
+            internalCreateSwapchain(swapchain_data);
         },
         .success => {},
         else => @panic("oom"),
@@ -2184,6 +2204,10 @@ pub fn semaphoreWait(semaphore: *Semaphore, wait_value: u64) void {
     }, std.math.maxInt(u64)) catch unreachable;
 }
 
+pub fn semaphoreValue(semaphore: *Semaphore) u64 {
+    return context.device.getSemaphoreCounterValue(@fromBackingInt(@intFromPtr(semaphore))) catch @panic("oom");
+}
+
 test {
     _ = std.testing.refAllDecls(@This());
 }
@@ -2213,9 +2237,6 @@ fn debugUtilsMessengerCallback(
 
     var is_spirv = std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "spirv");
     is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "SPIR-V");
-    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "MemoryRequirements::alignment");
-    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "pNext<VkMemoryDedicatedAllocateInfo>.pNext->buffer");
-    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "renderArea");
 
     if (is_spirv) {
         return .false;
@@ -2640,9 +2661,9 @@ const RasterDrawCommand = gpu.RasterDrawCommand;
 const RasterDrawMeshesCommand = gpu.RasterDrawMeshesCommand;
 const ComputeCommand = gpu.ComputeCommand;
 const PipelineMachineCodeEntry = gpu.PipelineMachineCodeEntry;
-const vma = @import("vk_mem_alloc.zig");
+const vma = @import("bindings/vulkan/vk_mem_alloc.zig");
 const mem = gpu.mem;
-const vk = @import("vk.zig");
+const vk = @import("bindings/vulkan/vk.zig");
 const std = @import("std");
 const glfw = @import("zglfw");
 const gpu = @import("../gpu.zig");

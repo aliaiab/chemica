@@ -328,6 +328,12 @@ pub fn main(init: std.process.Init) !void {
         fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 128 * 1024, .gpu_cpu_writable));
     }
 
+    var gpu_transient_arenas: [2]gpu.heap.ArenaAllocator = undefined;
+
+    for (&gpu_transient_arenas) |*transient_arena| {
+        transient_arena.* = .init(gpu.heap.page_allocator);
+    }
+
     while (try glaze.surfacePoll(arena, surface)) |surface_poll| {
         gpu_context.window_extents = .{
             surface_poll.surface_state.extent[0],
@@ -340,6 +346,7 @@ pub fn main(init: std.process.Init) !void {
         defer next_frame += 1;
 
         gpu_transient_fbas[next_frame % 2].end_index = 0;
+        //_ = gpu_transient_arenas[next_frame % 2].reset(.{ .retain_with_limit = 128 * 1024 });
 
         const gpu_transient_arena = gpu_transient_fbas[next_frame % 2].allocator();
 
@@ -360,6 +367,8 @@ pub fn main(init: std.process.Init) !void {
         asym_geo_context.beginSubmission();
 
         const swapchain_texture = gpu_swapchain.obtainTexture();
+
+        if (swapchain_texture.len == 0) continue;
 
         gpu_context.swapchain_texture = swapchain_texture;
         gpu_context.beginFrame();

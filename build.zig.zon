@@ -56,6 +56,6 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "Source",
+        "src",
     },
 }

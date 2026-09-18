@@ -94,7 +94,7 @@ pub fn update(
     }
 
     if (was_texture_updates) {
-        gpu.barrier(commands, .transfer, .raster_fragment, .{ .descriptors = true });
+        commands.barrier(.transfer, .raster_fragment, .{ .descriptors = true });
     }
 }
 

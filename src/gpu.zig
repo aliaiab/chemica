@@ -559,6 +559,13 @@ pub fn semaphoreWait(semaphore: *Semaphore, wait_value: u64) void {
     });
 }
 
+///Returns the semaphore value
+pub fn semaphoreValue(semaphore: *Semaphore) u64 {
+    return backendCall(@src(), .{
+        semaphore,
+    });
+}
+
 ///Creates a swapchain from a platform-specific window handle
 pub fn createSwapchain(
     window_handle: *anyopaque,
@@ -607,6 +614,15 @@ pub const CommandBuffer = opaque {
         command_buffer: *CommandBuffer,
     ) void {
         return gpu.rasterPassEnd(command_buffer);
+    }
+
+    pub fn barrier(
+        command_buffer: *CommandBuffer,
+        before: ExecutionStage,
+        after: ExecutionStage,
+        hazards: HazardFlags,
+    ) void {
+        gpu.barrier(command_buffer, before, after, hazards);
     }
 
     ///Sets the rasterizer depth and stencil state
@@ -753,6 +769,10 @@ pub const CommandBuffer = opaque {
 pub const Semaphore = opaque {
     pub fn wait(semaphore: *Semaphore, wait_value: u64) void {
         semaphoreWait(semaphore, wait_value);
+    }
+
+    pub fn value(semaphore: *Semaphore) u64 {
+        return semaphoreValue(semaphore);
     }
 };
 
@@ -1353,6 +1373,32 @@ pub const mem = struct {
             _ = allocator; // autofix
         }
 
+        /// This function is not intended to be called except from within the
+        /// implementation of an `Allocator`.
+        pub inline fn rawAlloc(a: Allocator, len: usize, alignment: Alignment, memory_type: MemoryType, ret_addr: usize) ?[*]u8 {
+            return a.vtable.alloc(a.ptr, len, alignment, memory_type, ret_addr);
+        }
+
+        /// This function is not intended to be called except from within the
+        /// implementation of an `Allocator`.
+        pub inline fn rawResize(a: Allocator, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
+            return a.vtable.resize(a.ptr, memory, alignment, new_len, ret_addr);
+        }
+
+        /// This function is not intended to be called except from within the
+        /// implementation of an `Allocator`.
+        pub inline fn rawRemap(a: Allocator, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+            return a.vtable.remap(a.ptr, memory, alignment, new_len, ret_addr);
+        }
+
+        /// This function is not intended to be called except from within the
+        /// implementation of an `Allocator`.
+        pub inline fn rawFree(a: Allocator, memory: []u8, alignment: Alignment, ret_addr: usize) void {
+            return a.vtable.free(a.ptr, memory, alignment, ret_addr);
+        }
+
+        const Alignment = std.mem.Alignment;
+
         pub const MemoryType = enum(u4) {
             cpu = 0,
             gpu,
@@ -1372,7 +1418,6 @@ pub const mem = struct {
                 *anyopaque,
                 memory: []u8,
                 alignment: std.mem.Alignment,
-                memory_type: MemoryType,
                 new_len: usize,
                 ret_addr: usize,
             ) bool,
@@ -1380,7 +1425,6 @@ pub const mem = struct {
                 *anyopaque,
                 memory: []u8,
                 alignment: std.mem.Alignment,
-                memory_type: MemoryType,
                 new_len: usize,
                 ret_addr: usize,
             ) ?[*]u8,
@@ -1388,7 +1432,6 @@ pub const mem = struct {
                 *anyopaque,
                 memory: []u8,
                 alignment: std.mem.Alignment,
-                memory_type: MemoryType,
                 ret_addr: usize,
             ) void,
         };
@@ -1455,17 +1498,16 @@ pub const heap = struct {
             _: *anyopaque,
             memory: []u8,
             _: std.mem.Alignment,
-            _: mem.Allocator.MemoryType,
             _: usize,
         ) void {
             return memFree(memory.ptr);
         }
     };
 
-    pub const FixedBufferAllocator = @import("gpu/heap/FixedBufferAllocator.zig");
+    pub const FixedBufferAllocator = @import("cario/heap/FixedBufferAllocator.zig");
 
     ///A gpu memory arena
-    pub const ArenaAllocator = struct {};
+    pub const ArenaAllocator = @import("cario/heap/ArenaAllocator.zig");
 
     ///A gpu debug allocator
     pub const DebugAllocator = struct {};
@@ -1595,10 +1637,10 @@ pub const pipelines = struct {
         };
     };
 
-    pub const WatchCompiler = @import("gpu/pipelines/WatchCompiler.zig");
+    pub const WatchCompiler = @import("cario/pipelines/WatchCompiler.zig");
 
     ///Pipeline compiler that uses the std.Io to do async compilation
-    pub const IoCompiler = @import("gpu/pipelines/IoCompiler.zig");
+    pub const IoCompiler = @import("cario/pipelines/IoCompiler.zig");
 };
 
 ///The texturing module (contains mipmapping and compression code)
@@ -1641,7 +1683,7 @@ pub const debug = struct {
     pub const TimestampQuery = opaque {};
 };
 
-pub const kernel = @import("gpu/kernel.zig");
+pub const kernel = @import("cario/kernel.zig");
 
 inline fn backendCall(
     comptime src: std.lang.SourceLocation,
@@ -1687,8 +1729,8 @@ const layer: type = layer_none;
 const layer_none = struct {};
 
 const backend = switch (@import("builtin").os.tag) {
-    .linux, .windows => @import("gpu/gpu_vulkan.zig"),
-    .macos => @import("gpu/gpu_metal.zig"),
+    .linux, .windows => @import("cario/gpu_vulkan.zig"),
+    .macos => @import("cario/gpu_metal.zig"),
     else => @compileError("Os not supported!"),
 };
 

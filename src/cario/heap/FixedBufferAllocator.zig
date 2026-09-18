@@ -50,13 +50,11 @@ pub fn resize(
     _: *anyopaque,
     memory: []u8,
     alignment: std.mem.Alignment,
-    memory_type: gpu.mem.Allocator.MemoryType,
     new_len: usize,
     _: usize,
 ) bool {
     _ = memory; // autofix
     _ = alignment; // autofix
-    _ = memory_type; // autofix
     _ = new_len; // autofix
     return false;
 }
@@ -65,13 +63,11 @@ pub fn remap(
     _: *anyopaque,
     memory: []u8,
     alignment: std.mem.Alignment,
-    memory_type: gpu.mem.Allocator.MemoryType,
     new_len: usize,
     _: usize,
 ) ?[*]u8 {
     _ = memory; // autofix
     _ = alignment; // autofix
-    _ = memory_type; // autofix
     _ = new_len; // autofix
     return null;
 }
@@ -80,7 +76,6 @@ pub fn free(
     _: *anyopaque,
     memory: []u8,
     _: std.mem.Alignment,
-    _: gpu.mem.Allocator.MemoryType,
     _: usize,
 ) void {
     _ = memory; // autofix

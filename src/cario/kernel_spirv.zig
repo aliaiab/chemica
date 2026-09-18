@@ -190,7 +190,7 @@ pub fn exportComputePipeline(
                                 arg.* = .{
                                     .global_invocation_id = global_invocation_id,
                                     .local_invocation_id = local_invocation_id,
-                                    .workgroup_size = workgroup_size,
+                                    .workgroup_size = @splat(0),
                                     .workgroup_id = workgroup_id,
                                 };
                             },
@@ -224,7 +224,7 @@ const PushData = extern struct {
     data_pointers: [8]u64,
 };
 
-const samplers_2d = @extern(*addrspace(.constant) const extern struct {
+const samplers_2d = @extern(*addrspace(.constant) extern struct {
     data: @SpirvType(.{ .runtime_array = SamplerHeap.USampler2D }),
 }, .{
     .name = "samplers",
