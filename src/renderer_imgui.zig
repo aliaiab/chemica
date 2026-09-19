@@ -73,6 +73,7 @@ pub fn update(
                 sampler_heap,
                 font_texture,
             );
+            texture.*.TexID = @backingInt(sampler_index);
             texture.*.BackendUserData = @ptrFromInt(@backingInt(sampler_index));
             texture.*.Status = imgui.cimgui.ImTextureStatus_OK;
 
@@ -107,6 +108,8 @@ pub fn render(
 ) !void {
     _ = io; // autofix
     const pipeline = self.pipeline_compiler.getPipeline(self.pipeline) orelse return;
+
+    commands.setStateBlend(.{});
 
     var vertex_count: usize = 0;
     var index_count: usize = 0;
@@ -161,13 +164,9 @@ pub fn render(
 
             if (command.TexRef._TexData) |tex_data| {
                 if (tex_data.*.TexID != 0) {
-                    std.debug.print("tex_id: {}\n", .{tex_data.*.TexID});
-                    std.debug.print("tex_backend: {?}\n", .{tex_data.*.BackendUserData});
+                    sampler_index = @fromBackingInt(@truncate(tex_data.*.TexID));
                 }
-                sampler_index = @fromBackingInt(@truncate(@intFromPtr(tex_data.*.BackendUserData)));
             }
-
-            //const sampler_index: gpu.kernel.SamplerHeap.Index = @fromBackingInt(1);
 
             commands.launchRasterDrawIndexed(pipeline, &.{
                 @ptrFromInt(@backingInt(sampler_index)),
@@ -246,7 +245,7 @@ pub fn vertexKernel(
 }
 
 const PipelinePacket = extern struct {
-    colour: [4]f32,
+    colour: @Vector(4, f32),
     uv: [2]f32,
 };
 
@@ -255,15 +254,20 @@ pub fn fragmentKernel(
     input: PipelinePacket,
     samplers: gpu.kernel.SamplerHeap,
 ) ?[4]f32 {
-    const texel = samplers.imageSample(
+    var texel = samplers.imageSample(
         sampler,
-        [4]f32,
+        @Vector(4, f32),
         input.uv,
     );
+    texel[0] = 1;
+    texel[1] = 1;
+    texel[2] = 1;
 
-    const res = if (sampler != .null) input.colour else texel;
+    const res = input.colour * texel;
 
-    if (res[0] < 0.5) {}
+    if (res[3] < 0.5) {
+        return null;
+    }
 
     return res;
 }

@@ -50,6 +50,7 @@ pub fn main(init: std.process.Init) !void {
         gpa,
         pipeline_compiler_io.compiler(),
     );
+    defer pipeline_watch_compiler.deinit();
 
     const pipeline_compiler = if (@import("builtin").mode == .debug) pipeline_watch_compiler.compiler() else pipeline_compiler_io.compiler();
 

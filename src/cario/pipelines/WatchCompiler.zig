@@ -15,6 +15,10 @@ pub fn init(
     };
 }
 
+pub fn deinit(watch_compiler: *WatchCompiler) void {
+    watch_compiler.watcher.stop();
+}
+
 pub fn startWatching(
     self: *WatchCompiler,
 ) !void {
@@ -132,8 +136,8 @@ fn immediateCompileRasterVertexPipeline(
     );
 }
 
-fn watcherThread(watcher: *watchers.Watcher) !void {
-    try watcher.start(.{});
+fn watcherThread(watcher: *watchers.Watcher) void {
+    watcher.start(.{}) catch @panic("oom");
 }
 
 const PipelineIndex = gpu.pipelines.Compiler.PipelineIndex;

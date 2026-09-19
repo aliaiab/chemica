@@ -280,7 +280,10 @@ pub fn selectDevice(
         defer device_extension_names.deinit(allocator);
 
         try device_extension_names.appendSlice(allocator, &required_device_extensions);
-        try device_extension_names.append(allocator, vk.extensions.ext_swapchain_maintenance_1.name);
+
+        if (context.vk_ext_swapchain_maintenance_enabled) {
+            try device_extension_names.append(allocator, vk.extensions.ext_swapchain_maintenance_1.name);
+        }
 
         if (false) {
             try device_extension_names.append(allocator, vk.extensions.ext_descriptor_heap.name);
@@ -2634,7 +2637,7 @@ const required_device_extensions = [_][*:0]const u8{
     vk.extensions.ext_extended_dynamic_state_3.name,
     vk.extensions.khr_maintenance_5.name,
     vk.extensions.ext_mutable_descriptor_type.name,
-    //vk.extensions.khr_unified_image_layouts.name,
+    vk.extensions.khr_unified_image_layouts.name,
 };
 
 const Pipeline = gpu.Pipeline;
