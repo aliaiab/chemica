@@ -865,6 +865,19 @@ pub const BlendState = packed struct(u26) {
         src_alpha,
         one_minus_src_alpha,
     };
+
+    ///The standard blend state for standard alpha compositing
+    pub const alpha_compositing_state: BlendState = .{
+        .src_color = .src_alpha,
+        .dst_color = .one_minus_src_alpha,
+        .color_op = .add,
+        .src_alpha = .one,
+        .dst_alpha = .zero,
+        .alpha_op = .add,
+    };
+
+    ///The standard unblended state. Implementations will disable blending entirely if this state is passed
+    pub const unblended_state: BlendState = .{};
 };
 
 pub const RasterizationState = packed struct {

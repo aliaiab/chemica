@@ -109,7 +109,7 @@ pub fn render(
     _ = io; // autofix
     const pipeline = self.pipeline_compiler.getPipeline(self.pipeline) orelse return;
 
-    commands.setStateBlend(.{});
+    commands.setStateBlend(.alpha_compositing_state);
 
     var vertex_count: usize = 0;
     var index_count: usize = 0;
@@ -156,8 +156,8 @@ pub fn render(
             commands.setStateScissor(.{
                 @intFromFloat(command.ClipRect.x),
                 @intFromFloat(command.ClipRect.y),
-                @intFromFloat(command.ClipRect.z + command.ClipRect.x),
-                @intFromFloat(command.ClipRect.w + command.ClipRect.y),
+                @intFromFloat(command.ClipRect.z),
+                @intFromFloat(command.ClipRect.w),
             });
 
             var sampler_index: gpu.kernel.SamplerHeap.Index = .null;
@@ -264,10 +264,6 @@ pub fn fragmentKernel(
     texel[2] = 1;
 
     const res = input.colour * texel;
-
-    if (res[3] < 0.5) {
-        return null;
-    }
 
     return res;
 }

@@ -7,19 +7,18 @@ extern "C"
 
     void imguiStyleSetup()
     {
-        if (true)
-            return;
-
         ImGuiStyle &style = ImGui::GetStyle();
         ImVec4 *colors = style.Colors;
 
         ImGuiIO &io = ImGui::GetIO();
 
-        io.Fonts->Clear();
-        io.Fonts->AddFontFromMemoryTTF(font_data, font_data_size, 32);
-        io.Fonts->Build();
-        io.FontGlobalScale = 0.5;
-
+        if (false)
+        {
+            io.Fonts->Clear();
+            io.Fonts->AddFontFromMemoryTTF(font_data, font_data_size, 32);
+            io.Fonts->Build();
+            io.FontGlobalScale = 0.5;
+        }
         // Catppuccin Mocha Palette
         // --------------------------------------------------------
         const ImVec4 base = ImVec4(0.117f, 0.117f, 0.172f, 1.0f);     // #1e1e2e

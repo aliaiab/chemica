@@ -1123,16 +1123,25 @@ pub fn setStateBlend(
     command_buffer: *CommandBuffer,
     state: BlendState,
 ) void {
-    _ = state; // autofix
     const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
 
     context.device.cmdSetColorBlendEnableEXT(
         vk_command_buffer,
         0,
         &.{
-            .false,
+            if (state == BlendState.unblended_state) .false else .true,
         },
     );
+    context.device.cmdSetColorBlendEquationEXT(vk_command_buffer, 0, &.{
+        .{
+            .src_color_blend_factor = .src_alpha,
+            .dst_color_blend_factor = .one_minus_src_alpha,
+            .color_blend_op = .add,
+            .src_alpha_blend_factor = .one,
+            .dst_alpha_blend_factor = .zero,
+            .alpha_blend_op = .add,
+        },
+    });
     context.device.cmdSetColorWriteMaskEXT(
         vk_command_buffer,
         1,
