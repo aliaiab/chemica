@@ -18,7 +18,7 @@ pub fn selectDevice(
     _ = options; // autofix
     _ = arena; // autofix
     context.gpa = gpa;
-    context.device = (try metal.getAllDevices(gpa))[0];
+    context.device = try .init();
     context.queue = try context.device.createCommandQueue();
     context.memory_heap = try context.device.createHeap();
 }
