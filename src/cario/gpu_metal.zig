@@ -346,6 +346,7 @@ pub fn swapchainPresent(
     _ = swapchain; // autofix
     _ = semaphore; // autofix
 }
+
 pub fn placeCommandTimestampQuery(
     command_buffer: *CommandBuffer,
 ) *gpu.debug.TimestampQuery {
@@ -357,32 +358,30 @@ pub fn queryTimestampValue(
     query: *gpu.debug.TimestampQuery,
 ) ?u64 {
     _ = query;
-    @panic("");
+    return 0;
 }
 
-pub fn waitIdle() void {
-    @panic("");
-}
+pub fn waitIdle() void {}
 
 pub fn queueWaitIdle(queue: gpu.Queue) void {
     _ = queue; // autofix
-    @panic("");
 }
 
 pub fn createSemaphore(initial_value: u64) *gpu.Semaphore {
-    _ = initial_value; // autofix
-    @panic("");
+    _ = initial_value;
+    const handle = context.device.createSharedEvent() catch unreachable;
+
+    return @ptrCast(handle.handle.value);
 }
 
 pub fn destroySemaphore(semaphore: *gpu.Semaphore) void {
     _ = semaphore; // autofix
-    @panic("");
 }
 
 pub fn semaphoreWait(semaphore: *gpu.Semaphore, wait_value: u64) void {
-    _ = semaphore; // autofix
-    _ = wait_value; // autofix
-    @panic("");
+    const event: metal.SharedEvent = .{ .handle = .{ .value = @ptrCast(@alignCast(semaphore)) } };
+
+    _ = event.wait(wait_value, std.math.maxInt(u64));
 }
 
 const RasterPipelineDescription = gpu.RasterPipelineDescription;

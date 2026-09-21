@@ -35,6 +35,20 @@ pub const Heap = struct {
     handle: objc.Object,
 };
 
+pub const SharedEvent = struct {
+    handle: objc.Object,
+
+    pub fn wait(self: SharedEvent, wait_value: u64, timeout: u64) bool {
+        const success = self.handle.msgSend(
+            bool,
+            objc.sel("wait"),
+            .{ @as(c_ulong, wait_value), @as(c_ulong, timeout) },
+        );
+
+        return success;
+    }
+};
+
 // Re-export convenience functions
 pub const isAvailable = @import("metal/device.zig").isAvailable;
 pub const getDeviceCount = @import("metal/device.zig").getDeviceCount;

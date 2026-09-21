@@ -68,10 +68,28 @@ pub const MetalDevice = struct {
     }
 
     pub fn createHeap(self: *MetalDevice) MetalError!Heap {
-        const queue = self.handle.msgSend(objc.Object, objc.sel("makeHeap"), .{});
+        const MTLHeapDescriptor = objc.getClass("MTLHeapDescriptor").?;
+        const desc = MTLHeapDescriptor.msgSend(
+            objc.Object,
+            objc.sel("heapDescriptor:type:storageMode:cpuCacheMode:hazardTrackingMode:resourceOptions:size:sparsePageSize:"),
+            .{
+                @intFromEnum(@import("../metal.zig").ResourceStorageMode.private),
+            },
+        );
+
+        const queue = self.handle.msgSend(objc.Object, objc.sel("newHeapWithDescriptor:"), .{
+            desc,
+        });
         if (queue.value == null) return MetalError.BufferCreationFailed;
 
         return .{ .handle = queue };
+    }
+
+    pub fn createSharedEvent(self: *MetalDevice) MetalError!SharedEvent {
+        const handle = self.handle.msgSend(objc.Object, objc.sel("makeSharedEvent"), .{});
+        if (handle.value == null) return MetalError.BufferCreationFailed;
+
+        return .{ .handle = handle };
     }
 
     /// Compile Metal shader from source code at runtime
@@ -190,3 +208,4 @@ pub fn getAllDevices(allocator: std.mem.Allocator) ![]MetalDevice {
 }
 
 const Heap = @import("../metal.zig").Heap;
+const SharedEvent = @import("../metal.zig").SharedEvent;
