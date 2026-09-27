@@ -1,11 +1,13 @@
-render_pipeline: *gpu.Pipeline,
-fill_pipeline: *gpu.Pipeline,
+render_pipeline: gpu.pipelines.Compiler.PipelineIndex,
+fill_pipeline: gpu.pipelines.Compiler.PipelineIndex,
 
 pub fn init(
     gpa: gpu.mem.Allocator,
+    pipeline_compiler: gpu.pipelines.Compiler,
 ) !Simulation {
     _ = gpa; // autofix
     const self: Simulation = .{};
+    _ = pipeline_compiler;
 
     return self;
 }
@@ -109,4 +111,5 @@ comptime {
 }
 
 const Simulation = @This();
-const gpu = @import("gpu.zig");
+const gpu = carol.gpu;
+const carol = @import("carol.zig");

@@ -143,6 +143,6 @@ fn watcherThread(watcher: *watchers.Watcher) void {
 const PipelineIndex = gpu.pipelines.Compiler.PipelineIndex;
 const Pipeline = gpu.Pipeline;
 const watchers = @import("../watchers.zig");
-const gpu = @import("../../gpu.zig");
+const gpu = @import("../gpu.zig");
 const std = @import("std");
 const WatchCompiler = @This();

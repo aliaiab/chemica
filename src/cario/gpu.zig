@@ -183,6 +183,7 @@ pub fn getPipelineMachineCodeEntries(
     });
 }
 
+///Returns the size, alignment and memory type for the given texture description
 pub fn textureMemoryDescription(
     description: TextureDescription,
 ) ResourceMemoryDescription {
@@ -201,16 +202,8 @@ pub fn formatTextureMemory(
     });
 }
 
-///Unformats the specifed memory region as a texture
-///It is then illegal behaviour to create texture descriptors from the specified memory region
-pub fn unformatTextureMemory(
-    memory: []const TextureByte,
-) void {
-    return backendCall(@src(), .{
-        memory,
-    });
-}
-
+///Formats the specified memory region as an acceleration structure
+///It is then illegal behaviour to directly modify, read or take memory slices of the specified memory
 pub fn formatAccelerationStructureMemory(
     memory: []AccelerationStructureByte,
 ) void {
@@ -219,7 +212,7 @@ pub fn formatAccelerationStructureMemory(
     });
 }
 
-pub fn unformatAccelerationStructureMemory(
+pub fn unformatMemory(
     memory: []AccelerationStructureByte,
 ) void {
     return backendCall(@src(), .{
@@ -568,9 +561,9 @@ pub fn semaphoreValue(semaphore: *Semaphore) u64 {
 
 ///Creates a swapchain from a platform-specific window handle
 pub fn createSwapchain(
-    window_handle: *anyopaque,
+    surface: *const carol.surface.Surface,
 ) *Swapchain {
-    return backendCall(@src(), .{window_handle});
+    return backendCall(@src(), .{surface});
 }
 
 ///Destroy a swapchain and its associated memory
@@ -582,6 +575,10 @@ pub fn destroySwapchain(swapchain: *Swapchain) void {
 pub fn swapchainObtainTexture(
     swapchain: *Swapchain,
 ) []gpu.TextureByte {
+    return backendCall(@src(), .{swapchain});
+}
+
+pub fn swapchainGetPresentTiming(swapchain: *Swapchain) u64 {
     return backendCall(@src(), .{swapchain});
 }
 
@@ -883,6 +880,8 @@ pub const BlendState = packed struct(u26) {
 pub const RasterizationState = packed struct {
     fill_mode: PolygonMode,
     cull_mode: RasterPipelineDescription.Cull,
+    conservative_raster: bool = false,
+    shading_rate: u32,
 };
 
 pub const CompareOp = enum(u4) {
@@ -1301,6 +1300,12 @@ pub const mem = struct {
             return &(try allocator.alloc(T, 1, memory_type))[0];
         }
 
+        pub fn allocSamplerHeap(allocator: Allocator, size: usize) ![]TextureDescriptor {
+            const desc = gpu.samplerHeapMemoryDescription(size * @sizeOf(TextureDescriptor));
+
+            return allocator.alloc(TextureDescriptor, desc.size / @sizeOf(TextureDescriptor), desc.memory_type);
+        }
+
         ///Allocates texture memory and registers it
         pub fn allocTexture(
             allocator: Allocator,
@@ -1347,6 +1352,8 @@ pub const mem = struct {
             allocator: Allocator,
             memory: anytype,
         ) void {
+            gpu.unformatMemory(memory);
+
             allocator.vtable.free(
                 allocator.ptr,
                 @ptrCast(memory),
@@ -1354,15 +1361,6 @@ pub const mem = struct {
                 .gpu,
                 @returnAddress(),
             );
-        }
-
-        ///Defer a free texture command
-        pub fn freeTexture(
-            allocator: Allocator,
-            memory: []TextureByte,
-        ) void {
-            _ = memory; // autofix
-            _ = allocator; // autofix
         }
 
         pub fn beginFreeGroup(
@@ -1517,10 +1515,10 @@ pub const heap = struct {
         }
     };
 
-    pub const FixedBufferAllocator = @import("cario/heap/FixedBufferAllocator.zig");
+    pub const FixedBufferAllocator = @import("heap/FixedBufferAllocator.zig");
 
     ///A gpu memory arena
-    pub const ArenaAllocator = @import("cario/heap/ArenaAllocator.zig");
+    pub const ArenaAllocator = @import("heap/ArenaAllocator.zig");
 
     ///A gpu debug allocator
     pub const DebugAllocator = struct {};
@@ -1650,10 +1648,10 @@ pub const pipelines = struct {
         };
     };
 
-    pub const WatchCompiler = @import("cario/pipelines/WatchCompiler.zig");
+    pub const WatchCompiler = @import("pipelines/WatchCompiler.zig");
 
     ///Pipeline compiler that uses the std.Io to do async compilation
-    pub const IoCompiler = @import("cario/pipelines/IoCompiler.zig");
+    pub const IoCompiler = @import("pipelines/IoCompiler.zig");
 };
 
 ///The texturing module (contains mipmapping and compression code)
@@ -1696,7 +1694,7 @@ pub const debug = struct {
     pub const TimestampQuery = opaque {};
 };
 
-pub const kernel = @import("cario/kernel.zig");
+pub const kernel = @import("kernel.zig");
 
 inline fn backendCall(
     comptime src: std.lang.SourceLocation,
@@ -1742,17 +1740,9 @@ const layer: type = layer_none;
 const layer_none = struct {};
 
 const backend = switch (@import("builtin").os.tag) {
-    .linux, .windows => @import("cario/gpu_vulkan.zig"),
-    .macos => @import("cario/gpu_metal.zig"),
+    .linux, .windows => @import("gpu_vulkan.zig"),
+    .macos => @import("gpu_metal.zig"),
     else => @compileError("Os not supported!"),
-};
-
-pub const Simulation = switch (@import("builtin").os.tag) {
-    else => @import("renderer.zig").Simulation,
-};
-
-pub const Context = switch (@import("builtin").os.tag) {
-    else => @import("renderer.zig").Context,
 };
 
 test {
@@ -1760,4 +1750,5 @@ test {
 }
 
 const gpu = @This();
+const carol = @import("../carol.zig");
 const std = @import("std");

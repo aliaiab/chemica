@@ -188,8 +188,8 @@ comptime {
 
 const asym = @import("asym.zig");
 const kernel = gpu.kernel;
-const gpu = @import("gpu.zig");
-const common = @import("lib").shaders.common;
+const gpu = carol.gpu;
+const carol = @import("carol.zig");
 const math = @import("math.zig");
 const std = @import("std");
 const AsymRenderer = @This();

@@ -19,15 +19,13 @@ pub fn main(init: std.process.Init) !void {
         std.debug.assert(rdoc_api.?.SetCaptureOptionU32.?(renderdoc.eRENDERDOC_Option_DebugOutputMute, 0) != 0);
     }
 
-    try glaze.init(arena);
-    defer glaze.deinit();
+    try carol.surface.deviceSelect();
+    defer carol.surface.deviceFree();
 
-    const surface = try glaze.createSurface(arena, .{
-        .preferred_width = 640,
-        .preferred_height = 480,
-        .name = "Chemica",
+    const surface = try carol.surface.createSurface(.{
+        .label = "Chemica",
     });
-    defer glaze.destroySurface(surface);
+    defer carol.surface.surfaceFree(surface);
 
     var asym_geo_context: asym.geo.Context = .init(gpa);
     defer asym_geo_context.deinit();
@@ -36,10 +34,19 @@ pub fn main(init: std.process.Init) !void {
 
     _ = imgui.createContext(.{});
 
-    try imgui.impl.glfw.initForOpenGL(@ptrCast(glaze.surfaceGetPlatformHandle(surface)), .{});
+    try imgui.impl.glfw.initForOpenGL(@ptrCast(carol.surface.surfaceGetSystemHandle(surface)), .{});
 
-    var gpu_context = try gpu.Context.init(arena, init.io);
-    defer gpu_context.deinit();
+    try gpu.selectDevice(.{}, arena, gpa);
+    defer gpu.freeDevice(gpa);
+
+    const gpu_gpa: gpu.mem.Allocator = gpu.heap.page_allocator;
+
+    const gpu_staging_buffer = try gpu_gpa.alloc(u8, 32 * 1024 * 1024, .gpu_cpu_writable);
+    var gpu_staging_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
+    gpu_staging_fbas[0] = .init(gpu_staging_buffer[0 .. gpu_staging_buffer.len / 2]);
+    gpu_staging_fbas[1] = .init(gpu_staging_buffer[gpu_staging_buffer.len / 2 ..]);
+    const gpu_staging_arena = gpu_staging_fbas[0].allocator();
+    _ = gpu_staging_arena;
 
     var pipeline_compiler_io: gpu.pipelines.IoCompiler = .{
         .io = init.io,
@@ -55,9 +62,6 @@ pub fn main(init: std.process.Init) !void {
     const pipeline_compiler = if (@import("builtin").mode == .debug) pipeline_watch_compiler.compiler() else pipeline_compiler_io.compiler();
 
     _ = try pipeline_compiler.addModuleFile(@ptrCast(@import("options").exe_kernel_object));
-
-    var gpu_start_timestamp: ?*gpu.debug.TimestampQuery = null;
-    var gpu_end_timestamp: ?*gpu.debug.TimestampQuery = null;
 
     //imgui.getStyle()._MainScale = content_scale;
     //imgui.cimgui.ImGuiStyle_ScaleAllSizes(imgui.getStyle(), content_scale);
@@ -140,27 +144,22 @@ pub fn main(init: std.process.Init) !void {
         ptr.* = name.ptr;
     }
 
-    var simulation: Simulation = try .init(
-        &gpu_context,
-        arena,
-        voxel_materials,
-        voxel_materials_visual,
-    );
-    defer simulation.deinit(arena);
-
-    const gpu_swapchain = gpu.createSwapchain(glaze.surfaceGetPlatformHandle(surface));
+    const gpu_swapchain = gpu.createSwapchain(surface);
     defer gpu.destroySwapchain(gpu_swapchain);
 
     const frame_semaphore = gpu.createSemaphore(0);
     defer gpu.destroySemaphore(frame_semaphore);
 
-    gpu_context.sampler_heap_alloc = gpu_context.sampler_heap_fba.allocator();
+    const sampler_heap = try gpu_gpa.allocSamplerHeap(2048);
+
+    var sampler_heap_fba: gpu.heap.FixedBufferAllocator = .init(@ptrCast(sampler_heap));
+    const sampler_heap_alloc = sampler_heap_fba.allocator();
 
     var imgui_renderer = try renderer_imgui.init(
         pipeline_compiler,
-        gpu_context.sampler_heap,
+        sampler_heap,
         gpu.heap.page_allocator,
-        gpu_context.sampler_heap_alloc,
+        sampler_heap_alloc,
     );
 
     const AsymRenderer = @import("AsymRenderer.zig");
@@ -217,20 +216,6 @@ pub fn main(init: std.process.Init) !void {
 
     var csg_reparent_commands: std.ArrayList(CSGReparentCommand) = .empty;
 
-    try simulation.point_lights.append(arena, .{
-        .position = .{ 128, 128, 64 },
-        .radiance = 1,
-        .colour = packUnorm4x8(.{ 0.5, 0.5, 0.5, 1 }),
-    });
-
-    camera.target = .{
-        @floatFromInt(simulation.width / 2),
-        @floatFromInt(simulation.height / 2),
-        @floatFromInt(simulation.depth / 2),
-    };
-
-    simulation.enable_simulation = false;
-
     imgui.getIO().ConfigFlags |= imgui.cimgui.ImGuiConfigFlags_DockingEnable;
 
     var maybe_sim_file: ?std.Io.File = null;
@@ -241,10 +226,6 @@ pub fn main(init: std.process.Init) !void {
     defer if (maybe_sim_file) |sim_file| {
         csg_tree.saveToFile(init.io, gpa, sim_file) catch @panic("");
     };
-
-    const heat_measurement_values = try arena.alloc(f32, 512);
-
-    const enthalpy_change_values = try arena.alloc(f32, 512);
 
     const dir_to_browse = try std.Io.Dir.cwd().openDir(
         init.io,
@@ -268,9 +249,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var sample_scenes_thumbnails: std.ArrayList(?[]u8) = .empty;
     var scene_thumbnails: std.StringHashMapUnmanaged(?[]u8) = .empty;
-    var sample_scenes: std.ArrayList(CSGTree) = .empty;
 
     const sample_scenes_zon_paths = [_][:0]const u8{
         //("assets/sample_scenes/metal_blocks.chemc.zon"),
@@ -281,41 +260,12 @@ pub fn main(init: std.process.Init) !void {
         sample_scenes_zon[i] = @embedFile(path);
     };
 
-    if (false) {
-        for (sample_scenes_zon, sample_scenes_zon_paths) |sample_scene_zon, path| {
-            const sample_scene = try sample_scenes.addOne(arena);
-            sample_scene.* = try .initFromZonMemory(sample_scene_zon, arena);
-
-            simulation.camera = camera;
-
-            const thumbnail = try simulation.gpu_sim.renderSceneThumbnail(
-                gpu_context,
-                &simulation,
-                sample_scene,
-                path,
-                arena,
-            );
-
-            try sample_scenes_thumbnails.append(arena, thumbnail);
-        }
-    }
-
     imgui.getIO().WantSaveIniSettings = false;
     imgui.getIO().IniSavingRate = 0;
 
     var render_sdf_raymarched: bool = false;
 
     const asym_typeface = try asym.typeface.loadTypeFaceFromTTf(&asym_geo_context, @embedFile("assets/JetBrainsMono_regular.ttf"));
-
-    const typeface_textures: []?[]gpu.TextureByte = try arena.alloc(?[]gpu.TextureByte, 1);
-
-    typeface_textures[0] = try gpu_context.loadTypeFaceTextureFromTTF(
-        gpa,
-        init.io,
-        &asym_geo_context,
-        asym_typeface,
-        @embedFile("assets/JetBrainsMono_regular.ttf"),
-    );
 
     asym.geo.setDefaultStateTextTypeFace(asym_typeface);
 
@@ -335,12 +285,9 @@ pub fn main(init: std.process.Init) !void {
         transient_arena.* = .init(gpu.heap.page_allocator);
     }
 
-    while (try glaze.surfacePoll(arena, surface)) |surface_poll| {
-        gpu_context.window_extents = .{
-            surface_poll.surface_state.extent[0],
-            surface_poll.surface_state.extent[1],
-        };
+    defer gpu.waitIdle();
 
+    while (carol.surface.surfacePoll(surface)) |surface_poll| {
         if (next_frame > 2) {
             frame_semaphore.wait(next_frame - 2);
         }
@@ -352,8 +299,9 @@ pub fn main(init: std.process.Init) !void {
         const gpu_transient_arena = gpu_transient_fbas[next_frame % 2].allocator();
 
         imgui.impl.glfw.newFrame();
+        const input_state = &surface_poll.input_state;
 
-        const keyboard_input = &surface_poll.keyboard_input;
+        const keyboard_input = &input_state.keyboard;
 
         const start_capture = keyboard_input.keys.get(.f12) == .press;
 
@@ -370,33 +318,6 @@ pub fn main(init: std.process.Init) !void {
         const swapchain_texture = gpu_swapchain.obtainTexture();
 
         if (swapchain_texture.len == 0) continue;
-
-        gpu_context.swapchain_texture = swapchain_texture;
-        gpu_context.beginFrame();
-        simulation.gpu_sim.command_buffer = gpu_context.command_buffer;
-
-        var gpu_start_time: ?u64 = if (gpu_start_timestamp) |timestamp| gpu.queryTimestampValue(timestamp) orelse null else null;
-        var gpu_end_time: ?u64 = if (gpu_end_timestamp) |timestamp| gpu.queryTimestampValue(timestamp) orelse null else null;
-
-        while (gpu_start_time == null and gpu_start_timestamp != null) {
-            gpu_start_time = gpu.queryTimestampValue(gpu_start_timestamp.?);
-        }
-
-        while (gpu_end_time == null and gpu_end_timestamp != null) {
-            gpu_end_time = gpu.queryTimestampValue(gpu_end_timestamp.?);
-        }
-
-        if (gpu_start_time != null) {
-            gpu_start_timestamp = null;
-        }
-
-        if (gpu_end_time != null) {
-            gpu_end_timestamp = null;
-        }
-
-        if (gpu_start_timestamp == null or gpu.queryTimestampValue(gpu_start_timestamp.?) != null) {
-            gpu_start_timestamp = gpu.placeCommandTimestampQuery(gpu_context.command_buffer);
-        }
 
         var enable_transform_gizmo: bool = false;
 
@@ -419,8 +340,8 @@ pub fn main(init: std.process.Init) !void {
         //Camera Controls
         {
             const cursor_pos_f64: [2]f64 = .{
-                @floatCast(surface_poll.mouse_input.cursor_position[0]),
-                @floatCast(surface_poll.mouse_input.cursor_position[1]),
+                @floatCast(input_state.mouse.cursor_position[0]),
+                @floatCast(input_state.mouse.cursor_position[1]),
             };
             const cursor_pos: [2]f32 = .{
                 @floatCast(cursor_pos_f64[0]),
@@ -430,8 +351,8 @@ pub fn main(init: std.process.Init) !void {
             const cursor_delta_x = cursor_pos[0] - last_mouse_pos[0];
             const cursor_delta_y = cursor_pos[1] - last_mouse_pos[1];
 
-            const norm_delta_x = cursor_delta_x / @as(f32, @floatFromInt(surface_poll.surface_state.extent[0]));
-            const norm_delta_y = cursor_delta_y / @as(f32, @floatFromInt(surface_poll.surface_state.extent[1]));
+            const norm_delta_x = cursor_delta_x / @as(f32, @floatFromInt(surface.width));
+            const norm_delta_y = cursor_delta_y / @as(f32, @floatFromInt(surface.height));
 
             const angle_x = norm_delta_x * std.math.tau;
             const angle_y = norm_delta_y * std.math.tau;
@@ -449,7 +370,7 @@ pub fn main(init: std.process.Init) !void {
 
             new_eye += .{ camera.target[0], camera.target[1], camera.target[2], 0 };
 
-            if (surface_poll.mouse_input.buttons.get(.right) != .release and !imgui.isAnyItemActive() and !imguizmo.ImGuizmo_IsUsing()) {
+            if (input_state.mouse.buttons.get(.right) != .release and !imgui.isAnyItemActive() and !imguizmo.ImGuizmo_IsUsing()) {
                 camera.eye = .{ new_eye[0], new_eye[1], new_eye[2] };
             }
 
@@ -465,8 +386,6 @@ pub fn main(init: std.process.Init) !void {
             camera.eye = eye;
 
             last_mouse_pos = cursor_pos;
-
-            simulation.camera = camera;
         }
 
         //Thumbnail gen
@@ -486,7 +405,7 @@ pub fn main(init: std.process.Init) !void {
 
         camera.projection = @bitCast((zmath.perspectiveFovRhGl(
             camera.fov,
-            @as(f32, @floatFromInt(surface_poll.surface_state.extent[0])) / @as(f32, @floatFromInt(surface_poll.surface_state.extent[1])),
+            @as(f32, @floatFromInt(surface.width)) / @as(f32, @floatFromInt(surface.height)),
             camera.near,
             camera.far,
         )));
@@ -496,7 +415,7 @@ pub fn main(init: std.process.Init) !void {
             .{ 0, 1, 0, 0 },
         )));
 
-        const aspect_ratio: f32 = @as(f32, @floatFromInt(surface_poll.surface_state.extent[0])) / @as(f32, @floatFromInt(surface_poll.surface_state.extent[1]));
+        const aspect_ratio: f32 = @as(f32, @floatFromInt(surface.width)) / @as(f32, @floatFromInt(surface.height));
 
         if (true) {
             asym.geo.beginView(
@@ -510,8 +429,8 @@ pub fn main(init: std.process.Init) !void {
                 .{
                     0,
                     0,
-                    @floatFromInt(surface_poll.surface_state.extent[0]),
-                    @floatFromInt(surface_poll.surface_state.extent[1]),
+                    @floatFromInt(surface.width),
+                    @floatFromInt(surface.height),
                 },
             );
         } else {
@@ -521,15 +440,11 @@ pub fn main(init: std.process.Init) !void {
                 .{
                     0,
                     0,
-                    @floatFromInt(surface_poll.surface_state.extent[0]),
-                    @floatFromInt(surface_poll.surface_state.extent[1]),
+                    @floatFromInt(surface.width),
+                    @floatFromInt(surface.height),
                 },
             );
         }
-
-        simulation.model_matrix = @bitCast(zmath.transpose(zmath.identity()));
-        simulation.view_matrix = camera.view;
-        simulation.projection_matrix = camera.projection;
 
         csg_program.clear();
 
@@ -537,22 +452,6 @@ pub fn main(init: std.process.Init) !void {
         _ = scene_2d_root_index; // autofix
         const scene_root_index = try csg_tree_3d.compile(arena, &csg_program);
         _ = scene_root_index; // autofix
-
-        const previous_enthalpy = heat_measurement_values[(simulation.timestep_index -| 1) % (heat_measurement_values.len)];
-
-        heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] = @floatFromInt(simulation.measured_heat);
-        heat_measurement_values[simulation.timestep_index % (heat_measurement_values.len)] /= @floatFromInt(1);
-
-        enthalpy_change_values[simulation.timestep_index % (enthalpy_change_values.len)] = @as(f32, @floatFromInt(simulation.measured_heat)) - previous_enthalpy;
-
-        if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Space)) {
-            simulation.enable_simulation = !simulation.enable_simulation;
-        }
-
-        if (keyboard_input.keys.get(.r) == .press) {
-            simulation.csg_dirty = true;
-            simulation.enable_simulation = false;
-        }
 
         if (imgui.isKeyPressed(imgui.cimgui.ImGuiKey_Delete)) {
             for (selected_node_handles.items, 0..) |selected_node, i| {
@@ -570,8 +469,6 @@ pub fn main(init: std.process.Init) !void {
                     );
 
                     _ = selected_node_handles.swapRemove(i);
-
-                    simulation.csg_dirty = true;
                 }
             }
         }
@@ -587,8 +484,8 @@ pub fn main(init: std.process.Init) !void {
                 imguizmo.setRect(
                     0,
                     0,
-                    @floatFromInt(surface_poll.surface_state.extent[0]),
-                    @floatFromInt(surface_poll.surface_state.extent[1]),
+                    @floatFromInt(surface.width),
+                    @floatFromInt(surface.height),
                 );
 
                 imguizmo.enable(enable_transform_gizmo);
@@ -684,8 +581,6 @@ pub fn main(init: std.process.Init) !void {
 
                     selected_node_handles.clearRetainingCapacity();
                     try selected_node_handles.append(arena, union_node_handle);
-
-                    simulation.csg_dirty = true;
                 }
 
                 imgui.showDemoWindow(.{});
@@ -715,7 +610,6 @@ pub fn main(init: std.process.Init) !void {
                                 selected_node_handles.clearRetainingCapacity();
                                 csg_tree_3d = try .init(arena);
                                 csg_program.clear();
-                                simulation.csg_dirty = true;
                                 maybe_sim_file = null;
                             }
                             if (imgui.menuItem("Open", .{})) {
@@ -739,8 +633,6 @@ pub fn main(init: std.process.Init) !void {
 
                                         sim_file_path = try std.Io.Dir.cwd().realPathFileAlloc(init.io, path, arena);
                                         maybe_sim_file = file;
-                                        simulation.csg_dirty = true;
-                                        simulation.enable_simulation = false;
                                     }
                                 }
                             }
@@ -779,21 +671,21 @@ pub fn main(init: std.process.Init) !void {
                     if (selected_node_handles.items.len != 0) {
                         const selected_node = csg_tree.getNode(selected_node_handles.items[0]);
 
-                        simulation.csg_dirty |= imgui.dragFloat3(
+                        _ = imgui.dragFloat3(
                             "Translation",
                             "{}",
                             @ptrCast(&selected_node.transform.position[0]),
                             .{},
                         );
 
-                        simulation.csg_dirty |= imgui.dragFloat(
+                        _ = imgui.dragFloat(
                             "Scale",
                             "{}",
                             &selected_node.transform.uniform_scale,
                             .{},
                         );
 
-                        simulation.csg_dirty |= imgui.dragFloat3(
+                        _ = imgui.dragFloat3(
                             "Rotation",
                             "{}",
                             @ptrCast(&selected_node.transform.rotation[0]),
@@ -802,21 +694,21 @@ pub fn main(init: std.process.Init) !void {
 
                         //selected_node.transform.rotation = zmath.normalize4(selected_node.transform.rotation);
 
-                        simulation.csg_dirty |= imgui.dragFloat(
+                        _ = imgui.dragFloat(
                             "Rounding",
                             "{}",
                             &selected_node.modifiers.rounding.rounding,
                             .{},
                         );
 
-                        simulation.csg_dirty |= imgui.dragFloat(
+                        _ = imgui.dragFloat(
                             "Extrusion",
                             "{}",
                             &selected_node.modifiers.extrusion,
                             .{},
                         );
 
-                        simulation.csg_dirty |= imgui.dragFloat(
+                        _ = imgui.dragFloat(
                             "Revolution",
                             "{}",
                             &selected_node.modifiers.revolution,
@@ -844,7 +736,6 @@ pub fn main(init: std.process.Init) !void {
                                 for (voxel_material_names.items, 0..) |mat_name, mat_id| {
                                     if (std.mem.eql(u8, mat_name, str)) {
                                         material = mat_id;
-                                        simulation.csg_dirty = true;
                                         break;
                                     }
                                 }
@@ -868,15 +759,9 @@ pub fn main(init: std.process.Init) !void {
                                 node.* = .{};
                                 node.data = .editorDefault(tag);
                                 node.transform = .identity;
-                                node.transform.position = .{
-                                    @floatFromInt(simulation.width / 2),
-                                    @floatFromInt(simulation.height / 2),
-                                    @floatFromInt(simulation.depth / 2),
-                                };
                                 node.material = @fromBackingInt(@intCast(1));
 
                                 node.name = field_name;
-                                simulation.csg_dirty = true;
 
                                 selected_node_handles.clearRetainingCapacity();
                                 try selected_node_handles.append(arena, node_handle);
@@ -914,8 +799,6 @@ pub fn main(init: std.process.Init) !void {
                             arena,
                             reparent.source,
                         );
-
-                        simulation.csg_dirty = true;
                     }
 
                     csg_reparent_commands.clearRetainingCapacity();
@@ -923,41 +806,15 @@ pub fn main(init: std.process.Init) !void {
                 imgui.end();
 
                 if (imgui.begin("Simulation", .{})) {
-                    if (imgui.button("Play/Pause Simulation", .{})) {
-                        simulation.enable_simulation = !simulation.enable_simulation;
-                    }
+                    if (imgui.button("Play/Pause Simulation", .{})) {}
 
                     imgui.sameLine(.{});
 
-                    _ = imgui.checkbox("Radiative Cooling", &simulation.enable_radiative_cooling);
-
-                    if (imgui.button("Reset Simulation", .{})) {
-                        simulation.csg_dirty = true;
-                        simulation.enable_simulation = false;
-                    }
-
-                    var heat_unit: []const u8 = "J";
-                    var heat_value: f32 = @floatFromInt(simulation.measured_heat);
-
-                    if (simulation.measured_heat >= 1e3 and simulation.measured_heat < 1e6) {
-                        heat_value *= 1e-3;
-                        heat_unit = "KJ";
-                    }
-
-                    if (simulation.measured_heat >= 1e6) {
-                        heat_value *= 1e-6;
-                        heat_unit = "MJ";
-                    }
-
-                    imgui.text("Total Heat: {:.2}{s}", .{ heat_value, heat_unit });
-
-                    imgui.plotLines("Total Enthalpy: ", heat_measurement_values);
-                    imgui.plotLines("Enthalpy Change: ", enthalpy_change_values);
+                    if (imgui.button("Reset Simulation", .{})) {}
                 }
                 imgui.end();
 
                 if (imgui.begin("Renderer", .{})) {
-                    _ = imgui.valueEdit("Mode", &simulation.renderer_view_type, .{});
                     _ = imgui.checkbox("Render Continous SDF", &render_sdf_raymarched);
 
                     if (imgui.button("Take Renderdoc Capture", .{})) {
@@ -966,46 +823,7 @@ pub fn main(init: std.process.Init) !void {
 
                     imgui.text("Performance Stats", .{});
 
-                    imgui.text("GPU Time {}\n", .{
-                        @as(f64, @floatFromInt((gpu_end_time orelse 0) -| (gpu_start_time orelse 0))) / @as(f64, @floatFromInt(std.time.ns_per_ms)),
-                    });
-
                     imgui.separator(.{});
-
-                    const total_primary_rays: f32 = @floatFromInt(simulation.ray_stats.total_primary_rays);
-                    const total_primary_ray_steps: f32 = @floatFromInt(simulation.ray_stats.total_primary_ray_steps);
-                    const total_primary_ray_hits: f32 = @floatFromInt(simulation.ray_stats.total_primary_ray_hits);
-
-                    var mean_steps_per_ray = total_primary_ray_steps / total_primary_rays;
-
-                    if (std.math.isNan(mean_steps_per_ray)) {
-                        mean_steps_per_ray = 1;
-                    }
-
-                    var fmt_buf: [1024]u8 = undefined;
-
-                    var fba_instance = std.heap.FixedBufferAllocator.init(&fmt_buf);
-                    const fba = fba_instance.allocator();
-
-                    imgui.text("Primary Rays {s}", .{try formatNumberWithUnits(fba, total_primary_rays)});
-                    imgui.text("Primary Ray Hits {s}", .{try formatNumberWithUnits(fba, total_primary_ray_hits)});
-                    imgui.text("Primary Ray Misses {s}", .{try formatNumberWithUnits(fba, total_primary_rays - total_primary_ray_hits)});
-                    imgui.text("Primary Ray Steps {s}", .{try formatNumberWithUnits(fba, total_primary_ray_steps)});
-                    imgui.text("Primary Ray Steps (Max) {s}", .{try formatNumberWithUnits(fba, @floatFromInt(simulation.ray_stats.max_primary_ray_steps))});
-                    imgui.text("Primary Ray Steps (Min) {s}", .{try formatNumberWithUnits(fba, @floatFromInt(simulation.ray_stats.min_primary_ray_steps))});
-
-                    imgui.text("Mean Ray Steps Per Primary Ray", .{});
-
-                    const colors: [3][4]f32 = .{
-                        .{ 0, 1, 0, 1 },
-                        .{ 0.5, 0.4, 0, 1 },
-                        .{ 0.9, 0.1, 0, 1 },
-                    };
-
-                    imgui.sameLine(.{});
-                    imgui.pushStyleColor(.Text, colors[@intFromFloat(@floor(@log10(mean_steps_per_ray)))]);
-                    imgui.text("{d:.2}", .{mean_steps_per_ray});
-                    imgui.popStyleColor();
                 }
                 imgui.end();
 
@@ -1026,7 +844,6 @@ pub fn main(init: std.process.Init) !void {
 
                                 csg_tree_3d = try .initFromFile(init.io, maybe_sim_file.?, arena);
                                 selected_node_handles.clearRetainingCapacity();
-                                simulation.csg_dirty = true;
                             }
                         }
                     }
@@ -1035,25 +852,6 @@ pub fn main(init: std.process.Init) !void {
                     imgui.text("Sample Scenes", .{});
 
                     imgui.pushId("samples");
-
-                    if (sample_scenes_thumbnails.items.len != 0) {
-                        for (sample_scenes_thumbnails.items, sample_scenes.items, sample_scenes_zon_paths) |thumbnail, sample_scene, path| {
-                            const name = std.fs.path.basename(path);
-                            imgui.text("{s}", .{name});
-                            if (imgui.imageButton(
-                                .fromFmt("{s}", .{name}),
-                                thumbnail,
-                                .{ 100, 100 },
-                                .{},
-                            )) {
-                                //TODO: make a deep copy
-                                csg_tree_3d = sample_scene;
-                                selected_node_handles.clearRetainingCapacity();
-                                simulation.csg_dirty = true;
-                                simulation.enable_simulation = false;
-                            }
-                        }
-                    }
 
                     imgui.popId();
                 }
@@ -1068,7 +866,7 @@ pub fn main(init: std.process.Init) !void {
                     .no_move = true,
                     .no_resize = true,
                     .no_mouse_inputs = true,
-                }, .size = .{ @floatFromInt(surface_poll.surface_state.extent[0]), @floatFromInt(surface_poll.surface_state.extent[1]) } })) {
+                }, .size = .{ @floatFromInt(surface.width), @floatFromInt(surface.height) } })) {
                     var camera_rot: [4]f32 = .{ 0, 0, 0, 0 };
 
                     camera_rot[0] = -camera.view[2][0];
@@ -1103,94 +901,6 @@ pub fn main(init: std.process.Init) !void {
                 if (imgui.isKeyDown(imgui.cimgui.ImGuiKey_LeftCtrl) and imgui.isKeyPressed(imgui.cimgui.ImGuiKey_V)) {
                     for (copied_node_handles.items) |copied_node| {
                         _ = try csg_tree.copyNode(arena, copied_node, csg_tree.getNode(copied_node).parent);
-                        simulation.csg_dirty = true;
-                    }
-                }
-
-                {
-                    const mouse_pos_f64 = surface_poll.mouse_input.cursor_position;
-                    const mouse_pos: [2]f32 = .{ @floatCast(mouse_pos_f64[0]), @floatCast(mouse_pos_f64[1]) };
-
-                    var inv_proj = zmath.inverse(@as([4]@Vector(4, f32), @bitCast(camera.projection)));
-                    inv_proj = zmath.transpose(inv_proj);
-                    var inv_view = zmath.inverse(@as([4]@Vector(4, f32), @bitCast(camera.view)));
-                    inv_view = zmath.transpose(inv_view);
-                    const view: [4]@Vector(4, f32) = @bitCast(simulation.view_matrix);
-                    const projection: [4]@Vector(4, f32) = @bitCast(simulation.projection_matrix);
-                    var proj_view = zmath.mul(view, projection);
-                    proj_view = zmath.transpose(proj_view);
-
-                    const window_size: [2]f32 = .{
-                        @floatFromInt(surface_poll.surface_state.extent[0]),
-                        @floatFromInt(surface_poll.surface_state.extent[1]),
-                    };
-
-                    var ndc = @Vector(4, f32){
-                        (2.0 * mouse_pos[0]) / window_size[0] - 1,
-                        1.0 - 2.0 * (mouse_pos[1] / window_size[1]),
-                        1,
-                        1,
-                    };
-
-                    imgui.drawLine(proj_view, imgui.cimgui.ImGui_GetMainViewport(), .{
-                        .{ 0.5, 0.5, 0.5 },
-                        .{ 10, 10, 10 },
-                    });
-
-                    imgui.setSpatialMatrix(proj_view);
-
-                    //try imGuiCSGTreeNodeGizmos(csg_tree, .root);
-
-                    if (imgui.beginSpatial("Spatial Log", .{}, .{ 1, @floatCast(@sin(0.0) * 100), 1 })) {
-                        imgui.text("Bum", .{});
-
-                        imgui.text("{:.2}", .{@sin(0.0)});
-                    }
-                    imgui.end();
-
-                    if (imgui.beginSpatial("Spatial Log 2", .{}, .{ 1, 2, 1 })) {
-                        imgui.text("Bum", .{});
-                    }
-
-                    imgui.end();
-
-                    var ray_direction: @Vector(4, f32) = zmath.mul(
-                        inv_proj,
-                        ndc,
-                    );
-
-                    ndc[2] = -1;
-                    ndc[3] = 0;
-                    ray_direction = zmath.mul(inv_view, ray_direction);
-
-                    ray_direction = zmath.normalize3(ray_direction);
-
-                    const ray_origin: @Vector(4, f32) = .{ camera.eye[0], camera.eye[1], camera.eye[2], 0 };
-
-                    if (imgui.cimgui.ImGui_IsMouseClicked(imgui.cimgui.ImGuiMouseButton_Left) and
-                        !imgui.isAnyItemActive() and
-                        !imgui.cimgui.ImGui_IsAnyItemFocused() and
-                        !imgui.cimgui.ImGui_IsAnyItemHovered() and
-                        !imguizmo.ImGuizmo_IsUsing() and
-                        !imguizmo.ImGuizmo_IsOver() and !enable_transform_gizmo)
-                    {
-                        const maybe_inst = csg_program.rayMarchSDF(
-                            .{ ray_origin[0], ray_origin[1], ray_origin[2] },
-                            .{ ray_direction[0], ray_direction[1], ray_direction[2] },
-                        );
-
-                        if (maybe_inst) |inst| {
-                            if (csg_program.elements_to_nodes.get(inst)) |node| {
-                                if (!imgui.cimgui.ImGui_IsKeyDown(imgui.cimgui.ImGuiKey_LeftShift)) {
-                                    selected_node_handles.clearRetainingCapacity();
-                                }
-                                try selected_node_handles.append(
-                                    arena,
-                                    node,
-                                );
-                            }
-                            std.log.info("ray hit: inst {}", .{inst});
-                        }
                     }
                 }
 
@@ -1353,13 +1063,9 @@ pub fn main(init: std.process.Init) !void {
                     //selected_node.transform.rotation[3] = 1;
                     //Static.quat_total = zmath.normalize4(Static.quat_total);
 
-                    if (!std.meta.eql(old_data, selected_node.data)) {
-                        simulation.csg_dirty = true;
-                    }
+                    if (!std.meta.eql(old_data, selected_node.data)) {}
 
-                    if (!std.meta.eql(old_transform, selected_node.transform)) {
-                        simulation.csg_dirty = true;
-                    }
+                    if (!std.meta.eql(old_transform, selected_node.transform)) {}
                 }
             }
 
@@ -1488,23 +1194,17 @@ pub fn main(init: std.process.Init) !void {
 
         const gizmo_views = asym_geo_context.endSubmission();
 
-        gpu_context.endFrame();
-
-        if (gpu_end_timestamp == null or gpu.queryTimestampValue(gpu_start_timestamp.?) != null) {
-            gpu_end_timestamp = gpu.placeCommandTimestampQuery(gpu_context.command_buffer);
-        }
-
         const clear_cmds = gpu.queueStartCommandRecording(.{}, .{
-            .sampler_heap = gpu_context.sampler_heap,
+            .sampler_heap = sampler_heap,
         });
 
         try imgui_renderer.update(
             clear_cmds,
             imgui.getDrawData(),
-            gpu_context.sampler_heap,
-            gpu_context.gpu_gpa,
+            sampler_heap,
+            gpu_gpa,
             gpu_transient_arena,
-            gpu_context.sampler_heap_alloc,
+            sampler_heap_alloc,
         );
 
         clear_cmds.rasterPassBegin(.{
@@ -1516,22 +1216,6 @@ pub fn main(init: std.process.Init) !void {
 
         clear_cmds.setStateDepthStencil(.{});
         clear_cmds.setStatePolygonMode(.fill);
-
-        if (false) {
-            clear_cmds.launchRasterDraw(
-                gpu_context.shaders.env_map_shader,
-                &.{},
-                &.{
-                    .{
-                        .count = 36,
-                        .instance_count = 1,
-                        .first = 0,
-                        .first_instance = 0,
-                    },
-                },
-                .{},
-            );
-        }
 
         try asym_renderer.render(
             clear_cmds,
@@ -1552,29 +1236,16 @@ pub fn main(init: std.process.Init) !void {
 
         clear_cmds.rasterPassEnd();
 
-        if (true) {
-            gpu.queueSubmit(
-                .{},
-                &.{clear_cmds},
-                &.{
-                    .{
-                        .signal_semaphore = frame_semaphore,
-                        .signal_value = next_frame,
-                    },
+        gpu.queueSubmit(
+            .{},
+            &.{clear_cmds},
+            &.{
+                .{
+                    .signal_semaphore = frame_semaphore,
+                    .signal_value = next_frame,
                 },
-            );
-        } else {
-            gpu.queueSubmit(
-                .{},
-                &.{gpu_context.command_buffer},
-                &.{
-                    .{
-                        .signal_semaphore = frame_semaphore,
-                        .signal_value = next_frame,
-                    },
-                },
-            );
-        }
+            },
+        );
 
         gpu_swapchain.present(
             .{
@@ -1583,8 +1254,6 @@ pub fn main(init: std.process.Init) !void {
             },
         );
     }
-
-    gpu.waitIdle();
 }
 
 const CSGReparentCommand = struct {
@@ -2204,5 +1873,5 @@ const std = @import("std");
 const stb_image = @import("stb_image.zig");
 const imguizmo = @import("imguizmo.zig");
 const renderer_imgui = @import("renderer_imgui.zig");
-const gpu = @import("gpu.zig");
-const glaze = @import("glaze.zig");
+const gpu = carol.gpu;
+const carol = @import("carol.zig");

@@ -348,4 +348,4 @@ const Simulation = @This();
 const math = @import("math.zig");
 const zmath = @import("zmath");
 const Texture = gpu.Texture;
-const gpu = @import("gpu.zig");
+const gpu = @import("carol.zig").gpu;

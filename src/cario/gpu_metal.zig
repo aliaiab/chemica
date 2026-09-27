@@ -389,6 +389,6 @@ const DeviceSelectionOptions = gpu.DeviceSelectionOptions;
 const Pipeline = gpu.Pipeline;
 const CommandBuffer = gpu.CommandBuffer;
 const mem = gpu.mem;
-const gpu = @import("../gpu.zig");
+const gpu = @import("gpu.zig");
 const metal = @import("bindings/metal.zig");
 const std = @import("std");

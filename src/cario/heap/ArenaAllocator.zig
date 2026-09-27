@@ -640,5 +640,5 @@ const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = gpu.mem.Allocator;
 const Alignment = std.mem.Alignment;
-const gpu = @import("../../gpu.zig");
+const gpu = @import("../gpu.zig");
 const std = @import("std");

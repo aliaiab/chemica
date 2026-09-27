@@ -56,7 +56,6 @@ pub fn update(
         const texture = draw_data.Textures[i].Data[0];
 
         if (texture.*.Status == imgui.cimgui.ImTextureStatus_WantCreate) {
-            std.debug.print("wanna create tex[{}] = {}\n", .{ i, texture.* });
             was_texture_updates = true;
 
             const width: u32 = @intCast(texture.*.Width);
@@ -253,7 +252,7 @@ pub fn fragmentKernel(
     sampler: gpu.kernel.SamplerHeap.Index,
     input: PipelinePacket,
     samplers: gpu.kernel.SamplerHeap,
-) ?[4]f32 {
+) [4]f32 {
     var texel = samplers.imageSample(
         sampler,
         @Vector(4, f32),
@@ -262,6 +261,7 @@ pub fn fragmentKernel(
     texel[0] = 1;
     texel[1] = 1;
     texel[2] = 1;
+    texel[3] = 1;
 
     const res = input.colour * texel;
 
@@ -275,7 +275,8 @@ comptime {
 }
 
 const math = @import("math.zig");
-const gpu = @import("gpu.zig");
+const gpu = carol.gpu;
+const carol = @import("carol.zig");
 const imgui = @import("imgui.zig");
 const std = @import("std");
 const RendererImGui = @This();

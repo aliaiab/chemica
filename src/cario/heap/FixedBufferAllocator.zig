@@ -83,4 +83,4 @@ pub fn free(
 
 const FixedBufferAllocator = @This();
 const std = @import("std");
-const gpu = @import("../../gpu.zig");
+const gpu = @import("../gpu.zig");

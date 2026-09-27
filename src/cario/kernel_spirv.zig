@@ -224,9 +224,11 @@ const PushData = extern struct {
     data_pointers: [8]u64,
 };
 
-const samplers_2d = @extern(*addrspace(.constant) extern struct {
+const SamplersBlock = extern struct {
     data: @SpirvType(.{ .runtime_array = SamplerHeap.USampler2D }),
-}, .{
+};
+
+const samplers_2d = @extern(*addrspace(.constant) SamplersBlock, .{
     .name = "samplers",
     .decoration = .{
         .descriptor = .{
@@ -254,6 +256,11 @@ pub const SamplerHeap = struct {
         uv: @Vector(2, f32),
     ) @Vector(4, f32) {
         _ = self; // autofix
+        asm volatile (
+            \\OpDecorate %SamplersBlock Block
+            :
+            : [SamplersBlock] "t" (SamplersBlock),
+        );
 
         return imageSampleImplicitLod(&samplers_2d.data[@backingInt(index)], uv);
     }

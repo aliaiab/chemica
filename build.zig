@@ -165,7 +165,6 @@ pub fn compileModuleKernels(
 
     const output_path = std.mem.concat(b.allocator, u8, &.{
         source_basename,
-        "_pre_opt",
         ".spv",
     }) catch @panic("");
     const actual_output_path = std.mem.concat(b.allocator, u8, &.{
@@ -216,24 +215,13 @@ pub fn compileModuleKernels(
     const val = b.addSystemCommand(&.{"spirv-val"});
     val.addFileArg(output_file_path);
 
-    const opt = b.addSystemCommand(&.{
-        "spirv-opt",
-        "--target-env=vulkan1.3",
-        "--skip-validation",
-        "--inline-entry-points-exhaustive",
-    });
-
-    opt.addArtifactArg(compile_zig_shader);
-    opt.addArg("-o");
-    const output_lazy_path = opt.addOutputFileArg(actual_output_path);
-
     if (mode != .debug) {
         exe_step.root_module.addImport(actual_output_path, b.createModule(.{
-            .root_source_file = output_lazy_path,
+            .root_source_file = output_file_path,
         }));
     }
 
-    const copy_file = b.addInstallBinFile(output_lazy_path, actual_output_path);
+    const copy_file = b.addInstallBinFile(output_file_path, actual_output_path);
 
     b.getInstallStep().dependOn(&copy_file.step);
 

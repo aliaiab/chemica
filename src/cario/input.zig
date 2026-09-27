@@ -1,68 +1,6 @@
-//! Surface and input library
-
-pub fn init(
-    arena: std.mem.Allocator,
-) !void {
-    return backendCall(@src(), .{
-        arena,
-    });
-}
-
-pub fn deinit() void {
-    return backendCall(@src(), .{});
-}
-
-pub fn createSurface(
-    arena: std.mem.Allocator,
-    description: SurfaceDescription,
-) !*Surface {
-    return backendCall(@src(), .{
-        arena, description,
-    });
-}
-
-pub fn destroySurface(surface: *Surface) void {
-    return backendCall(@src(), .{
-        surface,
-    });
-}
-
-///Returns the platform handle for a surface
-pub fn surfaceGetPlatformHandle(surface: *Surface) *anyopaque {
-    return backendCall(@src(), .{
-        surface,
-    });
-}
-
-///Returns null if the surface becomes inactive
-pub fn surfacePoll(
-    arena: std.mem.Allocator,
-    surface: *Surface,
-) !?SurfacePollResult {
-    return backendCall(@src(), .{
-        arena,
-        surface,
-    });
-}
-
-pub const SurfacePollResult = struct {
-    surface_state: SurfaceState,
-    ///The extents of the surface in pixels
-    keyboard_input: KeyboardInputState,
-    mouse_input: MouseInputState,
-};
-
-pub const SurfaceState = struct {
-    extent: [2]u16,
-    focused: bool,
-    cursor_captured: bool,
-    cursor_hidden: bool,
-};
-
-pub const SurfaceDescription = struct {
-    preferred_width: ?u32 = null,
-    preferred_height: ?u32 = null,
-    name: [:0]const u8,
+pub const State = struct {
+    mouse: MouseInputState,
+    keyboard: KeyboardInputState,
 };
 
 pub const MouseInputState = struct {
@@ -221,21 +159,4 @@ pub const ButtonAction = enum(u8) {
     down,
 };
 
-///Represents a user facing, presentable display surface
-pub const Surface = opaque {};
-
-inline fn backendCall(
-    comptime src: std.lang.SourceLocation,
-    args: anytype,
-) (@typeInfo(@TypeOf(@field(backend, src.fn_name))).@"fn".return_type orelse void) {
-    const return_value = @call(
-        .always_inline,
-        @field(backend, src.fn_name),
-        args,
-    );
-
-    return return_value;
-}
-
-const backend = @import("glaze/glaze_glfw.zig");
 const std = @import("std");

@@ -114,5 +114,5 @@ const PipelineIndex = Compiler.PipelineIndex;
 const Compiler = gpu.pipelines.Compiler;
 const Pipeline = gpu.Pipeline;
 const std = @import("std");
-const gpu = @import("../../gpu.zig");
+const gpu = @import("../gpu.zig");
 const IoCompiler = @This();

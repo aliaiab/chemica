@@ -1142,6 +1142,7 @@ pub fn setStateBlend(
             .alpha_blend_op = .add,
         },
     });
+    context.device.cmdSetBlendConstants(vk_command_buffer, &.{ 1, 1, 1, 1 });
     context.device.cmdSetColorWriteMaskEXT(
         vk_command_buffer,
         1,
@@ -1785,7 +1786,7 @@ pub fn queueSubmit(
 const SwapchainData = struct {
     handle: vk.SwapchainKHR = .null_handle,
     surface: vk.SurfaceKHR = .null_handle,
-    window_handle: *anyopaque = undefined,
+    carol_surface: *const carol.surface.Surface = undefined,
     current_extent: vk.Extent2D = undefined,
     images: []vk.Image = &.{},
     image_views: []vk.ImageView = &.{},
@@ -1795,19 +1796,17 @@ const SwapchainData = struct {
 };
 
 pub fn createSwapchain(
-    window: *anyopaque,
+    surface: *const carol.surface.Surface,
 ) *gpu.Swapchain {
     const swapchain_data = context.arena.create(SwapchainData) catch @panic("oom");
 
     swapchain_data.* = .{};
 
-    const glfw_window: *glfw.Window = @ptrCast(@alignCast(window));
+    swapchain_data.current_extent.width = surface.width;
+    swapchain_data.current_extent.height = surface.height;
+    swapchain_data.carol_surface = surface;
 
-    swapchain_data.current_extent.width = @intCast(glfw_window.getSize()[0]);
-    swapchain_data.current_extent.height = @intCast(glfw_window.getSize()[1]);
-    swapchain_data.window_handle = window;
-
-    _ = glfw.createWindowSurface(@fromBackingInt(@backingInt(context.instance.handle)), glfw_window, null, @ptrCast(&swapchain_data.surface)) catch @panic("oom");
+    swapchain_data.surface = carol.surface.backend.createVkSurface(surface, context.instance.handle);
 
     internalCreateSwapchain(swapchain_data);
 
@@ -1823,11 +1822,8 @@ fn recreateSwapchain(swapchain_data: *SwapchainData) !void {
     var new_extent = surface_capabilities.current_extent;
 
     if (new_extent.width == std.math.maxInt(u32) or new_extent.height == std.math.maxInt(u32)) {
-        //TODO: use native wayland calls
-        const glfw_window: *glfw.Window = @ptrCast(@alignCast(swapchain_data.window_handle));
-
-        new_extent.width = @intCast(glfw_window.getSize()[0]);
-        new_extent.height = @intCast(glfw_window.getSize()[1]);
+        new_extent.width = swapchain_data.carol_surface.width;
+        new_extent.height = swapchain_data.carol_surface.height;
     }
 
     swapchain_data.current_extent = new_extent;
@@ -1852,11 +1848,8 @@ fn internalCreateSwapchain(
     var new_extent = surface_capabilities.current_extent;
 
     if (new_extent.width == std.math.maxInt(u32) or new_extent.height == std.math.maxInt(u32)) {
-        //TODO: use native wayland calls
-        const glfw_window: *glfw.Window = @ptrCast(@alignCast(swapchain_data.window_handle));
-
-        new_extent.width = @intCast(glfw_window.getSize()[0]);
-        new_extent.height = @intCast(glfw_window.getSize()[1]);
+        new_extent.width = swapchain_data.carol_surface.width;
+        new_extent.height = swapchain_data.carol_surface.height;
     }
 
     swapchain_data.current_extent = new_extent;
@@ -1984,8 +1977,6 @@ pub fn swapchainObtainTexture(
         switch (e) {
             error.OutOfDateKHR => {
                 internalCreateSwapchain(swapchain_data);
-
-                std.debug.print("out of date!!!\n", .{});
 
                 return swapchainObtainTexture(swapchain);
             },
@@ -2606,21 +2597,23 @@ fn updateDescriptorSets(data: DescriptorHeapData) !void {
         descriptor_count += 1;
     }
 
-    context.device.updateDescriptorSets(
-        &.{
-            .{
-                .dst_set = data.descriptor_sets[0],
-                .dst_binding = 0,
-                .dst_array_element = 0,
-                .descriptor_count = descriptor_count,
-                .descriptor_type = .sampled_image,
-                .p_image_info = descriptor_infos.ptr,
-                .p_buffer_info = &.{},
-                .p_texel_buffer_view = &.{},
+    if (descriptor_count != 0) {
+        context.device.updateDescriptorSets(
+            &.{
+                .{
+                    .dst_set = data.descriptor_sets[0],
+                    .dst_binding = 0,
+                    .dst_array_element = 0,
+                    .descriptor_count = descriptor_count,
+                    .descriptor_type = .sampled_image,
+                    .p_image_info = descriptor_infos.ptr,
+                    .p_buffer_info = &.{},
+                    .p_texel_buffer_view = &.{},
+                },
             },
-        },
-        &.{},
-    );
+            &.{},
+        );
+    }
 }
 
 const CommonPushConstants = extern struct {
@@ -2677,5 +2670,5 @@ const vma = @import("bindings/vulkan/vk_mem_alloc.zig");
 const mem = gpu.mem;
 const vk = @import("bindings/vulkan/vk.zig");
 const std = @import("std");
-const glfw = @import("zglfw");
-const gpu = @import("../gpu.zig");
+const carol = @import("../carol.zig");
+const gpu = @import("gpu.zig");
