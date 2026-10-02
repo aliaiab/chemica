@@ -878,6 +878,27 @@ pub const RasterizationState = packed struct {
     shading_rate: u32,
 };
 
+pub const ViewportTransform = extern struct {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    depth_min: f32,
+    depth_max: f32,
+};
+
+pub const RasterizerState = extern struct {
+    blend: []BlendState = &.{},
+    rasterization: []RasterizationState = &.{},
+    depth_stencil: []DepthStencilState = &.{},
+    primitive_fill: []PolygonMode = &.{},
+    primitive_cull: []RasterPipelineDescription.Cull = &.{},
+    viewport_transform: []ViewportTransform = &.{},
+    scissor_region: [][4]i32 = &.{},
+
+    state_indices: []u16 = &.{},
+};
+
 pub const CompareOp = enum(u4) {
     never,
     less,
@@ -1021,9 +1042,9 @@ pub const AccelerationStructureByte = enum(u8) { _ };
 pub const TextureDescription = struct {
     type: Type = .@"2d",
     dimensions: [3]u32,
-    mip_count: u32 = 1,
-    layer_count: u32 = 1,
-    sample_count: u32 = 1,
+    mip_count: u16 = 1,
+    layer_count: u16 = 1,
+    sample_count: u8 = 1,
     format: ImageFormat = .rgba8_unorm32,
     usage: Usage = .{ .sampled = true },
 
@@ -1140,23 +1161,26 @@ pub const mem = struct {
         address: u48,
         ///The memory type of the allocation
         memory_type: Allocator.MemoryType,
+        ///The memory format
+        format: MemoryFormat = .unformatted,
         ///Implementation specific allocation index
-        allocation_handle: u12,
+        allocation_handle: u10,
     };
 
-    pub const AccessDomain = enum {
+    pub const AccessDomain = enum(u1) {
         gpu,
         cpu,
     };
 
-    pub const MemoryFormat = enum {
+    pub const MemoryFormat = enum(u2) {
         unformatted,
         texture,
         acceleration_structure,
+        descriptor_heap,
     };
 
     ///The maximum number of active (not-freed) root allocations (calls to memAlloc or page_allocator.alloc)
-    pub const max_root_allocations = std.math.maxInt(u12);
+    pub const max_root_allocations = std.math.maxInt(u10);
 
     ///Converts a gpu pointer to a cpu/gpu accessible pointer
     pub fn toAccessiblePointer(pointer: anytype, access: AccessDomain) @TypeOf(pointer) {

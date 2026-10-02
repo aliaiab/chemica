@@ -1,0 +1,1337 @@
+#ifndef CAROL_API
+#define CAROL_API
+
+#include <stdint.h>
+
+#define f32 float
+#define f64 double 
+#define i8 int8_t 
+#define i16 int16_t 
+#define i32 int32_t 
+#define i64 int64_t
+#define u8 uint8_t 
+#define u16 uint16_t 
+#define u32 uint32_t 
+#define u64 uint64_t 
+
+#define CRL_OPAQUE_TYPE struct { u64 opaque; } 
+
+typedef enum {
+    //CPU System Memory
+    CRL_MEMORY_TYPE_CPU = 0,
+    //GPU Local Memory
+    CRL_MEMORY_TYPE_DEVICE = 1,
+    //GPU Memory which is cpu writable
+    CRL_MEMORY_TYPE_DEVICE_CPU_WRITABLE = 2,
+    //GPU Memory which is cpu readable 
+    CRL_MEMORY_TYPE_READBACK = 3,
+} CrlMemoryType;
+
+typedef enum {
+    CRL_MEMORY_FORMAT_UNFORMATTED = 0,
+    CRL_MEMORY_FORMAT_TEXTURE = 1,
+    CRL_MEMORY_FORMAT_ACCELERATION_STRUCTURE = 2,
+} CrlMemoryFormat;
+
+typedef enum {
+    CRL_MEMORY_DOMAIN_CPU = 0,
+    CRL_MEMORY_DOMAIN_DEVICE = 1,
+} CrlMemoryDomain;
+
+typedef enum {
+    CRL_QUEUE_DEFAULT = 0xff,
+    CRL_QUEUE_RASTER = 1 << 0,
+    CRL_QUEUE_COMPUTE = 1 << 1,
+    CRL_QUEUE_TRANSFER = 1 << 2,
+    CRL_QUEUE_VIDEO_DECODE = 1 << 3,
+    CRL_QUEUE_VIDEO_ENCODE = 1 << 4,
+    CRL_QUEUE_FIRST = 1,
+    CRL_QUEUE_LAST = 0b111,
+} CrlQueue;
+
+typedef enum {
+    CRL_STATE_CULL_ALL = 0xff,
+    CRL_STATE_CULL_NONE = 0,
+    CRL_STATE_CULL_FRONT = 1 << 0,
+    CRL_STATE_CULL_BACK = 1 << 1,
+    CRL_STATE_CULL_DEFAULT = CRL_STATE_CULL_NONE,
+} CrlRasterizerPrimitiveCull;
+
+typedef enum {
+    CRL_STATE_POLYGON_MODE_FILL = 0,
+    CRL_STATE_POLYGON_MODE_LINES = 1,
+    CRL_STATE_POLYGON_MODE_POINTS = 2,
+    CRL_STATE_POLYGON_MODE_DEFAULT = CRL_STATE_POLYGON_MODE_FILL,
+} CrlRasterizerPrimitiveFill;
+
+typedef struct {
+} CrlRasterizerDepthStencil;
+
+const CrlRasterizerDepthStencil CRL_STATE_DEPTH_STENCIL_DEFAULT = {}; 
+
+typedef struct {
+} CrlRasterizerBlend;
+
+typedef struct {
+} CrlRasterizerRasterization;
+
+typedef struct {
+} CrlRasterizerViewportTransform;
+
+typedef struct {
+} CrlRasterizerViewportScissor;
+
+typedef struct {
+    //If any of these are NULL, then the raster pass defaults are used
+
+    CrlPipeline *pipeline;
+    CrlRasterizerRasterization *rasterization;
+    CrlRasterizerBlend *blend;
+    CrlRasterizerDepthStencil *depth_stencil;
+    CrlRasterizerPrimitiveCull *cull;
+    CrlRasterizerPrimitiveFill *fill;
+    CrlRasterizerViewportTransform *viewport_transform;
+    CrlRasterizerViewportScissor *viewport_scissor;
+
+    //If any of these counts are greater than zero, 
+    //If any of tehse counts are equal to one, then those states are broadcasted to all commands in the launch 
+    //then they must be equal to the number of command arguments within the launch 
+    //in which the state is provided  
+
+    u32 pipeline_count;
+    u32 rasterization_count;
+    u32 blend_count;
+    u32 depth_stencil_count;
+    u32 primitive_cull_count;
+    u32 primitive_fill_count;
+    u32 viewport_transform_count;
+    u32 scissor_region_count;
+} CrlRasterizerState;
+
+typedef struct {
+    //An array of 64 bit arguments to the kernels of the pipeline
+    CrlMemorySlice *arguments_kernel; 
+    //An array of command arguments to the command processor
+    CrlMemorySlice *arguments_command;
+    //Number of argument arrays 
+    u64 argument_array_count;
+    //Raster pass to use
+    CrlRasterPass *raster_pass;
+    //Load the raster pass. Performs attachment clears if the raster pass requests it
+    u32 raster_pass_load;
+    //Clear the raster pass.
+    u32 raster_pass_clear;
+    //The rasterizer state
+    //If this is NULL, the rasterizer default state for the current raster pass is used
+    CrlRasterizerState *state;
+    //Preprocessed rasterizer state
+    void *state_processed;
+    //A list of state index arrays, where each command gets its own index
+    u16 **state_indices;
+    //An array of vertex indices
+    //If this is an empty slice, then the rasterize launch interprets the command arguments as unindexed commands 
+    CrlMemorySlice *vertex_indices;
+    //A pointer to the number of commands to launch
+    //If this is NULL, then all the commands provided via the arguments slice are launched 
+    u64 **command_count;
+} CrlRasterizerWork;
+
+typedef struct {
+    CrlMemorySlice arguments_command;
+    u64 *command_count;
+} CrlComputeWork;
+
+typedef struct {
+    CrlMemorySlice arguments_command;
+    u64 *command_count;
+} CrlRayTracingWork;
+
+typedef struct {
+    CrlMemorySlice arguments_command;
+    u64 *command_count;
+} CrlAccelerationStructureBuildWork;
+
+typedef enum {
+    CRL_IMAGE_TYPE_1D = 0,
+    CRL_IMAGE_TYPE_2D = 1,
+    CRL_IMAGE_TYPE_3D = 2,
+    CRL_IMAGE_TYPE_1D_ARRAY = 3,
+    CRL_IMAGE_TYPE_2D_ARRAY = 4,
+    CRL_IMAGE_TYPE_CUBE = 5,
+    CRL_IMAGE_TYPE_CUBE_ARRAY = 6,
+} CrlImageType;
+
+typedef struct {
+    u32 x;
+    u32 y;
+    u32 z;
+    u32 width;
+    u32 height;
+    u32 depth;
+    CrlImageFormat format;
+    CrlImageType type;
+} CrlTextureDescription;
+
+typedef struct {
+} CrlAccelerationStructureDescription;
+
+typedef struct {
+} CrlRasterPipelineDescription;
+
+typedef struct {
+    void **color_targets;
+    void *depth_target;
+    void *stencil_target;
+
+    u32 target_color_count;
+    u32 target_depth_count;
+    u32 target_stencil_count;
+
+    u32 **color_load_ops;
+    u32 **color_store_ops;
+
+    f32 **color_clears;
+    f32 **depth_clears;
+    u8 **stencil_clears;
+
+    //If this is NULL, then the default state is set to the standard specified default state for each state packet
+    CrlRasterizerState *default_state;
+} CrlRasterPassDescription;
+
+typedef struct {
+    void *ptr;
+    u64 len;
+} CrlMemorySlice;
+
+typedef struct {
+    u64 size;
+    u64 alignment;
+    CrlMemoryType memory_type;
+} CrlResourceDescription;
+
+typedef struct {
+    u64 value[4];
+} CrlTextureDescriptor;
+
+typedef struct {
+    //An array of 64 bit kernel arguments
+    CrlMemorySlice arguments_kernel;  
+    CrlMemorySlice arguments_command;
+    u64 *count;
+} CrlLaunchRayTraceCommand;
+
+typedef CRL_OPAQUE_TYPE CrlDeviceList;
+typedef CRL_OPAQUE_TYPE CrlDevice;
+typedef CRL_OPAQUE_TYPE CrlCommandBuffer;
+typedef CRL_OPAQUE_TYPE CrlPipeline;
+typedef CRL_OPAQUE_TYPE CrlSemaphore;
+
+typedef struct {
+    u32 width;
+    u32 height;
+} CrlSurface;
+
+typedef enum : u64 {
+    //Do the cpu and device have a unified memory device 
+    CRL_DEVICE_PROPERTIES_MEMORY_UNIFIED = 1 << 0,
+    //Do the cpu and device have a unified address space
+    //If this bit is one, then crlMemToAccessiblePointer will return the same pointer 
+    //for both cpu and device access domains
+    //If the memory is both unified and has a unified address space, then
+    //the lower 48 bits of allocation pointers (pointers returned from crlMemAlloc) must be the accessible address
+    //As such, in this case crlMemToAccessiblePointer will just mask or replace the upper 16 bit tag
+    CRL_DEVICE_PROPERTIES_MEMORY_UNIFIED_ADDRESS_SPACE = 1 << 1,
+    //Does the device have hardware rasterization 
+    CRL_DEVICE_PROPERTIES_HARDWARE_RASTERIZATION = 1 << 2,
+    //Does the device have hardware texel sampling 
+    CRL_DEVICE_PROPERTIES_HARDWARE_TEXEL_SAMPLER = 1 << 3,
+    //Does the device have hardware gather instructions 
+    CRL_DEVICE_PROPERTIES_HARDWARE_MEMORY_GATHER = 1 << 4,
+    //Does the device have hardware scatter instructions 
+    CRL_DEVICE_PROPERTIES_HARDWARE_MEMORY_SCATTER = 1 << 5,
+    //Does the device have hardware 16 bit floating point instructions
+    CRL_DEVICE_PROPERTIES_HARDWARE_FLOAT16 = 1 << 6,
+    //Does the device have a hardware 32 bit floating point arithmetic point unit
+    CRL_DEVICE_PROPERTIES_HARDWARE_FLOAT32 = 1 << 7,
+    //Does the device have a hardware 64 bit floating point arithmetic point unit
+    CRL_DEVICE_PROPERTIES_HARDWARE_FLOAT64 = 1 << 8,
+    //Does the device have hardware 8 bit integer instructions
+    CRL_DEVICE_PROPERTIES_HARDWARE_INTEGER_8 = 1 << 9,
+    //Does the device have hardware 16 bit integer instructions
+    CRL_DEVICE_PROPERTIES_HARDWARE_INTEGER_16 = 1 << 10,
+    //Does the device have a hardware 64 bit integer arithmetic point unit
+    CRL_DEVICE_PROPERTIES_HARDWARE_INTEGER_64 = 1 << 11,
+    //Does the device have hardware ray tracing
+    CRL_DEVICE_PROPERTIES_HARDWARE_RAY_TRACING = 1 << 12,
+    //Does the device have hardware video encode 
+    CRL_DEVICE_PROPERTIES_HARDWARE_VIDEO_ENCODE = 1 << 13,
+    //Does the device have hardware video decode 
+    CRL_DEVICE_PROPERTIES_HARDWARE_VIDEO_DECODE = 1 << 14,
+    //Does the device have surface swapchain support
+    CRL_DEVICE_PROPERTIES_SURFACE_SWAPCHAIN = 1 << 15,
+    //Is the device a dedicated coprocessor 
+    CRL_DEVICE_PROPERTIES_COPROCESSOR = 1 << 16,
+    //Is the device an integrated processor 
+    CRL_DEVICE_PROPERTIES_PROCESSOR_INTEGRATED = 1 << 17,
+    //Is the device a cpu
+    CRL_DEVICE_PROPERTIES_CPU = 1 << 18,
+    //The number of cores that a device has allocated for it
+    #define CRL_DEVICE_PROPERTIES_CORE_COUNT(count) (count << 16)
+    //The number of cores that a device has allocated for it
+    CRL_DEVICE_PROPERTIES_CORE_COUNT_VALUE CRL_DEVICE_PROPERTIES_CORE_COUNT(0xffff) 
+    //The maximum size of a subgroup that the device supports
+    #define CRL_DEVICE_PROPERTIES_SUBGROUP_COUNT(count) (count << (19 + 16))
+    //The maximum size of a subgroup that the device supports
+    CRL_DEVICE_PROPERTIES_SUBGROUP_COUNT_VALUE CRL_DEVICE_PROPERTIES_SUBGROUP_COUNT(0xffff) 
+    //No preferred properties
+    CRL_DEVICE_PROPERTIES_PREFERRED_ANY = (1 << 64),
+    //Prefer the most optimal device for selection
+    CRL_DEVICE_PROPERTIES_PREFERRED_OPTIMAL = (0xaaaaaaaaaaaaaaa),
+} CrlDeviceProperties;
+
+typedef enum {
+    CRL_DEVICE_INDEX_PREFERRED_ANY = (1 << 32),
+} CrlDeviceIndex;
+
+typedef enum {
+    //The device id for the standard carol cpu implementation 
+    CRL_DEVICE_ID_CAROL_CPU = 0,
+} CrlDeviceID;
+
+//The name returned from crdDeviceName(device) if device is the standard carol cpu device
+#define CRL_DEVICE_NAME_CAROL_CPU "CAROL_DEVICE_CPU"
+
+//The maximum number of active formatted texture memory slices 
+#define CRL_DEVICE_MAXIMUM_TEXTURES (1 << 20) 
+//The maximum number of active formatted acceleration structure memory slices 
+#define CRL_DEVICE_MAXIMUM_ACCELERATION_STRUCTURES (1 << 20) 
+//The maximum number of active formatted descriptor heap memory slices 
+#define CRL_DEVICE_MAXIMUM_DESCRIPTOR_HEAPS (1 << 16) 
+
+//The maximum size of a texture memory slice in bytes
+#define CRL_DEVICE_MAXIMUM_TEXTURE_SIZE (1 << 32) 
+//The maximum size of a descriptor heap memory slice in bytes
+#define CRL_DEVICE_MAXIMUM_DESCRIPTOR_HEAP_SIZE (1 << 32) 
+//The maximum size of a acceleration structure memory slice in bytes
+#define CRL_DEVICE_MAXIMUM_ACCELERATION_STRUCTURE_SIZE (1 << 32) 
+
+//Core Device API
+
+//Selects a list of devices which can support the api
+CrlDeviceList *crlDeviceListSelect(void);
+//Free the device set
+void crlDeviceListFree(CrlDeviceList *devices);
+//Returns an array of device properties for the device list. The size of the returned array is crlDeviceSetGetCount(device_set)
+CrlDeviceProperties *crlDeviceListProperties(CrlDeviceList *devices);
+//Returns an array of device IDs for the device list. The size of the returned array is crlDeviceSetGetCount(device_set)
+CrlDeviceID *crlDeviceListIDs(CrlDeviceList *devices);
+//Returns an array of device names for the device list. The size of the returned array is crlDeviceSetGetCount(device_set)
+CrlMemorySlice *crlDeviceListNames(CrlDeviceList *devices);
+//Returns the number of devices in the device list
+u64 crlDeviceListCount(CrlDeviceList *devices);
+//Selects a physical device from the device list
+//If perferred_properties is CRL_DEVICE_PROPERTIES_PREFERRED_ANY, then device selection is automatic
+//If preferred_device_index is CRL_DEVICE_INDEX_ANY, then device selection is automatic
+CrlDevice *crlDeviceSelect(CrlDeviceList *devices, CrlDeviceProperties preferred_properties, CrlDeviceIndex preferred_device_index);
+//Free the resources associated with the device
+void crlDeviceFree(CrlDevice *device);
+//Set the device for the current thread. Future device calls will use this device
+void crlSetThreadDevice(CrlDevice *device);
+//Returns the device properties
+CrlDeviceProperties crlDeviceProperties(CrlDevice *device);
+//Returns the device name
+CrlMemorySlice crlDeviceName(CrlDevice *device);
+//Returns the implementation specific device id
+CrlDeviceID crlDeviceID(CrlDevice *device);
+//Returns a list of unique queues that the device supports
+u64 crlDeviceQueues(CrlDevice *device, CrlQueue *out_queues);
+//Returns 1 if the queues logically alias, else 0
+u64 crlDeviceQueuesAlias(CrlDevice *device, CrlQueue a, CrlQueue b);
+//Returns the total maximum memory size of the device 
+u64 crlDeviceMemorySize(CrlDevice *device);
+//Returns the total maximum host accessible size of the device 
+u64 crlDeviceMemoryHostAccessibleSize(CrlDevice *device);
+//Returns the approximate amount of memory allocated on the device 
+u64 crlDeviceMemoryCommittedSize(CrlDevice *device);
+//Allocate memory from the device
+//The resulting memory will be of type memory_type, and aligned to alignment 
+void *crlMemAlloc(u64 size, u64 alignment, CrlMemoryType memory_type);
+//Free device memory
+//Unformats the memory if memory is formatted 
+//Any sub slices of the memory allocation that have been seperately formatted must be unformatted before freeing
+void crlMemFree(void *memory);
+//Returns the memory type of the pointer
+ClrMemoryType crlMemGetMemoryType(void *memory);
+//Returns the memory format of the pointer
+ClrMemoryFormat crlMemGetMemoryFormat(void *memory);
+//Returns a pointer which is readable/writable for the given access domain
+void *crlMemToAccessiblePointer(void *memory, CrlMemoryDomain memory_domain);
+//Returns a slice which is readable/writable for the given access domain
+CrlMemorySlice crlMemToAccessibleSlice(CrlMemorySlice memory, CrlMemoryDomain memory_domain);
+//Copy device memory from src to dst
+//At least one or both of src/dest must be device local memory
+//If dest is formatted as a texture, then src must also be formatted as a texture with the same image format
+//If dest and src are formatted as textures as above, then they must also have the same description 
+//If dest is formatted as an acceleration structure, then src must also be formatted as an acceleration structure with the same description 
+//If commands is NULL, this performs a host copy
+void crlMemCopy(CrlCommandBuffer *commands, void *dest, void *src, u64 size);
+//Set the memory to the contents of src 
+//dest.len must be an integer multiple of src.len, unless dest is texture formatted memory
+//At least one or both of src/dest must be device local memory
+//If dest is formatted as a texture, then src.len must equal the size of the texel as defined by the image format of dest
+//Must be encoded into a command buffer that can be submitted to a compute compatible queue
+//If commands is NULL, this performs a host set 
+void crlMemSet(CrlCommandBuffer *commands, CrlMemorySlice dest, CrlMemorySlice src);
+//Copy one texture to another 
+//At least one or both of src/dest must be device local memory
+//If commands is NULL, this performs a host texture copy
+void crlMemCopyTexture(
+    CrlCommandBuffer *commands, 
+    CrlTextureDescription *dest_slice, 
+    CrlTextureDescription *src_slice, 
+    void *dest, 
+    void *src
+);
+//Compile a compute kernel pipeline
+CrlPipeline *crlCompileComputePipeline(CrlMemorySlice compute_kernel);
+//Compile a raster pipeline that uses vertex and fragment kernel stages
+CrlPipeline *crlCompileRasterizerPipeline(CrlMemorySlice vertex_kernel, CrlMemorySlice fragment_kernel, CrlRasterPipelineDescription *description);
+//Compile a raster pipeline that uses mesh and fragment kernel stages
+CrlPipeline *crlCompileRasterizerClusterPipeline(CrlMemorySlice cluster_kernel, CrlMemorySlice fragment_kernel, CrlRasterPipelineDescription *description);
+//Compile a ray tracing pipeline
+CrlPipeline *crlCompileRayTracingPipeline(CrlMemorySlice kernels);
+//Returns the number of kernel arguments that the pipeline expects
+u64 crlPipelineKernelArgumentCount(CrlPipeline *pipeline);
+//Returns 1 if the pipeline is compatible with the raster pass, zero otherwise
+u64 crlPipelineRasterPassCompatibility(CrlPipeline *pipeline, CrlRasterPassDescription *description);
+//Free the pipeline memory
+void crlFreePipeline(CrlPipeline *pipeline);
+//Returns the size, alignment and memory type for the given texture description
+CrlResourceDescription crlTextureMemoryDescription(CrlTextureDescription description);
+//Returns the size, alignment and memory type for the given acceleration structure description
+CrlResourceDescription crlAccelerationStructureMemoryDescription(CrlTextureDescription description);
+//Returns the size, alignment and memory type for the given sampler heap size 
+CrlResourceDescription crlSamplerHeapMemoryDescription(u64 size);
+//Returns the size, alignment and memory type for the given texture heap size 
+CrlResourceDescription crlTextureHeapMemoryDescription(u64 size);
+//Formats the specified memory region as a texture
+//Returns the formatted pointer. Pointer arithmetic on this pointer is illegal 
+//The specified memory region must be device local memory
+//It is then illegal behaviour to directly modify or read the specified memory
+//It is illegal behaviour to procure an accessible pointer to the memory
+void *crlFormatTextureMemory(void *memory, CrlTextureDescription *description);
+//Formats the specified memory region as an acceleration structure
+//Returns the formatted pointer. Pointer arithmetic on this pointer is illegal 
+//The specified memory region must be device local memory
+//It is then illegal behaviour to directly modify or read the specified memory
+//It is illegal behaviour to procure an accessible pointer to the memory
+void *crlFormatAccelerationStructureMemory(void *memory, CrlAccelerationStructureDescription *description);
+//Formats the memory slice as a descriptor heap
+//The memory must be cpu accessible memory
+//The resulting pointer supports pointer arithmetic, with the lower 32 bits representing a 32 bit address space relative to the base
+//Returns the formatted pointer
+void *crlFormatDescriptorHeapMemory(void *memory, CrlSamplerHeapMemoryDescription *description);
+//Unformats the specified memory region 
+//Returns the unformatted pointer
+//It is then illegal behaviour to use the memory as formatted
+//This is a no-op if memory is unformatted
+void *crlUnformatMemory(void *memory); 
+//Unformats the specified memory regions 
+//pointers and out_pointers are allowed to alias
+//If out_pointers is NULL, then the unformatted pointers will not be written
+void crlUnformatMemoryPointers(void **pointers, void **out_pointers, u64 pointer_count); 
+//Returns the texture description of the memory if formatted as such
+//Zero initializes the description if the memory is not formatted 
+void crlMemTextureGetDescription(void *memory, CrlTextureDescription *out_description);
+//Returns the acceleration structure description of the memory if formatted as such
+//Zero initializes the description if the memory is not formatted 
+void crlMemAccelerationStructureGetDescription(void *memory, CrlAccelerationStructureDescription *out_description);
+//Create an opaque texture descriptor. The resulting descriptor is a combined texture sampler
+void crlCreateTextureDescriptors(void **textures, CrlTextureDescriptor *out_descriptors, u64 descriptor_count);
+//Create an opaque texture descriptor from the texture slice. The resulting descriptor is a combined texture sampler
+void crlCreateTextureSliceDescriptors(void **textures, CrlTextureDescriptor *out_descriptors, u64 descriptor_count);
+//Create an opaque sampler descriptor from the texture slice. The resulting descriptor is a sampler
+void crlCreateTextureSamplerDescriptors(void **textures, CrlTextureDescriptor *out_descriptors, u64 descriptor_count);
+//Signal before 
+void crlSignalBefore(CrlCommandBuffer *commands, u32 stage, u64 *memory, u64 value);
+//Signal after 
+void crlSignalAfter(CrlCommandBuffer *commands, u32 stage, u64 *memory, u64 value);
+//Place a synchronisation barrier
+void crlExecutionBarrier(CrlCommandBuffer *commands, u32 before, u32 after, u32 hazards);
+//Override the default rasterizer state for the current raster pass
+//This is used if the launch commands don't provide their own state
+//These can only contain one of each state
+//If null is provided, the raster pass default is restored
+void crlRasterizerStateConfigure(CrlCommandBuffer *commands, CrlRasterizerState *state);
+//Perform preprocessing of the rasterizer state, returning a pointer to the allocated opaque processed state memory
+void *crlRasterizerStatePreprocess(CrlCommandBuffer *commands, CrlRasterizerState *state);
+//Launch a set of memory copy commands
+void crlLaunchMemCopy(
+    CrlCommandBuffer *commands, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
+//Launch a set of memory set commands
+void crlLaunchMemSet(
+    CrlCommandBuffer *commands, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
+//Launch a set of memory texture copy
+void crlLaunchMemCopyTexture(
+    CrlCommandBuffer *commands, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
+//Launch a set of compute commands
+void crlLaunchCompute(
+    CrlCommandBuffer *commands, 
+    CrlPipeline *pipeline, 
+    CrlMemorySlice arguments_kernel, 
+    CrlMemorySlice arguments_command, 
+    u64 *count
+);
+//Launch a set of rasterization draw commands using a vertex pipeline
+//The rasterizer can be launched with or without indices, in which case the command arguments are encoded as unindexed commands
+//If the pipeline is a standard rasterizer pipeline (with vertex kernels), then the dispatch is encoded using those command formats
+//If the pipeline is a rasterizer cluster pipeline, then rasterize cluster commands are used
+//If the pipeline is a rasterizer cluster pipeline, then the indices slice must be an empty slice
+void crlLaunchRasterize(
+    //The command buffer to encode the launch command into
+    CrlCommandBuffer *commands, 
+    //A pointer to a rasterizer or rasterizer cluster pipeline
+    //Can be NULL if the rasterizer work has no commands
+    //This is useful if you want to just clear the attachments
+    CrlPipeline *pipeline, 
+    //The work to launch 
+    CrlRasterizerWork *work
+);
+//Launch a set of ray tracing commands using a ray tracing pipeline 
+void crlLaunchRayTrace(
+    CrlCommandBuffer *commands, 
+    CrlPipeline *pipeline, 
+    CrlLaunchRayTraceCommand *command 
+);
+//Launch a set of acceleration structure build commands  
+void crlLaunchAccelerationStructureBuild(
+    CrlCommandBuffer *commands, 
+    CrlMemorySlice arguments_command,
+    u64 *count
+);
+//Start recording on the specified queue, returning a command buffer   CrlCommandBuffer *crlStartCommandRecording(CrlQueue queue);
+//Submit work to the specified queue to be executed   
+void crlQueueSubmit(
+    CrlQueue queue, 
+    CrlCommandBuffer **commands, 
+    u64 count
+);
+//Wait for all pending work previously submitted to the queue to be completed  
+void crlQueueDrain(CrlQueue queue);
+//Attach a wait semaphore to command_buffer which will be waited on before excecution   
+void crlCommandsStartWaitSemaphore(CrlCommandBuffer *commands, CrlSemaphore *semaphore, u64 wait_value);
+//Attach a wait semaphore to command_buffer which will be signaled on completion 
+void crlCommandsEndSignalSemaphore(CrlCommandBuffer *commands, CrlSemaphore *semaphore, u64 signal_value);
+
+//Semaphore API
+
+//Create a timeline semaphore synchronisation primitive
+CrlSemaphore *crlCreateSemaphore(u64 initial_value);
+//Free memory associated with the semaphore
+void crlFreeSemaphore(CrlSemaphore *semaphore);
+//Wait for the semaphore value to reach wait_value
+void crlSemaphoreWait(CrlSemaphore *semaphore, u64 wait_value);
+//Signal the semaphore with signal_value 
+void crlSemaphoreSignal(CrlSemaphore *semaphore, u64 signal_value);
+//Sample the semaphore value
+u64 crlSemaphoreValue(CrlSemaphore *semaphore);
+
+//Device Surface Swapchain API
+//Only valid to use if CRL_DEVICE_PROPERTIES_SURFACE_SWAPCHAIN bit is 1
+
+typedef CRL_OPAQUE_TYPE CrlSurfaceSwapchain;
+
+//Create an image swapchain from the surface
+//Swapchain functions are only usable if crlSurfaceDeviceExists() returns 1
+CrlSurfaceSwapchain *crlSurfaceSwapchainCreate(CrlSurface *surface);
+//Free memory associated with the swapchain
+//Swapchain functions are only usable if crlSurfaceDeviceExists() returns 1
+void crlSurfaceSwapchainFree(CrlSurfaceSwapchain *surface_swapchain);
+//Return the latest present timing for previous presentations
+u64 crlSurfaceSwapchainQueryPresentTiming(CrlSurfaceSwapchain *surface_swapchain);
+//Obtain the next presentable texture from the swapchain 
+//Swapchain functions are only usable if crlSurfaceDeviceExists() returns 1
+//The resulting texture memory is owned by the surface swapchain
+//As such, it is invalid to call memFree or unformatMemory with it
+void *crlSurfaceSwapchainObtainTexture(CrlSurfaceSwapchain *surface_swapchain);
+//Present the last obtained swapchain texture
+//Swapchain functions are only usable if crlSurfaceDeviceExists() returns 1
+void crlSurfaceSwapchainPresent(CrlSurfaceSwapchain *surface_swapchain, u64 ideal_timing, CrlSemaphore *signal_semaphore, u64 signal_semaphore_value);
+
+typedef CRL_OPAQUE_TYPE CrlPipelinesCompiler 
+typedef u32 CrlSamplerIndex 
+
+//Memory Allocator API
+
+typedef enum {
+    //An allocator that uses a custom procedure pointer
+    CRL_MEM_ALLOCATOR_CUSTOM = 0,
+    //An allocator that has different root allocators for each memory type
+    CRL_MEM_ALLOCATOR_MULTI_TYPE,
+    //An allocator which calls crdMemAlloc and crdMemFree
+    CRL_MEM_ALLOCATOR_PAGE,
+    //An allocator which allows for mapping file desciptors
+    CRL_MEM_ALLOCATOR_PAGE_FILE_DESCRIPTOR,
+    //An allocator where free is a no-op
+    CRL_MEM_ALLOCATOR_ARENA,
+    //An allocator where free is a no-op
+    CRL_MEM_ALLOCATOR_BUFFER_FIXED,
+    //An allocator where free is a no-op
+    CRL_MEM_ALLOCATOR_BUFFER_FALLBACK,
+    //A symmetric multi processing allocator
+    CRL_MEM_ALLOCATOR_SMP,
+    //An allocator with runtime safety checks
+    CRL_MEM_ALLOCATOR_SAFE,
+    //A slab allocator
+    CRL_MEM_ALLOCATOR_SLAB,
+    //A pool allocator
+    CRL_MEM_ALLOCATOR_POOL,
+    //A pool allocator over a fixed buffer
+    CRL_MEM_ALLOCATOR_POOL_FIXED,
+} CrlMemAllocatorType;
+
+typedef struct {
+    void *operations;
+    u64 size;
+    u64 capacity;
+} CrlMemAllocatorQueueEntry;
+
+typedef struct {
+    CrlMemAllocatorQueueEntry *entires;
+    u64 size;
+    u64 capacity;
+} CrlMemAllocatorQueue;
+
+typedef struct {
+    void **pointers;
+    u64 size;
+    u64 capacity;
+} CrlMemAllocatorFormattedPointers;
+
+typedef struct {
+    //The type of the allocator
+    CrlMemAllocatorType type; 
+} CrlMemAllocator;
+
+typedef struct {
+    CrlMemAllocator base;
+    //Allocator operations queue
+    CrlMemAllocatorQueue queue;
+} CrlMemAllocatorPage;
+
+typedef struct {
+    CrlMemAllocator base;
+    //Allocator operations queue
+    CrlMemAllocatorQueue queue;
+    void *procedure;
+} CrlMemAllocatorCustom;
+
+typedef struct {
+    CrlMemAllocator base;
+    u64 index;
+    u64 capacity;
+    //List of allocated formatted memory
+    CrlMemAllocatorFormattedPointers formatted_pointers;
+} CrlMemAllocatorFixedBuffer;
+
+typedef struct {
+    CrlMemAllocator base;
+    //Allocator operations queue
+    CrlMemAllocatorQueue queue;
+} CrlMemAllocatorSmp;
+
+//Returns the type of the allocator
+CrlMemAllocatorType crlMemAllocatorType(CrlMemAllocator *allocator);
+//Returns the number of supported memory types that the allocator can allocate 
+u64 crlMemAllocatorMemoryTypes(CrlMemAllocator *allocator, CrlMemoryType *out_types);
+//Allocate memory
+CrlMemorySlice crlMemAllocatorAlloc(CrlMemAllocator *allocator, u64 size, u64 alignment, CrlMemoryType memory_type);
+//Allocate memory at a particular address
+//The particular address range must be owned by the allocator 
+//The address must be aligned to alignment
+//If the requested address range is already allocated this fails and returns an empty slice 
+CrlMemorySlice crlMemAllocatorAllocPlaced(CrlMemAllocator *allocator, void *address, u64 size);
+//Resize an allocation 
+//Address must be an allocated region greater than or equal to size
+CrlMemorySlice crlMemAllocatorAllocResize(CrlMemAllocator *allocator, void *address, u64 size);
+//Allocate and format texture memory. Returns the formatted pointer
+CrlMemorySlice crlMemAllocatorAllocTexture(CrlMemAllocator *allocator, CrlTextureDescription description);
+//Allocate and format placed texture memory. Returns the formatted pointer
+//The particular address range must be owned by the allocator 
+//The address must be aligned to the required alignment of the texture description
+//If the requested address range is already allocated this fails and returns an empty slice 
+CrlMemorySlice crlMemAllocatorAllocTexturePlaced(CrlMemAllocator *allocator, void *address, CrlTextureDescription description);
+//Allocate and format acceleration structure memory. Returns the formatted pointer
+CrlMemorySlice crlMemAllocatorAllocAccelerationStructure(CrlMemAllocator *allocator, CrlAccelerationStructureDescription description);
+//Allocate and format sampler heap memory. Returns the formatted pointer
+CrlMemorySlice crlMemAllocatorAllocSamplerHeap(CrlMemAllocator *allocator, crdSamplerHeapMemoryDescription description);
+//Allocate and format texture heap memory. Returns the formatted pointer
+CrlMemorySlice crlMemAllocatorAllocTextureHeap(CrlMemAllocator *allocator, crdSamplerHeapMemoryDescription description);
+//Allocate and create a texture descriptor. The allocator must return memory from within the descriptor heap
+CrlSamplerIndex crlMemAllocatorAllocTextureDescriptor(CrlMemAllocator *allocator, void *sampler_heap, void *texture);
+//Allocate and create a block of texture descriptors. The allocator must return memory from within the descriptor heap
+//Returns the first index of the contigious block 
+CrlSamplerIndex crlMemAllocatorAllocTextureDescriptors(CrlMemAllocator *allocator, void *sampler_heap, void **textures, u32 descriptor_count);
+//Enqeueue an allocate memory operation
+CrlMemorySlice crlMemAllocatorQueueAlloc(CrlMemAllocator *allocator, u64 size, u64 alignment, CrlMemoryType memory_type);
+//Enqeueue an allocate texture memory operation
+CrlMemorySlice crlMemAllocatorQueueAllocTexture(CrlMemAllocator *allocator, CrlTextureDescription description);
+//Enqeueue an allocate descriptor operation
+CrlMemorySlice crlMemAllocatorQueueAllocTextureDescriptor(CrlMemAllocator *allocator, void *sampler_heap, void *texture);
+//Enqeueue an allocate descriptors operation
+CrlMemorySlice crlMemAllocatorQueueAllocTextureDescriptors(CrlMemAllocator *allocator, void *sampler_heap, void **textures, u32 descriptor_count);
+//Begin an entry of allocator operations in the allocator queue  
+void crlMemAllocatorQueueBegin(CrlMemAllocator *allocator, CrlSemaphore *semaphore, u64 wait_value, CrlSemaphore *signal_semaphore, u64 signal);
+//Drain the allocator queue operations which can be dequeued without waiting
+void crlMemAllocatorQueuesDrain(CrlMemAllocator *allocator);
+//Drain the allocator queue and wait for all operations to complete
+void crlMemAllocatorQueuesDrainWait(CrlMemAllocator *allocator);
+//Enqueue a free operation
+void crlMemAllocatorFree(CrlMemAllocator *allocator, void *memory);
+//Execute a free operation
+//This should only be used if you know that the memory being freed is no longer being used.
+void crlMemAllocatorImmediateFree(CrlMemAllocator *allocator, void *memory);
+
+//Set the thread local allocator
+void crlThreadLocalSetMemAllocator(CrlMemAllocator *allocator);
+//Get the thread local allocator
+CrlMemAllocator *crlThreadLocalGetMemAllocator(void);
+
+CrlMemAllocator *crlMemAllocatorCustom(void *procedure);
+CrlMemAllocator *crlMemAllocatorMultiType(CrlMemAllocator **roots);
+CrlMemAllocator *crlMemAllocatorPage(void);
+CrlMemAllocator *crlMemAllocatorFixedBuffer(void *buffer, u64 size);
+CrlMemAllocator *crlMemAllocatorFixedBufferInterned(CrlMemAllocator *child, u64 size, CrlMemoryType memory_type);
+CrlMemAllocator *crlMemAllocatorArena(CrlMemAllocator *root);
+CrlMemAllocator *crlMemAllocatorPool(CrlMemAllocator *root, u64 element_size);
+CrlMemAllocator *crlMemAllocatorSafe(CrlMemAllocator *root);
+CrlMemAllocator *crlMemAllocatorSmp(CrlMemAllocator *root);
+
+void crlMemAllocatorFixedBufferReset(CrlMemAllocator *arena);
+void crlMemAllocatorArenaReset(CrlMemAllocator *arena, u64 retain_capacity);
+void crlMemAllocatorArenaFree(CrlMemAllocator *arena);
+void crlMemAllocatorSmpFree(CrlMemAllocator *arena);
+void crlMemAllocatorSafeFree(CrlMemAllocator *arena);
+
+//Represents a logical stream device which represents the set of external volatile and non-volatile streamable memory devices 
+typedef CRL_OPAQUE_TYPE CrlMemStreamDevice;
+//Represents a buffer of memory stream commands
+typedef CRL_OPAQUE_TYPE CrlMemStreamCommandBuffer;
+//Represents a logcial, lazily allocated stream of volatile or non-volatile memory
+typedef CRL_OPAQUE_TYPE CrlMemStream;
+
+typedef enum {
+    //A custom stream device
+    CRL_MEM_STREAM_DEVICE_TYPE_CUSTOM = 0,
+    //An asynchronous stream device
+    CRL_MEM_STREAM_DEVICE_TYPE_ASYNC = 1,
+    //Allows for direct storage -> device memory transfers
+    CRL_MEM_STREAM_DEVICE_TYPE_ASYNC_DIRECT = 2,
+    //A synchronous stream device
+    CRL_MEM_STREAM_DEVICE_TYPE_SYNC = 3,
+    //Any type of stream device is allowed for selection
+    CRL_MEM_STREAM_DEVICE_TYPE_PREFERRED_ANY = (1 << 64),
+    //The most optimal type of stream device is preferred for selection
+    CRL_MEM_STREAM_DEVICE_TYPE_PREFERRED_OPTIMAL = (0xaaaaaaaaaaaaaaa),
+} CrlMemStreamDeviceType;
+
+//Select a stream device
+//If device == NULL, then this selects a cpu only memory stream device
+//If type == CRL_MEM_STREAM_DEVICE_TYPE_PREFERRED_ANY, then stream device selection is automatic   
+CrlMemStreamDevice *crlMemStreamDeviceSelect(
+    CrlDevice *device,
+    CrlMemAllocator *allocator, 
+    CrlMemStreamDeviceType type, 
+    void *procedure
+);
+//Free memory associated with the stream_device
+void crlMemStreamDeviceFree(CrlMemStreamDevice *stream_device);
+//Allocate memory, importing it from the src stream
+//The resulting memory is valid CrlDevice memory
+void *crlMemStreamDeviceMemAlloc(
+    CrlMemStreamDevice *stream_device, 
+    CrlMemStream *src,
+    CrlMemoryType memory_type
+);
+//Allocate memory, returning a valid memory stream pointing to that memory
+CrlMemStream *crlMemStreamDeviceMemAllocStream(
+    CrlMemStreamDevice *stream_device, 
+    u64 size,
+    u64 alignment,
+    CrlMemoryType memory_type
+);
+//Free device memory allocated from a stream device
+void crlMemStreamDeviceMemFree(void *memory);
+//Get the memory stream associated with a stream device memory allocation
+CrlMemStream *crlMemStreamDeviceMemGetStream(void *memory);
+//Create a memory stream from memory
+CrlMemStream *crlMemStreamDeviceMemoryStream(
+    CrlMemStreamDevice *stream_device, 
+    CrlMemAllocator *allocator, 
+    CrlSemaphore *semaphore, 
+    CrlMemorySlice memory
+);
+//Create a memory stream from a system file descriptor
+CrlMemStream *crlMemStreamDeviceFileDescriptorStream(
+    CrlMemStreamDevice *stream_device, 
+    CrlMemAllocator *allocator, 
+    CrlSemapohre *semaphore, 
+    void *file_descriptor
+);
+//Create a memory stream from a file name
+//If the file does not exist, it is created
+CrlMemStream *crlMemStreamDeviceFileStream(
+    CrlMemStreamDevice *stream_device, 
+    CrlMemAllocator *allocator, 
+    CrlSemaphore *semaphore, 
+    CrlMemorySlice file_name
+);
+//If the memory stream points to a file, then return the system file descriptor 
+//Returns null if a memory stream cannot be created from file descriptor
+void *crlMemStreamFileDescriptor(CrlMemStreamDevice *stream_device, CrlMemStream *stream);
+//Begin a stream device queue entry
+CrlMemStreamCommandBuffer *crlMemStreamDeviceBeginCommmands(CrlMemStreamDevice *stream_device, CrlMemAllocator *allocator, CrlSemaphore *semaphore, u64 wait_value);
+//Submit pending streaming operations to the device
+void crlMemStreamDeviceSubmit(CrlMemStreamDevice *stream_device, CrlSemaphore *semaphore, u64 signal_value);
+//Returns a pointer to the allocated memory
+//When the stream queue entry has completed, the contents of the memory will be equal to the contents of src 
+void *crlMemStreamDeviceAlloc(CrlMemStreamDevice *stream_device, CrlMemStream *src, CrlMemoryType memory_type); 
+//Returns a pointer to the allocated memory
+//Semantically identical to texture = crlMemAllocatorAllocTexture(..., description); crdMemCopy(texture, src, ...) 
+void *crlMemStreamDeviceAllocTexture(
+    CrlMemStreamDevice *stream_device, 
+    //The source memory stream
+    //When the stream queue entry has completed, the contents of the texture memory will be equal to the encoded contents of src 
+    CrlMemStream *src, 
+    //The texture description used to allocate the memory
+    CrlTextureDescription *description, 
+    //The allocator used to procure the descriptor
+    //Can be NULL if out_sampler is NULL
+    CrlMemAllocator *descriptor_allocator,
+    //The descriptor heap to allocate from
+    //Can be NULL if descriptor_allocator and out_sampler_index are NULL
+    void *sampler_heap,
+    //Writes the sampler index of the allocated descriptor 
+    //Can be NULL
+    u64 *out_sampler_index,
+); 
+//Returns a pointer to the allocated memory
+void *crlMemStreamDeviceAllocTextureLods(
+    CrlMemStreamDevice *stream_device, 
+    //When the stream queue entry has completed, the contents of the texture memory will be equal to the encoded contents of src_lods 
+    CrlMemStream **src_lods, 
+    //The texture description used to allocate the memory
+    CrlTextureDescription *description, 
+    //The allocator used to procure the descriptor
+    //Can be NULL if out_sampler is NULL
+    CrlMemAllocator *descriptor_allocator,
+    //The descriptor heap to allocate from
+    //Can be NULL if descriptor_allocator and out_sampler_index are NULL
+    void *sampler_heap,
+    //Writes the sampler index of the allocated descriptor 
+    //Can be NULL
+    u64 *out_sampler_index,
+);
+//Copy memory from one stream to another
+void crlMemStreamDeviceMemCopy(
+    CrlMemStreamDevice *stream_device, 
+    CrlMemStream *dst,
+    CrlMemStream *src, 
+);
+//Memset one stream with the contents of another
+void crlMemStreamDeviceMemSet(
+    CrlMemStreamDevice *stream_device, 
+    CrlMemStream *dst,
+    CrlMemStream *src, 
+);
+
+//Slice the memory stream
+CrlMemStream *crlMemStreamSlice(CrlMemStream *stream, u64 offset, u64 size);
+//Free the stream
+void crlMemStreamFree(CrlMemStream *stream);
+//Requests that the contents of the stream become available eventually 
+//Returns the number of bytes that are immediately available
+u64 crlMemStreamRequestAvailable(CrlMemStream *stream, u64 requested_size);
+//Queries the total size of the memory stream in bytes
+u64 crlMemStreamSize(CrlMemStream *stream);
+//Queries the number of bytes available to be read
+u64 crlMemStreamBytesAvailable(CrlMemStream *stream);
+//Waits for ther requested least number of bytes to be available
+u64 crlMemStreamBytesWaitAvailable(CrlMemStream *stream, u64 at_least);
+//Returns null if the memory is not available yet
+void *crlMemStreamPointer(CrlMemStream *stream);
+
+//Pipeline Compiler Interface API
+
+typedef CRL_OPAQUE_TYPE CrlPipelineCompiler 
+
+u64 crlPipelineCompilerCompileComputePipeline();
+u64 crlPipelineCompilerCompileRasterVertexPipeline();
+u64 crlPipelineCompilerCompileRasterMeshPipeline();
+u64 crlPipelineCompilerCompileRayTracingPipeline();
+void crlPipelineCompilerFreePipeline(u64 pipeline);
+
+typedef CRL_OPAQUE_TYPE CrlSurfaceCommandBuffer 
+typedef CRL_OPAQUE_TYPE CrlInputState 
+
+typedef enum {
+    CRL_INPUT_KEY_NONE,
+} CrlInputKey;
+
+typedef struct {
+    u8 *pixels;
+    u32 width; 
+    u32 height; 
+    CrlImageFormat format;
+} CrlSurfaceImage;
+
+typedef struct {
+    u8 *label;
+    //If 1, the surface will be translucent, else opaque
+    u8 translucent;
+    CrlSurfaceImage icon;
+} CrlSurfaceDescription;
+
+typedef struct {
+    CrlInputState *input_state;
+    CrlMemorySlice clipboard_data;
+} CrlSurfacePollResult;
+
+typedef enum {
+    CRL_SURFACE_CURSOR_DEFAULT,
+    CRL_SURFACE_CURSOR_ARROW,
+    CRL_SURFACE_CURSOR_IBEAM,
+    CRL_SURFACE_CURSOR_CROSSHAIR,
+    CRL_SURFACE_CURSOR_HAND,
+    CRL_SURFACE_CURSOR_RESIZE_HORIZONTAL,
+    CRL_SURFACE_CURSOR_RESIZE_VERTICAL,
+} CrlSurfaceCursor;
+
+typedef enum {
+    CRL_SURFACE_CURSOR_MODE_DEFAULT,
+    CRL_SURFACE_CURSOR_MODE_HIDDEN,
+    CRL_SURFACE_CURSOR_MODE_CAPTURED,
+} CrlSurfaceCursorMode;
+
+typedef enum {
+    CRL_INPUT_ACTION_RELEASE,
+    CRL_INPUT_ACTION_DOWN,
+    CRL_INPUT_ACTION_PRESS,
+} CrlInputActionState;
+
+typedef enum {
+    CRL_SURFACE_PRESENT_MODE_EXACT,
+    CRL_SURFACE_PRESENT_MODE_STRETCH,
+    CRL_SURFACE_PRESENT_MODE_LETTERBOXED,
+} CrlSurfacePresentMode;
+
+typedef struct {
+    u8 *pixels;
+    u32 width; 
+    u32 height; 
+    CrlImageFormat format; 
+    CrlSurfacePresentMode present_mode;
+} CrlSurfacePresentation;
+
+//Surface API
+
+typedef CRL_OPAQUE_TYPE CrlSurfaceDevice;
+
+//Queries the existance of a surface device
+//If zero is returned, surface api functions are not usable and not necessarily available
+u8 crlSurfaceDeviceExists(void);
+//Selects a surface device 
+CrlSurfaceDevice *crlSurfaceDeviceSelect(void);
+//Free memory associated with a surface device
+void crlSurfaceDeviceFree(CrlSurfaceDevice *device);
+//Set the current surface device
+void crlSurfaceSetThreadDevice(CrlSurfaceDevice *device);
+//Create a new display surface from the description
+CrlSurface *crlSurfaceCreate(CrlSurfaceDescription description);
+//Create a display surface handle from a platform handle
+CrlSurface *crlSurfaceCreateFromSystemHandle(void *handle);
+//Return the native platform handle for the surface
+void *crlSurfaceGetSystemHandle(CrlSurface *surface);
+//Free the memory associated with the surface
+void crlSurfaceFree(CrlSurface *surface);
+//Poll the surface for input states and other data
+//Returns NULL when the surface has been shutdown by the system
+const CrlSurfacePollResult *crlSurfacePoll(CrlSurface *surface);
+//Returns the extents of the surface
+const f32 *crlSurfaceExtents(CrlSurface *surface);
+//Start recording commands which can be submitted to the surface
+CrlSurfaceCommandBuffer *crlSurfaceCommandsStartRecording(CrlSurface *surface);
+//Submit commands to the surface to eventuall be applied
+void crlSurfaceSubmitCommands(CrlSurface *surface, CrlSurfaceCommandBuffer *commands);
+//Encode a command to present a buffer of pixels to the surface
+void crlSurfacePresent(CrlSurfaceCommandBuffer *commands, CrlSurfacePresentation presentation);
+//Encode a command to change the surface label
+void crlSurfaceSetLabel(CrlSurfaceCommandBuffer *commands, CrlMemorySlice label);
+//Encode a command to change the surface icon
+void crlSurfaceSetIcon(CrlSurfaceCommandBuffer *commands, CrlSurfaceImage image);
+//Encode a command to maximize/minimize the surface
+void crlSurfaceSetMaximized(CrlSurfaceCommandBuffer *commands, u8 maximized);
+//Encode a command to enable/disable fullscreen
+void crlSurfaceSetFullscreen(CrlSurfaceCommandBuffer *commands, u8 fullscreen);
+//Encode a command to set the cursor
+void crlSurfaceSetCursor(CrlSurfaceCommandBuffer *commands, CrlSurfaceCursor cursor);
+//Encode a command to set the cursor mode
+void crlSurfaceSetCursorMode(CrlSurfaceCommandBuffer *commands, CrlSurfaceCursorMode mode);
+//Encode a command to set the clipboard data 
+void crlSurfaceSetClipboard(CrlSurfaceCommandBuffer *commands, CrlMemorySlice data);
+//Encode a command to launch a message box 
+void crlSurfaceLaunchMessageBox(CrlSurfaceCommandBuffer *commands, CrlMemorySlice title, CrlMemorySlice message);
+
+//Input API
+
+typedef CRL_OPAQUE_TYPE CrlInputDevice;
+
+//Query the existance of an input device
+//If zero is returned, input api functions are not usable and not necessarily available
+u8 crlInputDeviceExists(void);
+//Select an input device
+CrlInputDevice *crlInputDeviceSelect(void);
+//Free the memory associated with the input device
+void crlInputDeviceFree(CrlInputDevice *device);
+//Set the current audio device for the current thread
+void crlInputSetThreadDevice(CrlInputDevice *device);
+//Poll the raw input device for an input state
+CrlInputState *crlInputDevicePoll(void);
+//Atomically load input key action state
+CrlInputActionState crlInputGetKey(CrlInputState *state, CrlInputKey key);
+//Atomically load input mouse button action state
+CrlInputActionState crlInputGetMouseButton(CrlInputState *state, CrlInputKey button);
+//Returns the mouse position
+f32 *crlInputGetMousePosition(CrlInputState *state);
+//Returns the mouse velocity 
+f32 *crlInputGetMouseVelocity(CrlInputState *state);
+//Returns the cursor position
+f32 *crlInputGetCursorPosition(CrlInputState *state);
+//Returns the cursor velocity 
+f32 *crlInputGetCursorVelocity(CrlInputState *state);
+
+//Audio API
+
+typedef CRL_OPAQUE_TYPE CrlAudioDevice;
+
+//Query the existance of an audio device
+//If zero is returned, input api functions are not usable and not necessarily available
+u8 crlAudioDeviceExists(void);
+//Select an audio device
+CrlAudioDevice *crlAudioDeviceSelect(void);
+//Free the memory associated with the audio device
+void crlAudioDeviceFree(CrlAudioDevice *device);
+//Set the current audio device for the current thread
+void crlAudioSetThreadDevice(CrlAudioDevice *device);
+//Launch a render buffer procedure into its own thread
+void crlAudioDeviceLaunchRenderProcedure(void);
+
+//Transcoding API
+
+typedef enum {
+} CrlVideoEncoding;
+
+typedef enum {
+    CRL_AUDIO_ENCODING_RAW,
+    CRL_AUDIO_ENCODING_WAV,
+    CRL_AUDIO_ENCODING_MP3,
+} CrlAudioEncoding;
+
+typedef enum {
+    CRL_IMAGE_ENCODING_RAW_LINEAR,
+    CRL_IMAGE_ENCODING_RAW_MORTON,
+    CRL_IMAGE_ENCODING_PNG,
+    CRL_IMAGE_ENCODING_AVIF,
+    CRL_IMAGE_ENCODING_QOI,
+    CRL_IMAGE_ENCODING_GIF,
+    CRL_IMAGE_ENCODING_JPG,
+    CRL_IMAGE_ENCODING_JPG_XL,
+    CRL_IMAGE_ENCODING_KTX,
+    CRL_IMAGE_ENCODING_BCN,
+    CRL_IMAGE_ENCODING_ETC,
+    CRL_IMAGE_ENCODING_EAC,
+    CRL_IMAGE_ENCODING_ASTC,
+    CRL_IMAGE_ENCODING_PVRTC,
+} CrlImageEncoding;
+
+typedef enum {
+    CRL_IMAGE_TRANSCODE_OPTIMIZATION_NONE,
+    CRL_IMAGE_TRANSCODE_OPTIMIZATION_COMPRESS_FAST = 1 << 0,
+    CRL_IMAGE_TRANSCODE_OPTIMIZATION_COMPRESS_SMALL = 1 << 1,
+} CrlImageTranscodeOptimization;
+
+typedef enum {
+    CRL_GEOMETRY_ENCODING_RAW_TRIANGLE,
+    CRL_GEOMETRY_ENCODING_RAW_TRIANGLE_CLUSTER,
+    CRL_GEOMETRY_ENCODING_GLTF,
+    CRL_GEOMETRY_ENCODING_GLB,
+    CRL_GEOMETRY_ENCODING_STL,
+    CRL_GEOMETRY_ENCODING_OBJ,
+    CRL_GEOMETRY_ENCODING_FBX,
+} CrlGeometryEncoding;
+
+typedef enum {
+    CRL_GEOMETRY_VERTEX_LAYOUT_AOS,
+    CRL_GEOMETRY_VERTEX_LAYOUT_SOA,
+} CrlGeometryVertexLayout;
+
+typedef enum {
+    CRL_GEOMETRY_VERTEX_POSITION_FORMAT_F32_2,
+    CRL_GEOMETRY_VERTEX_POSITION_FORMAT_F32_3,
+    CRL_GEOMETRY_VERTEX_POSITION_FORMAT_F16_2,
+    CRL_GEOMETRY_VERTEX_POSITION_FORMAT_F16_3,
+    CRL_GEOMETRY_VERTEX_POSITION_FORMAT_F16_AABB_REL_2,
+    CRL_GEOMETRY_VERTEX_POSITION_FORMAT_F16_AABB_REL_3,
+    CRL_GEOMETRY_VERTEX_POSITION_FORMAT_I16_AABB_REL_2,
+    CRL_GEOMETRY_VERTEX_POSITION_FORMAT_I16_AABB_REL_3,
+} CrlGeometryVertexPositionFormat;
+
+typedef enum {
+    CRL_GEOMETRY_TEXTURE_COORDINATE_FORMAT_F32_2,
+    CRL_GEOMETRY_TEXTURE_COORDINATE_FORMAT_F32_3,
+    CRL_GEOMETRY_TEXTURE_COORDINATE_FORMAT_F16_2,
+    CRL_GEOMETRY_TEXTURE_COORDINATE_FORMAT_F16_3,
+} CrlGeometryTextureCoordinateFormat;
+
+typedef enum {
+    CRL_TRANSCODE_GEOMETRY_OPTIMIZATION_NONE = 0, 
+    CRL_TRANSCODE_GEOMETRY_OPTIMIZATION_VERTEX_FETCH = 1 << 0, 
+    CRL_TRANSCODE_GEOMETRY_OPTIMIZATION_VERTEX_CACHE = 1 << 1, 
+    CRL_TRANSCODE_GEOMETRY_OPTIMIZATION_INDEX_FILTERING = 1 << 2, 
+    CRL_TRANSCODE_GEOMETRY_OPTIMIZATION_OVERDRAW = 1 << 3, 
+    CRL_TRANSCODE_GEOMETRY_OPTIMIZATION_VERTEX_QUANTIZATION = 1 << 4, 
+} CrlTranscodeGeometryOptimization;
+
+typedef struct {
+    CrlGeometryVertexLayout vertex_layout;
+    CrlGeometryVertexPositionFormat position_format;
+} CrlGeometryLayout;
+
+typedef struct {
+    u32 thread_count_x;
+    u32 thread_count_y; 
+    u32 thread_count_z;
+    CrlGeometryEncoding encoding;
+    CrlGeometryLayout layout;
+    void *data;
+    u64 size;
+} CrlEncodedGeometry;
+
+typedef struct {
+    u32 thread_count_x;
+    u32 thread_count_y; 
+    u32 thread_count_z;
+    CrlImageEncoding encoding;
+    CrlImageFormat format;
+    //This data pointer can be formatted as a texture using crdFormatTextureMemory(..)
+    //The above is only allowed for raw and block compressed encodings
+    void *data;
+    u64 size;
+} CrlEncodedImage;
+
+typedef struct {
+    CrlAudioEncoding encoding;
+    void *data;
+    u64 size;
+} CrlEncodedAudio;
+
+typedef struct {
+    CrlVideoEncoding encoding;
+    void *data;
+    u64 size;
+} CrlEncodedVideo;
+
+typedef enum {
+    CRL_TRANSCODE_OPERATION_DECODE = 1 << 0,
+    CRL_TRANSCODE_OPERATION_ENCODE = 1 << 1,
+    CRL_TRANSCODE_OPERATION_TRANSCODE = 0b11,
+} CrlTranscodeOperation;
+
+typedef struct {
+    u32 thread_count_x;
+    u32 thread_count_y;
+    u32 thread_count_z;
+    CrlTranscodeOperation op;
+    CrlEncodedImage *dest;
+    CrlEncodedImage *src;
+} CrlTranscodeImageCommand;
+
+typedef struct {
+    u32 thread_count_x;
+    u32 thread_count_y;
+    u32 thread_count_z;
+    CrlTranscodeOperation op;
+    CrlEncodedImage *dest;
+    CrlEncodedImage *src;
+} CrlTranscodeAudioCommand;
+
+typedef struct {
+    u32 thread_count_x;
+    u32 thread_count_y;
+    u32 thread_count_z;
+    CrlTranscodeOperation op;
+    CrlEncodedImage *dest;
+    CrlEncodedImage *src;
+} CrlTranscodeVideoCommand;
+
+typedef struct {
+    u32 thread_count_x;
+    u32 thread_count_y;
+    u32 thread_count_z;
+    CrlTranscodeOperation op;
+    CrlTranscodeGeometryOptimization optimization;
+    CrlEncodedImage *dest;
+    CrlEncodedImage *src;
+} CrlTranscodeGeometryCommand;
+
+typedef CRL_OPAQUE_TYPE CrlTranscodeDevice;
+typedef CRL_OPAQUE_TYPE CrlTranscodePipeline;
+
+typedef enum {
+    CRL_TRANSCODE_DEVICE_PROPERTIES_HARDWARE_IMAGE_TRANSCODE = 0, 
+    CRL_TRANSCODE_DEVICE_PROPERTIES_HARDWARE_AUDIO_TRANSCODE = 1 << 0, 
+    CRL_TRANSCODE_DEVICE_PROPERTIES_HARDWARE_VIDEO_TRANSCODE = 1 << 1, 
+    CRL_TRANSCODE_DEVICE_PROPERTIES_HARDWARE_GEOMETRY_TRANSCODE = 1 << 2, 
+    CRL_TRANSCODE_DEVICE_PROPERTIES_HOST_IMAGE_TRANSCODE = 1 << 3, 
+    CRL_TRANSCODE_DEVICE_PROPERTIES_HOST_AUDIO_TRANSCODE = 1 << 4, 
+    CRL_TRANSCODE_DEVICE_PROPERTIES_HOST_VIDEO_TRANSCODE = 1 << 5, 
+    CRL_TRANSCODE_DEVICE_PROPERTIES_HOST_GEOMETRY_TRANSCODE = 1 << 6, 
+    CRL_TRANSCODE_DEVICE_PROPERTIES_PREFERRED_ANY = (1 << 32),
+} CrlTranscodeDeviceProperties;
+
+typedef struct {
+    void *encodings;
+    void *decodings;
+    u64 encoding_count;
+    u64 decoding_count;
+    void *encodings_host;
+    void *decodings_host;
+    u64 encoding_host_count;
+    u64 decoding_host_count;
+} CrlTranscodePipelineDescription;
+
+//If this returns NULL, then the transcode API is not supported
+CrlTranscodeDevice *crlTranscodeDeviceSelect(CrlDevice *device, CrlTranscodeDeviceProperties preferred_properties);
+void crlTranscodeDeviceFree(CrlTranscodeDevice *transcode_device);
+CrlTranscodeDevice crlTranscodeDeviceProperties(CrlTranscodeDevice *transcode_device);
+CrlDeviceID crlTranscodeDeviceID(CrlTranscodeDevice *transcode_device);
+CrlMemorySlice crlTranscodeDeviceName(CrlTranscodeDevice *transcode_device);
+void crlThreadLocalSetTranscodeDevice(CrlTranscodeDevice *transcode_device);
+
+CrlCommandBuffer *crlTranscodeDeviceStartRecording(CrlQueue queue);
+void crlTranscodeDeviceQueueSubmit(CrlQueue queue, CrlCommandBuffer *commands);
+
+//Create an image transcode pipeline that can transcode the specified encodings
+CrlTranscodePipeline *crlTranscodeImagePipelineCreate(CrlTranscodePipelineDescription *description);
+//Create an image transcode pipeline that can transcode the specified encodings
+CrlTranscodePipeline *crlTranscodeAudioPipelineCreate(CrlTranscodePipelineDescription *description);
+//Create an image transcode pipeline that can transcode the specified encodings
+CrlTranscodePipeline *crlTranscodeVideoPipelineCreate(CrlTranscodePipelineDescription *description);
+//Create an image transcode pipeline that can transcode the specified encodings
+CrlTranscodePipeline *crlTranscodeGeometryPipelineCreate(CrlTranscodePipelineDescription *description);
+//Free memory associated with a transcode pipeline
+void crlTranscodePipelineFree(CrlTranscodePipeline *pipeline);
+
+//If this returns 0, then image transcoding is not supported
+u64 crlTranscodeSupportedImageEncodings(CrlTranscodeDevice *transcode_device, CrlImageEncoding *encodings);
+//If this returns 0, then audio transcoding is not supported
+u64 crlTranscodeSupportedAudioEncodings(CrlTranscodeDevice *transcode_device, CrlAudioEncoding *encodings);
+//If this returns 0, then video transcoding is not supported
+u64 crlTranscodeSupportedVideoEncodings(CrlTranscodeDevice *transcode_device, CrlVideoEncoding *encodings);
+//If this returns 0, then geometry transcoding is not supported
+u64 crlTranscodeSupportedGeometryEncodings(CrlTranscodeDevice *transcode_device, CrlGeometryEncoding *encodings);
+//If command buffer is NULL, then the encode/decode operations are done on the cpu immediately
+void crlLaunchImageTranscode(
+    CrlCommandBuffer *commands, 
+    CrlTranscodePipeline *pipeline, 
+    void **scratch, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
+void crlLaunchAudioTranscode(
+    CrlCommandBuffer *commands, 
+    CrlTranscodePipeline *pipeline, 
+    void **scratch, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
+void crlLaunchVideoTranscode(
+    CrlCommandBuffer *commands, 
+    CrlTranscodePipeline *pipeline, 
+    void **scratch, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
+void crlLaunchGeometryTranscode(
+    CrlCommandBuffer *commands, 
+    CrlTranscodePipeline *pipeline, 
+    void **scratch, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
+void crlLaunchCompressedDataTranscode(
+    CrlCommandBuffer *commands, 
+    CrlTranscodePipeline *pipeline, 
+    void **scratch, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
+
+void f() {
+    CrlImageEncoding encodings[1] = { CRL_IMAGE_ENCODING_PNG };
+
+    CrlMemAllocator *arena = ...;
+    CrlCommandBuffer *commands = ...;
+    CrlTranscodePipeline *pipeline = crlTranscodeImagePipelineCreate({
+        .encodings = &encodings,
+        .decodings = &encodings,
+        .encoding_count = 1,
+        .decoding_count = 1,
+    });
+    CrlTranscodeImageCommand *arguments = (CrlTranscodeImageCommand *)crlMemAllocatorAlloc(arena, 10, alignof(CrlTranscodeImageCommand), CRL_MEMORY_TYPE_DEVICE_CPU_WRITABLE);
+    void **scratch = (void **)crlMemAllocatorAlloc(arena, 10, alignof(void*), CRL_MEMORY_TYPE_DEVICE_CPU_WRITABLE);
+
+    for (int i = 0; i < 10; i++) {
+        arguments[i] = {
+            ...
+        };
+    }
+
+    crlTranscodeImageScratchAlloc(&arena,  NULL, { .ptr = arguments, .size = 10 }, NULL, scratch); 
+    crlLaunchImageTranscode(commands, pipeline, &scratch, { .ptr = arguments, .size = 10 }, NULL); 
+
+    crlMemAllocatorArenaFree(arena);
+}
+
+void crlTranscodeImageScratchAlloc(CrlMemAllocator *allocator, CrlMemorySlice arguments, u64 *count, void **out_scratch);
+void crlTranscodeAudioScratchAlloc(CrlMemAllocator *allocator, CrlMemorySlice arguments, u64 *count, void **out_scratch);
+void crlTranscodeVideoScratchAlloc(CrlMemAllocator *allocator, CrlMemorySlice arguments, u64 *count, void **out_scratch);
+void crlTranscodeGeometryScratchAlloc(CrlMemAllocator *allocator, CrlMemorySlice arguments, u64 *count, void **out_scratch);
+void crlTranscodeImageScratchSize(CrlCommandBuffer *commands, CrlMemorySlice arguments, u64 *count, u64 **out_size);
+void crlTranscodeAudioScratchSize(CrlCommandBuffer *commands, CrlMemorySlice arguments, u64 *count, u64 **out_size);
+void crlTranscodeVideoScratchSize(CrlCommandBuffer *commands, CrlMemorySlice arguments, u64 *count, u64 **out_size);
+void crlTranscodeGeometryScratchSize(CrlCommandBuffer *commands, CrlMemorySlice arguments, u64 *count, u64 **out_size);
+
+//Carol Math API
+//Supplies relevant rendering related math functions.
+
+void crlMathComplexExp(f32 *output, f32 *v, f32 angle);
+void crlMathComplexMul(f32 *output, f32 *lhs, f32* rhs);
+void crlMathQuaternionExp(f32 *output, f32 *v, f32 angle);
+void crlMathQuaternionMul(f32 *output, f32 *lhs, f32 *rhs);
+void crlMathMatrix4x4Mul(f32 *output, f32 *lhs, f32 *rhs);
+//Compute a reverse-z [1, 0] perspective projection matrix 
+void crlMathProjectionPerspective(f32 *out_matrix, f32 fov);
+//Compute a view look at matrix
+void crlMathViewLookAt(f32 *out_matrix, f32 *eye, f32 *target);
+
+#endif
