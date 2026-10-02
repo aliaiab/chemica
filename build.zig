@@ -190,7 +190,6 @@ pub fn compileModuleKernels(
                     .variable_pointers_storage_buffer,
                     .variable_pointers,
                     .SPV_EXT_descriptor_indexing,
-                    .float64,
                 }),
                 .os_tag = .vulkan,
             }),

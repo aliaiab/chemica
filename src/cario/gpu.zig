@@ -368,85 +368,52 @@ pub fn signalBefore(
     return backendCall(@src(), .{command_buffer});
 }
 
-///Begin a raster pass
-pub fn rasterPassBegin(
-    command_buffer: *CommandBuffer,
-    description: RasterPassDescription,
-) void {
-    return backendCall(@src(), .{
-        command_buffer,
-        description,
-    });
-}
-
-///End a raster pass
-pub fn rasterPassEnd(
-    command_buffer: *CommandBuffer,
-) void {
-    return backendCall(@src(), .{command_buffer});
-}
+pub const ComputeWork = extern struct {
+    kernel_arguments: []const u64,
+    command_arguments: []const ComputeCommand,
+};
 
 ///Launch a set of compute commands
 pub fn launchCompute(
     command_buffer: *CommandBuffer,
     pipeline: *Pipeline,
-    root_data: []const *anyopaque,
-    commands: []const ComputeCommand,
+    work: ComputeWork,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
         pipeline,
-        root_data,
-        commands,
+        work,
     });
 }
 
-///Launch a set of raster draw commands
-pub fn launchRasterDraw(
-    command_buffer: *CommandBuffer,
-    pipeline: *Pipeline,
-    root_data: []const *anyopaque,
-    commands: []const RasterDrawCommand,
-    options: DispatchRasterDrawOptions,
-) void {
-    return backendCall(@src(), .{
-        command_buffer,
-        pipeline,
-        root_data,
-        commands,
-        options,
-    });
-}
+pub const IndexType = enum(u2) {
+    u8,
+    u16,
+    u32,
+};
 
-///Launch a set of raster draw commands
-pub fn launchRasterDrawIndexed(
-    command_buffer: *CommandBuffer,
-    pipeline: *Pipeline,
-    root_data: []const *anyopaque,
-    commands: []const RasterDrawIndexedCommand,
-    indices: []u8,
-) void {
-    return backendCall(@src(), .{
-        command_buffer,
-        pipeline,
-        root_data,
-        commands,
-        indices,
-    });
-}
+pub const RasterizerWork = struct {
+    raster_pass: RasterPassDescription,
+    raster_pass_load: bool = false,
+    state: RasterizerState = .default,
+    kernel_arguments: []const u64,
+    command_arguments: []const RasterDrawIndexedCommand,
+    //A command stride of zero means that the stride is inferred
+    command_stride: u64 = 0,
+    vertex_indices: []const u8 = &.{},
+    vertex_index_type: IndexType = .u32,
+    count: ?*u64 = null,
+};
 
-///Launch a set of raster mesh draw commands
-pub fn launchRasterDrawMeshes(
+pub fn launchRasterize(
     command_buffer: *CommandBuffer,
     pipeline: *Pipeline,
-    root_data: []const *anyopaque,
-    commands: []const RasterDrawMeshesCommand,
+    work: RasterizerWork,
 ) void {
     return backendCall(@src(), .{
         command_buffer,
         pipeline,
-        root_data,
-        commands,
+        work,
     });
 }
 
@@ -688,6 +655,18 @@ pub const CommandBuffer = opaque {
         return gpu.launchCompute(command_buffer, pipeline, root_data, commands);
     }
 
+    pub fn launchRasterize(
+        command_buffer: *CommandBuffer,
+        pipeline: *Pipeline,
+        work: RasterizerWork,
+    ) void {
+        gpu.launchRasterize(
+            command_buffer,
+            pipeline,
+            work,
+        );
+    }
+
     ///Launch a set of raster draw commands
     pub fn launchRasterDraw(
         command_buffer: *CommandBuffer,
@@ -818,6 +797,21 @@ pub const Stencil = packed struct {
     reference: u8 = 0,
 };
 
+pub const PrimitiveFill = PolygonMode;
+pub const PrimitiveCull = RasterPipelineDescription.Cull;
+
+pub const RasterizerState = struct {
+    rasterization: []RasterizationState = &.{},
+    depth_stencil: []DepthStencilState = &.{},
+    blend: []BlendState = &.{},
+    primitive_fill: []PrimitiveFill = &.{},
+    primitive_cull: []PrimitiveCull = &.{},
+    viewport_scissor: [][4]i32 = &.{},
+    viewport_transform: [][6]f32 = &.{},
+
+    pub const default: RasterizerState = .{};
+};
+
 ///A rasterizer depth stencil state packet
 pub const DepthStencilState = packed struct(u166) {
     depth_mode: DepthFlags = .{},
@@ -905,8 +899,8 @@ pub const PipelineOptimization = enum {
 pub const RasterPipelineDescription = struct {
     topology: Topology = .triangle_list,
     sample_count: u32 = 1,
-    depth_format: ImageFormat = .none,
-    stencil_format: ImageFormat = .none,
+    depth_format: ImageFormat = .depth_stencil_u24_u8,
+    stencil_format: ImageFormat = .depth_stencil_u24_u8,
     color_targets: []const ColorTarget = &.{},
     optimize_mode: PipelineOptimization = .fast,
 
@@ -1095,8 +1089,8 @@ pub const RasterDrawCommand = extern struct {
 pub const RasterDrawIndexedCommand = extern struct {
     index_count: u32,
     instance_count: u32 = 1,
-    index_start: u32,
-    vertex_offset: u32,
+    index_start: u32 = 0,
+    vertex_offset: u32 = 0,
     first_instance: u32 = 0,
 };
 

@@ -1,6 +1,234 @@
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const gpa = init.gpa;
+
+    try carol.surface.deviceSelect();
+    defer carol.surface.deviceFree();
+
+    const surface = try carol.surface.createSurface(.{
+        .label = "Cube Demo",
+    });
+    defer carol.surface.surfaceFree(surface);
+
+    try gpu.selectDevice(.{}, arena, gpa);
+    defer gpu.freeDevice(gpa);
+
+    const gpu_gpa: gpu.mem.Allocator = gpu.heap.page_allocator;
+
+    const gpu_staging_buffer = try gpu_gpa.alloc(u8, 32 * 1024 * 1024, .gpu_cpu_writable);
+    var gpu_staging_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
+    gpu_staging_fbas[0] = .init(gpu_staging_buffer[0 .. gpu_staging_buffer.len / 2]);
+    gpu_staging_fbas[1] = .init(gpu_staging_buffer[gpu_staging_buffer.len / 2 ..]);
+    const gpu_staging_arena = gpu_staging_fbas[0].allocator();
+    _ = gpu_staging_arena;
+
+    var pipeline_compiler_io: gpu.pipelines.IoCompiler = .{
+        .io = init.io,
+        .gpa = gpa,
+    };
+    var pipeline_watch_compiler: gpu.pipelines.WatchCompiler = try .init(
+        init.io,
+        gpa,
+        pipeline_compiler_io.compiler(),
+    );
+    defer pipeline_watch_compiler.deinit();
+
+    const pipeline_compiler = if (@import("builtin").mode == .debug) pipeline_watch_compiler.compiler() else pipeline_compiler_io.compiler();
+
+    _ = try pipeline_compiler.addModuleFile(@ptrCast(@import("options").exe_kernel_object));
+
+    const gpu_swapchain = gpu.createSwapchain(surface);
+    defer gpu.destroySwapchain(gpu_swapchain);
+
+    const frame_semaphore = gpu.createSemaphore(0);
+    defer gpu.destroySemaphore(frame_semaphore);
+
+    defer gpu.waitIdle();
+
+    var next_frame: u64 = 1;
+
+    var gpu_transient_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
+
+    for (&gpu_transient_fbas) |*fba| {
+        fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 128 * 1024, .gpu_cpu_writable));
+    }
+
+    var gpu_transient_arenas: [2]gpu.heap.ArenaAllocator = undefined;
+
+    for (&gpu_transient_arenas) |*transient_arena| {
+        transient_arena.* = .init(gpu.heap.page_allocator);
+    }
+
+    const pipeline_index = try pipeline_compiler.compileRasterVertexPipeline(cube_pipeline_comptime, .{
+        .color_targets = &.{
+            .{ .format = gpu.ImageFormat.bgra8_srgb32 },
+        },
+    });
+
+    while (carol.surface.surfacePoll(surface)) |surface_poll| {
+        _ = surface_poll;
+
+        if (next_frame > 2) {
+            frame_semaphore.wait(next_frame - 2);
+        }
+        defer next_frame += 1;
+
+        gpu_transient_fbas[next_frame % 2].end_index = 0;
+        //_ = gpu_transient_arenas[next_frame % 2].reset(.{ .retain_with_limit = 128 * 1024 });
+
+        const gpu_transient_arena = gpu_transient_fbas[next_frame % 2].allocator();
+
+        const swapchain_texture = gpu_swapchain.obtainTexture();
+
+        const commands = gpu.queueStartCommandRecording(.{}, .{});
+
+        const raster_pass: gpu.RasterPassDescription = .{
+            .color_attachments = &.{.{
+                .texture = swapchain_texture,
+                .clear = .{ 1, 0.6, 0, 1 },
+            }},
+        };
+
+        const cube_vertices_bottom: [4][3]f32 = .{
+            .{ -0.5, -0.5, -0.5 },
+            .{ 0.5, -0.5, 0.5 },
+            .{ 0.5, -0.5, 0.5 },
+            .{ -0.5, -0.5, 0.5 },
+        };
+
+        var cube_vertices_top: [4][3]f32 = cube_vertices_bottom;
+
+        for (cube_vertices_bottom, &cube_vertices_top) |bottom, *top| {
+            top[1] = bottom[1] + 1;
+        }
+
+        const vertices = try gpu_transient_arena.alloc([3]f32, 8, .gpu_cpu_writable);
+        const vertex_colors = try gpu_transient_arena.alloc([4]f32, 8, .gpu_cpu_writable);
+        const view_projection = try gpu_transient_arena.create(math.Matrix(f32, 4, 4), .gpu_cpu_writable);
+        const view_projection_cpu = gpu.mem.toAccessiblePointer(view_projection, .cpu);
+        const view_projection_gpu = gpu.mem.toAccessiblePointer(view_projection, .gpu);
+        const vertex_colors_cpu = gpu.mem.toAccessibleSlice(vertex_colors, .cpu);
+        const vertex_colors_gpu = gpu.mem.toAccessiblePointer(vertex_colors.ptr, .gpu);
+        const vertices_cpu = gpu.mem.toAccessibleSlice(vertices, .cpu);
+        const vertices_gpu = gpu.mem.toAccessiblePointer(vertices.ptr, .gpu);
+
+        //view_projection_cpu.* = @bitCast([4][4]f32{});
+        view_projection_cpu.* = undefined;
+        @memset(vertex_colors_cpu, @splat(1));
+
+        @memcpy(vertices_cpu[0..4], &cube_vertices_bottom);
+        @memcpy(vertices_cpu[4..8], &cube_vertices_top);
+
+        const indices = try gpu_transient_arena.alloc(u16, 36, .gpu_cpu_writable);
+        const indices_cpu = gpu.mem.toAccessibleSlice(indices, .cpu);
+        const face0: @Vector(6, u16) = .{ 0, 1, 2, 0, 2, 3 };
+        const face1: @Vector(6, u16) = .{ 0, 1, 5, 0, 5, 4 };
+        const face2: @Vector(6, u16) = .{ 1, 2, 6, 1, 6, 5 };
+        const face3 = face0 + @as(@Vector(6, u16), @splat(4));
+        const face4 = face1 + @as(@Vector(6, u16), @splat(3));
+        const face5 = face2 + @as(@Vector(6, u16), @splat(1));
+
+        @memcpy(indices_cpu[0..6], &@as([6]u16, face0));
+        @memcpy(indices_cpu[6..12], &@as([6]u16, face1));
+        @memcpy(indices_cpu[12..18], &@as([6]u16, face2));
+        @memcpy(indices_cpu[18..24], &@as([6]u16, face3));
+        @memcpy(indices_cpu[24..30], &@as([6]u16, face4));
+        @memcpy(indices_cpu[30..36], &@as([6]u16, face5));
+
+        if (pipeline_compiler.getPipeline(pipeline_index)) |pipeline| {
+            commands.launchRasterize(
+                pipeline,
+                .{
+                    .raster_pass = raster_pass,
+                    //Ensure the raster pass is loaded and cleared
+                    .raster_pass_load = true,
+                    .kernel_arguments = &.{
+                        @intFromPtr(vertices_gpu),
+                        @intFromPtr(vertex_colors_gpu),
+                        @intFromPtr(view_projection_gpu),
+                    },
+                    .command_arguments = &.{
+                        .{
+                            .index_count = 36,
+                        },
+                    },
+                    .vertex_indices = @ptrCast(indices),
+                    .vertex_index_type = .u16,
+                },
+            );
+        }
+
+        gpu.queueSubmit(
+            .{},
+            &.{commands},
+            &.{
+                .{
+                    .signal_semaphore = frame_semaphore,
+                    .signal_value = next_frame,
+                },
+            },
+        );
+
+        gpu_swapchain.present(
+            .{
+                .wait_semaphore = frame_semaphore,
+                .wait_value = next_frame,
+            },
+        );
+    }
+}
+
+pub const CubePipelinePacket = extern struct {
+    color: @Vector(4, f32),
+};
+
+pub fn cubeVertexKernel(
+    vertices: [*]addrspace(gpu.kernel.address_space) const [3]f32,
+    vertex_colors: [*]addrspace(gpu.kernel.address_space) const [4]f32,
+    view_projection: *addrspace(gpu.kernel.address_space) const math.Matrix(f32, 4, 4),
+    draw_params: gpu.kernel.RasterDrawCommandParameters,
+) struct {
+    @Vector(4, f32),
+    CubePipelinePacket,
+} {
+    const input_vertex = vertices[draw_params.vertex_index];
+
+    var out_vertex: math.Vec4(f32) = .{
+        .x = input_vertex[0],
+        .y = input_vertex[1],
+        .z = input_vertex[2],
+        .w = 1,
+    };
+    out_vertex = .scale(out_vertex, 10);
+    _ = view_projection;
+
+    //out_vertex = view_projection.mulVec(out_vertex);
+
+    return .{
+        out_vertex.toComponents().toArray(),
+        .{ .color = vertex_colors[draw_params.vertex_index] },
+    };
+}
+
+pub fn cubeFragmentKernel(
+    packet: CubePipelinePacket,
+) [4]f32 {
+    if (true) {
+        return @splat(1);
+    }
+
+    return packet.color;
+}
+
+pub const cube_pipeline_comptime = gpu.kernel.exportRasterVertexPipeline(@This(), "cubeVertexKernel", "cubeFragmentKernel", .{});
+
+comptime {
+    _ = cube_pipeline_comptime;
+}
+
+pub fn main2(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const gpa = init.gpa;
     const args = try init.minimal.args.toSlice(arena);
     _ = args; // autofix
 

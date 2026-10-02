@@ -207,7 +207,7 @@ pub fn selectDevice(
             .multi_draw_indirect = .true,
             .fill_mode_non_solid = .true,
             .shader_int_64 = .true,
-            .shader_float_64 = .true,
+            .shader_float_64 = .false,
         };
 
         var swapchain_maint_features: vk.PhysicalDeviceSwapchainMaintenance1FeaturesEXT = .{
@@ -221,7 +221,7 @@ pub fn selectDevice(
 
         var untyped_pointers_features: vk.PhysicalDeviceShaderUntypedPointersFeaturesKHR = .{
             .p_next = &mutable_descriptor_type_features,
-            .shader_untyped_pointers = .true,
+            .shader_untyped_pointers = .false,
         };
 
         var dynamic_state_features_3: vk.PhysicalDeviceExtendedDynamicState3FeaturesEXT = .{};
@@ -243,7 +243,7 @@ pub fn selectDevice(
         dynamic_state_features.extended_dynamic_state_2 = .true;
 
         var descriptor_heap_features: vk.PhysicalDeviceDescriptorHeapFeaturesEXT = .{};
-        descriptor_heap_features.descriptor_heap = .true;
+        descriptor_heap_features.descriptor_heap = .false;
         descriptor_heap_features.p_next = &dynamic_state_features;
 
         var features_11: vk.PhysicalDeviceVulkan11Features = .{
@@ -263,8 +263,6 @@ pub fn selectDevice(
         features_12.descriptor_binding_storage_image_update_after_bind = .true;
         features_12.descriptor_binding_sampled_image_update_after_bind = .true;
         features_12.draw_indirect_count = .true;
-        features_12.buffer_device_address_capture_replay = .true;
-        features_12.buffer_device_address_multi_device = .true;
         features_12.timeline_semaphore = .true;
         features_12.shader_sampled_image_array_non_uniform_indexing = .true;
         features_12.shader_storage_image_array_non_uniform_indexing = .true;
@@ -1301,7 +1299,8 @@ pub fn rasterPassBegin(
     command_buffer: *CommandBuffer,
     description: RasterPassDescription,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(command_buffer));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    const vk_command_buffer: vk.CommandBuffer = command_buffer_data.handle;
 
     var buffer: [256]u8 = undefined;
 
@@ -1438,8 +1437,8 @@ pub fn rasterPassBegin(
 pub fn rasterPassEnd(
     command_buffer: *CommandBuffer,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(command_buffer));
-    context.device.cmdEndRendering(vk_command_buffer);
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    context.device.cmdEndRendering(command_buffer_data.handle);
 }
 
 pub fn launchCompute(
@@ -1491,45 +1490,122 @@ pub fn launchCompute(
     }
 }
 
-pub fn launchRasterDraw(
-    command_buffer: *CommandBuffer,
-    pipeline: *Pipeline,
-    root_data: []const *anyopaque,
-    commands: []const RasterDrawCommand,
-    options: gpu.DispatchRasterDrawOptions,
-) void {
-    setStatePipeline(command_buffer, pipeline);
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
+pub const CommandBufferData = struct {
+    handle: vk.CommandBuffer,
+    pipeline: *Pipeline = undefined,
+    vertex_indices: []const u8 = &.{},
+    raster_pass: gpu.RasterPassDescription = undefined,
+    raster_pass_began: bool = false,
+    push_constants: CommonPushConstants = .{ .data = @splat(0) },
 
-    var push_constants: CommonPushConstants = undefined;
-
-    for (root_data, 0..) |root_ptr, i| {
-        push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
+    pub fn flushPendingCommands(commands: *CommandBufferData) void {
+        if (commands.raster_pass_began) {
+            rasterPassEnd(@ptrCast(commands));
+            commands.raster_pass_began = false;
+        }
     }
 
-    if (context.vk_ext_descriptor_heap_enabled) {
-        context.device.cmdPushDataEXT(
-            vk_command_buffer,
-            &.{
-                .offset = 0,
-                .data = .{
-                    .address = &push_constants,
-                    .size = @sizeOf(CommonPushConstants),
+    pub fn setPipeline(commands: *CommandBufferData, pipeline: *Pipeline) void {
+        const pipeline_data: *PipelineData = @ptrCast(@alignCast(pipeline));
+
+        if (pipeline != commands.pipeline) {
+            context.device.cmdBindPipeline(
+                commands.handle,
+                //Store this in the upper 16 bits of the pipeline pointer/handle?
+                pipeline_data.bind_point,
+                pipeline_data.handle,
+            );
+            commands.pipeline = pipeline;
+        }
+    }
+
+    pub fn setKernelArguments(commands: *CommandBufferData, kernel_arguments: []const u64) void {
+        var push_constants: CommonPushConstants = .{ .data = @splat(0) };
+
+        for (kernel_arguments, 0..) |argument, i| {
+            push_constants.data[i] = argument;
+        }
+
+        if (std.mem.eql(u8, std.mem.asBytes(&push_constants), std.mem.asBytes(&commands.push_constants))) {
+            return;
+        }
+
+        commands.push_constants = push_constants;
+
+        //TODO: figure out the range of push constants that have actually changed
+        if (context.vk_ext_descriptor_heap_enabled) {
+            context.device.cmdPushDataEXT(
+                commands.handle,
+                &.{
+                    .offset = 0,
+                    .data = .{
+                        .address = &push_constants,
+                        .size = @sizeOf(CommonPushConstants),
+                    },
                 },
-            },
-        );
-    } else {
-        context.device.cmdPushConstants(
+            );
+        } else {
+            const pipeline_data: *PipelineData = @ptrCast(@alignCast(commands.pipeline));
+
+            context.device.cmdPushConstants(
+                commands.handle,
+                switch (pipeline_data.bind_point) {
+                    .graphics => context.raster_pipeline_layout,
+                    .compute => context.compute_pipeline_layout,
+                    .ray_tracing_khr => @panic(""),
+                    else => unreachable,
+                },
+                .{
+                    .vertex = pipeline_data.bind_point == .graphics,
+                    .fragment = pipeline_data.bind_point == .graphics,
+                    .compute = pipeline_data.bind_point == .compute,
+                },
+                0,
+                @sizeOf(CommonPushConstants),
+                &push_constants,
+            );
+        }
+    }
+};
+
+pub fn launchRasterize(
+    command_buffer: *CommandBuffer,
+    pipeline: *Pipeline,
+    work: gpu.RasterizerWork,
+) void {
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+
+    if (work.raster_pass_load) {
+        command_buffer_data.flushPendingCommands();
+        rasterPassBegin(command_buffer, work.raster_pass);
+    }
+
+    const vk_command_buffer: vk.CommandBuffer = command_buffer_data.handle;
+    const commands = work.command_arguments;
+
+    command_buffer_data.setPipeline(pipeline);
+    command_buffer_data.setKernelArguments(work.kernel_arguments);
+
+    if (work.vertex_indices.len != 0) blk: {
+        if (command_buffer_data.vertex_indices.ptr == work.vertex_indices.ptr) {
+            break :blk;
+        }
+
+        const indices_allocation = getMemoryAllocation(work.vertex_indices);
+        const indices_offset = getMemoryAllocationOffset(work.vertex_indices);
+
+        context.device.cmdBindIndexBuffer(
             vk_command_buffer,
-            context.raster_pipeline_layout,
-            .{
-                .vertex = true,
-                .fragment = true,
+            indices_allocation.buffer,
+            indices_offset,
+            switch (work.vertex_index_type) {
+                .u8 => .uint8,
+                .u16 => .uint16,
+                .u32 => .uint32,
             },
-            0,
-            @sizeOf(CommonPushConstants),
-            &push_constants,
         );
+
+        command_buffer_data.vertex_indices = work.vertex_indices;
     }
 
     if (isGpuMemory(std.mem.sliceAsBytes(commands))) {
@@ -1538,110 +1614,45 @@ pub fn launchRasterDraw(
 
         const commands_allocation = getMemoryAllocation(std.mem.sliceAsBytes(commands));
         const commands_offset = getMemoryAllocationOffset(std.mem.sliceAsBytes(commands));
-        context.device.cmdDrawIndirect(
-            vk_command_buffer,
-            commands_allocation.buffer,
-            commands_offset,
-            @intCast(commands.len),
-            @intCast(options.command_stride),
-        );
-    } else {
-        for (commands) |command| {
-            context.device.cmdDraw(
+
+        if (work.vertex_indices.len == 0) {
+            context.device.cmdDrawIndirect(
                 vk_command_buffer,
-                command.count,
-                command.instance_count,
-                command.first,
-                command.first_instance,
+                commands_allocation.buffer,
+                commands_offset,
+                @intCast(commands.len),
+                @intCast(work.command_stride),
             );
+        } else {
+            @panic("");
+        }
+    } else {
+        //TODO: respect the command stride
+        //TODO: prepare a gpu buffer of commands if the number of commands is large (given some definition of large)
+        if (work.vertex_indices.len == 0) {
+            const commands_unindexed: []const gpu.RasterDrawCommand = @as([*]const gpu.RasterDrawCommand, @ptrCast(commands.ptr))[0..commands.len];
+            for (commands_unindexed) |command| {
+                context.device.cmdDraw(
+                    vk_command_buffer,
+                    command.count,
+                    command.instance_count,
+                    command.first,
+                    command.first_instance,
+                );
+            }
+        } else {
+            for (commands) |command| {
+                context.device.cmdDrawIndexed(
+                    vk_command_buffer,
+                    command.index_count,
+                    command.instance_count,
+                    command.index_start,
+                    @intCast(command.vertex_offset),
+                    command.first_instance,
+                );
+            }
         }
     }
-}
-
-pub fn launchRasterDrawIndexed(
-    command_buffer: *CommandBuffer,
-    pipeline: *Pipeline,
-    root_data: []const *anyopaque,
-    commands: []const gpu.RasterDrawIndexedCommand,
-    indices: []u8,
-) void {
-    setStatePipeline(command_buffer, pipeline);
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
-
-    const indices_allocation = getMemoryAllocation(indices);
-    const indices_offset = getMemoryAllocationOffset(indices);
-
-    var push_constants: CommonPushConstants = undefined;
-
-    for (root_data, 0..) |root_ptr, i| {
-        push_constants.data[i] = root_ptr;
-    }
-
-    if (context.vk_ext_descriptor_heap_enabled) {
-        context.device.cmdPushDataEXT(
-            vk_command_buffer,
-            &.{
-                .offset = 0,
-                .data = .{
-                    .address = &push_constants,
-                    .size = @sizeOf(CommonPushConstants),
-                },
-            },
-        );
-    } else {
-        context.device.cmdPushConstants(
-            vk_command_buffer,
-            context.raster_pipeline_layout,
-            .{
-                .vertex = true,
-                .fragment = true,
-            },
-            0,
-            @sizeOf(CommonPushConstants),
-            &push_constants,
-        );
-    }
-
-    context.device.cmdBindIndexBuffer(
-        vk_command_buffer,
-        indices_allocation.buffer,
-        indices_offset,
-        .uint16,
-    );
-
-    if (isGpuMemory(std.mem.sliceAsBytes(commands))) {
-        //Optimize for draw indirect
-        @branchHint(.likely);
-
-        const commands_allocation = getMemoryAllocation(std.mem.sliceAsBytes(commands));
-        _ = commands_allocation; // autofix
-        const commands_offset = getMemoryAllocationOffset(std.mem.sliceAsBytes(commands));
-        _ = commands_offset; // autofix
-        @panic("todo!");
-    } else {
-        for (commands) |command| {
-            context.device.cmdDrawIndexed(
-                vk_command_buffer,
-                command.index_count,
-                command.instance_count,
-                command.index_start,
-                @intCast(command.vertex_offset),
-                command.first_instance,
-            );
-        }
-    }
-}
-
-pub fn launchRasterDrawMeshes(
-    command_buffer: *CommandBuffer,
-    pipeline: *Pipeline,
-    root_data: []const *anyopaque,
-    commands: []const RasterDrawMeshesCommand,
-) void {
-    setStatePipeline(command_buffer, pipeline);
-    _ = root_data; // autofix
-    _ = commands; // autofix
-    @panic("");
 }
 
 pub fn buildAccelerationStructures(
@@ -1711,7 +1722,13 @@ pub fn queueStartCommandRecording(
         }
     }
 
-    return @ptrFromInt(@backingInt(command_buffer));
+    const command_buffer_data = context.arena.create(CommandBufferData) catch unreachable;
+
+    command_buffer_data.* = .{
+        .handle = command_buffer,
+    };
+
+    return @ptrCast(command_buffer_data);
 }
 
 pub fn queueSubmit(
@@ -1752,8 +1769,8 @@ pub fn queueSubmit(
         wait_count += 1;
     }
 
-    for (command_buffers, submit_infos) |*command_buffer, *submit_info| {
-        const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(command_buffer.*));
+    for (command_buffers, submit_infos) |command_buffer, *submit_info| {
+        const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
 
         submit_info.* = .{
             .p_next = &vk.TimelineSemaphoreSubmitInfo{
@@ -1762,7 +1779,7 @@ pub fn queueSubmit(
                 .p_signal_semaphore_values = signal_values.ptr,
                 .signal_semaphore_value_count = signal_count,
             },
-            .p_command_buffers = @ptrCast(&vk_command_buffer),
+            .p_command_buffers = @ptrCast(&command_buffer_data.handle),
             .command_buffer_count = 1,
             .p_wait_dst_stage_mask = &.{
                 .{ .all_commands = true },
@@ -1773,7 +1790,9 @@ pub fn queueSubmit(
             .signal_semaphore_count = signal_count,
         };
 
-        context.device.endCommandBuffer(vk_command_buffer) catch @panic("End command buffer failed!");
+        command_buffer_data.flushPendingCommands();
+
+        context.device.endCommandBuffer(command_buffer_data.handle) catch @panic("End command buffer failed!");
     }
 
     context.device.queueSubmit(
@@ -1876,7 +1895,7 @@ fn internalCreateSwapchain(
         &surface_caps,
     ) catch @panic("oom");
 
-    const image_count = @min(@max(surface_capabilities.min_image_count, 3), surface_capabilities.max_image_count);
+    const image_count = @max(surface_capabilities.min_image_count, 3);
 
     var scaling_info: vk.SwapchainPresentScalingCreateInfoEXT = .{
         .scaling_behavior = .{},
@@ -2059,9 +2078,9 @@ pub fn swapchainObtainTexture(
         },
     });
 
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(cmds));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(cmds));
 
-    context.device.cmdPipelineBarrier2(vk_command_buffer, &.{
+    context.device.cmdPipelineBarrier2(command_buffer_data.handle, &.{
         .image_memory_barrier_count = 1,
         .p_image_memory_barriers = @ptrCast(&vk.ImageMemoryBarrier2{
             .image = swapchain_data.images[result.image_index],
@@ -2096,7 +2115,8 @@ pub fn swapchainPresent(
 
     const cmds = queueStartCommandRecording(.{}, .{});
 
-    const cmd_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(cmds)));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(cmds));
+    const cmd_buffer: vk.CommandBuffer = command_buffer_data.handle;
 
     const present_semaphore = swapchain_data.semaphores[swapchain_data.image_to_present];
 
@@ -2240,6 +2260,8 @@ fn debugUtilsMessengerCallback(
 
     var is_spirv = std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "spirv");
     is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "SPIR-V");
+    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "Object Tracking");
+    is_spirv |= std.mem.containsAtLeast(u8, std.mem.sliceTo(message, 0), 1, "unknown VkStructureType");
 
     if (is_spirv) {
         return .false;
@@ -2617,7 +2639,7 @@ fn updateDescriptorSets(data: DescriptorHeapData) !void {
 }
 
 const CommonPushConstants = extern struct {
-    data: [8]*anyopaque,
+    data: [8]u64,
 };
 
 fn createShaderModule(ir: []const u8) vk.ShaderModule {
@@ -2632,14 +2654,14 @@ fn createShaderModule(ir: []const u8) vk.ShaderModule {
 }
 
 const required_layer_names = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
-const enable_validation = @import("builtin").mode == .debug;
+const enable_validation = false and @import("builtin").mode == .debug;
 
 const required_device_extensions = [_][*:0]const u8{
     vk.extensions.khr_swapchain.name,
     vk.extensions.ext_extended_dynamic_state_3.name,
     vk.extensions.khr_maintenance_5.name,
     vk.extensions.ext_mutable_descriptor_type.name,
-    vk.extensions.khr_unified_image_layouts.name,
+        //vk.extensions.khr_unified_image_layouts.name,
 };
 
 const Pipeline = gpu.Pipeline;
