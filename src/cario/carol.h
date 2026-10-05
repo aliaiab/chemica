@@ -50,19 +50,14 @@ typedef enum {
 } CrlQueue;
 
 typedef enum {
-    CRL_STATE_CULL_ALL = 0xff,
-    CRL_STATE_CULL_NONE = 0,
-    CRL_STATE_CULL_FRONT = 1 << 0,
-    CRL_STATE_CULL_BACK = 1 << 1,
-    CRL_STATE_CULL_DEFAULT = CRL_STATE_CULL_NONE,
-} CrlRasterizerPrimitiveCull;
-
-typedef enum {
-    CRL_STATE_POLYGON_MODE_FILL = 0,
-    CRL_STATE_POLYGON_MODE_LINES = 1,
-    CRL_STATE_POLYGON_MODE_POINTS = 2,
-    CRL_STATE_POLYGON_MODE_DEFAULT = CRL_STATE_POLYGON_MODE_FILL,
-} CrlRasterizerPrimitiveFill;
+    CRL_STATE_PRIMITIVE_CULL_ALL = 0xff,
+    CRL_STATE_PRIMITIVE_CULL_NONE = 0,
+    CRL_STATE_PRIMITIVE_CULL_FRONT = 1 << 0,
+    CRL_STATE_PRIMITIVE_CULL_BACK = 1 << 1,
+    CRL_STATE_PRIMITIVE_RASTER_FILL = 1 << 2,
+    CRL_STATE_PRIMITIVE_RASTER_LINES = 1 << 3,
+    CRL_STATE_PRIMITIVE_RASTER_POINTS = 1 << 4,
+} CrlRasterizerPrimitiveState;
 
 typedef struct {
 } CrlRasterizerDepthStencil;
@@ -76,21 +71,36 @@ typedef struct {
 } CrlRasterizerRasterization;
 
 typedef struct {
+    f32 x;
+    f32 y;
+    f32 width;
+    f32 height;
+    f32 min_depth;
+    f32 max_depth;
 } CrlRasterizerViewportTransform;
 
 typedef struct {
+    i32 x;
+    i32 y;
+    i32 width;
+    i32 height;
 } CrlRasterizerViewportScissor;
 
 typedef struct {
     //If any of these are NULL, then the raster pass defaults are used
 
     CrlPipeline *pipeline;
+    //Changing rasterization states may stall the cpu
     CrlRasterizerRasterization *rasterization;
-    CrlRasterizerBlend *blend;
+    //Changing depth stencil states must not stall the cpu
     CrlRasterizerDepthStencil *depth_stencil;
-    CrlRasterizerPrimitiveCull *cull;
-    CrlRasterizerPrimitiveFill *fill;
+    //Changing blend states must not stall the cpu
+    CrlRasterizerBlend *blend;
+    //Changing primitive states must not stall the cpu
+    CrlRasterizerPrimitiveState *primitive;
+    //Changing viewport states must not stall the cpu
     CrlRasterizerViewportTransform *viewport_transform;
+    //Changing viewport states must not stall the cpu
     CrlRasterizerViewportScissor *viewport_scissor;
 
     //If any of these counts are greater than zero, 
@@ -219,6 +229,19 @@ typedef struct {
     CrlMemorySlice arguments_command;
     u64 *count;
 } CrlLaunchRayTraceCommand;
+
+typedef enum {
+    CRL_QUEUE_COMMAND_TOKEN_EXECUTION_BARRIER,
+    CRL_QUEUE_COMMAND_TOKEN_START_SEMAPHORE_WAIT,
+    CRL_QUEUE_COMMAND_TOKEN_END_SEMAPHORE_SIGNAL,
+    CRL_QUEUE_COMMAND_TOKEN_LAUNCH_MEM_COPY,
+    CRL_QUEUE_COMMAND_TOKEN_LAUNCH_MEM_COPY_TEXTURE,
+    CRL_QUEUE_COMMAND_TOKEN_LAUNCH_MEM_SET,
+    CRL_QUEUE_COMMAND_TOKEN_LAUNCH_COMPUTE,
+    CRL_QUEUE_COMMAND_TOKEN_LAUNCH_RASTERIZER_STATE_CONFIGURE,
+    CRL_QUEUE_COMMAND_TOKEN_LAUNCH_RASTERIZE,
+    CRL_QUEUE_COMMAND_TOKEN_LAUNCH_RAY_TRACE,
+} CrlQueueCommandToken;
 
 typedef CRL_OPAQUE_TYPE CrlDeviceList;
 typedef CRL_OPAQUE_TYPE CrlDevice;
@@ -394,9 +417,9 @@ void crlMemCopyTexture(
 );
 //Compile a compute kernel pipeline
 CrlPipeline *crlCompileComputePipeline(CrlMemorySlice compute_kernel);
-//Compile a raster pipeline that uses vertex and fragment kernel stages
+//Compile a rasterizer pipeline that uses vertex and fragment kernel stages
 CrlPipeline *crlCompileRasterizerPipeline(CrlMemorySlice vertex_kernel, CrlMemorySlice fragment_kernel, CrlRasterPipelineDescription *description);
-//Compile a raster pipeline that uses mesh and fragment kernel stages
+//Compile a rasterizer pipeline that uses vertex cluster and fragment kernel stages
 CrlPipeline *crlCompileRasterizerClusterPipeline(CrlMemorySlice cluster_kernel, CrlMemorySlice fragment_kernel, CrlRasterPipelineDescription *description);
 //Compile a ray tracing pipeline
 CrlPipeline *crlCompileRayTracingPipeline(CrlMemorySlice kernels);
@@ -452,6 +475,10 @@ void crlCreateTextureDescriptors(void **textures, CrlTextureDescriptor *out_desc
 void crlCreateTextureSliceDescriptors(void **textures, CrlTextureDescriptor *out_descriptors, u64 descriptor_count);
 //Create an opaque sampler descriptor from the texture slice. The resulting descriptor is a sampler
 void crlCreateTextureSamplerDescriptors(void **textures, CrlTextureDescriptor *out_descriptors, u64 descriptor_count);
+//Encode a texel bit pattern from f32 components
+u64 crlTexelEncode(CrlImageFormat format, const f32 *components);
+//Decode a texel bit pattern to f32 components
+void crlTexelDecode(CrlImageFormat format, u64 texel, f32 *components);
 //Signal before 
 void crlSignalBefore(CrlCommandBuffer *commands, u32 stage, u64 *memory, u64 value);
 //Signal after 
@@ -508,6 +535,7 @@ void crlLaunchRasterize(
 );
 //Launch a set of ray tracing commands using a ray tracing pipeline 
 void crlLaunchRayTrace(
+    //The command buffer to encode the launch command into
     CrlCommandBuffer *commands, 
     CrlPipeline *pipeline, 
     CrlLaunchRayTraceCommand *command 
@@ -525,12 +553,23 @@ void crlQueueSubmit(
     CrlCommandBuffer **commands, 
     u64 count
 );
+//Encode a command buffer from memory. 
+CrlCommandBuffer *crlQueueEncodeCommands(CrlQueue queue, CrlMemorySlice commands, u64 command_count, u64 baked);
+//Free a baked command buffer
+void crlQueueCommandBufferFree(CrlCommandBuffer *commands);
 //Wait for all pending work previously submitted to the queue to be completed  
 void crlQueueDrain(CrlQueue queue);
 //Attach a wait semaphore to command_buffer which will be waited on before excecution   
 void crlCommandsStartWaitSemaphore(CrlCommandBuffer *commands, CrlSemaphore *semaphore, u64 wait_value);
 //Attach a wait semaphore to command_buffer which will be signaled on completion 
 void crlCommandsEndSignalSemaphore(CrlCommandBuffer *commands, CrlSemaphore *semaphore, u64 signal_value);
+
+//Baked command allocator
+
+void crlCommandAllocatorExecutionBarrier(CrlCommandAllocator *allocator);
+void crlCommandAllocatorLaunchCompute(CrlCommandAllocator *allocator);
+void crlCommandAllocatorLaunchRasterize(CrlCommandAllocator *allocator);
+void crlCommandAllocatorLaunchRayTrace(CrlCommandAllocator *allocator);
 
 //Semaphore API
 
@@ -1250,6 +1289,13 @@ u64 crlTranscodeSupportedVideoEncodings(CrlTranscodeDevice *transcode_device, Cr
 //If this returns 0, then geometry transcoding is not supported
 u64 crlTranscodeSupportedGeometryEncodings(CrlTranscodeDevice *transcode_device, CrlGeometryEncoding *encodings);
 //If command buffer is NULL, then the encode/decode operations are done on the cpu immediately
+void crlLaunchCompressedDataTranscode(
+    CrlCommandBuffer *commands, 
+    CrlTranscodePipeline *pipeline, 
+    void **scratch, 
+    CrlMemorySlice arguments, 
+    u64 *count
+);
 void crlLaunchImageTranscode(
     CrlCommandBuffer *commands, 
     CrlTranscodePipeline *pipeline, 
@@ -1278,12 +1324,12 @@ void crlLaunchGeometryTranscode(
     CrlMemorySlice arguments, 
     u64 *count
 );
-void crlLaunchCompressedDataTranscode(
-    CrlCommandBuffer *commands, 
-    CrlTranscodePipeline *pipeline, 
-    void **scratch, 
-    CrlMemorySlice arguments, 
-    u64 *count
+void crlLaunchSceneTranscode(
+    CrlCommandBuffer *commands,
+    CrlTranscodePipeline *pipeline,
+    void **scratch,
+    CrlMemorySlice arguments,
+    u64 *count,
 );
 
 void f() {

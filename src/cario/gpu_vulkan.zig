@@ -629,7 +629,7 @@ pub fn memCopyToTexture(
     std.debug.assert(isGpuMemory(@ptrCast(dest_gpu)));
     std.debug.assert(isGpuMemory(src_gpu));
 
-    const src_allocation = getMemoryAllocation(src_gpu);
+    const src_allocation = getMemoryAllocationIndex(src_gpu);
     const src_offset = getMemoryAllocationOffset(src_gpu);
 
     const mip_width: u32 = @max(1, dest_slice.dimensions[0] >> @as(u5, @intCast(dest_slice.mip_start)));
@@ -637,7 +637,7 @@ pub fn memCopyToTexture(
     const mip_depth: u32 = @max(1, dest_slice.dimensions[2] >> @as(u5, @intCast(dest_slice.mip_start)));
     _ = mip_depth; // autofix
 
-    const dest_texture = getMemoryAllocationTexture(@ptrCast(dest_gpu));
+    const dest_texture = context.allocations_minimal.items(.textures)[src_allocation](@ptrCast(dest_gpu));
 
     context.device.cmdCopyBufferToImage(
         vk_command_buffer,
@@ -948,12 +948,18 @@ pub fn formatTextureMemory(
         }),
     });
 
+    const texture_index: u20 = @intCast(textures.len);
+
     textures.append(context.gpa, .{
         .allocation = @ptrCast(memory),
         .handle = image,
         .view = .null_handle,
         .description = description,
     }) catch @panic("oom");
+
+    return @ptrFromInt(@backingInt(FormattedTexturePointer{
+        .texture_index = texture_index,
+    }));
 }
 
 pub fn unformatTextureMemory(
@@ -2250,11 +2256,7 @@ pub fn swapchainPresent(
     }
 }
 
-pub fn waitIdle() void {
-    context.device.deviceWaitIdle() catch @panic("oom");
-}
-
-pub fn queueWaitIdle(queue: Queue) void {
+pub fn queueDrain(queue: Queue) void {
     const queue_handle = context.queues[@backingInt(queue)];
 
     context.device.queueWaitIdle(queue_handle);

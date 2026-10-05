@@ -2,7 +2,7 @@
     .name = .chemica,
     .version = "0.0.0",
     .fingerprint = 0x68684ad7248e6055, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.17.0-dev.1516+8a4b5424d",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .zglfw = .{
             .url = "git+https://github.com/kcbanner/zglfw.git?ref=c_translate#84dbf397f383d64e9a7b6cac7fd63f3848061f59",

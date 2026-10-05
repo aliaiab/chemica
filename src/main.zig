@@ -19,8 +19,6 @@ pub fn main(init: std.process.Init) !void {
     var gpu_staging_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
     gpu_staging_fbas[0] = .init(gpu_staging_buffer[0 .. gpu_staging_buffer.len / 2]);
     gpu_staging_fbas[1] = .init(gpu_staging_buffer[gpu_staging_buffer.len / 2 ..]);
-    const gpu_staging_arena = gpu_staging_fbas[0].allocator();
-    _ = gpu_staging_arena;
 
     var pipeline_compiler_io: gpu.pipelines.IoCompiler = .{
         .io = init.io,
@@ -43,7 +41,7 @@ pub fn main(init: std.process.Init) !void {
     const frame_semaphore = gpu.createSemaphore(0);
     defer gpu.destroySemaphore(frame_semaphore);
 
-    defer gpu.waitIdle();
+    defer gpu.queueDrain(.{});
 
     var next_frame: u64 = 1;
 
@@ -73,16 +71,16 @@ pub fn main(init: std.process.Init) !void {
         }
         defer next_frame += 1;
 
+        const swapchain_texture = gpu_swapchain.obtainTexture();
+
         gpu_transient_fbas[next_frame % 2].end_index = 0;
         //_ = gpu_transient_arenas[next_frame % 2].reset(.{ .retain_with_limit = 128 * 1024 });
 
         const gpu_transient_arena = gpu_transient_fbas[next_frame % 2].allocator();
 
-        const swapchain_texture = gpu_swapchain.obtainTexture();
-
         const commands = gpu.queueStartCommandRecording(.{}, .{});
 
-        const raster_pass: gpu.RasterPassDescription = .{
+        const raster_pass: gpu.RasterPass = .{
             .color_attachments = &.{.{
                 .texture = swapchain_texture,
                 .clear = .{ 1, 0.6, 0, 1 },

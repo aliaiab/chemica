@@ -147,8 +147,6 @@ pub fn build(b: *std.Build) !void {
 
     exe_options.addOptionPath("exe_kernel_object", exe_kernel_object_path);
 
-    exe.is_linking_libcpp = true;
-
     b.installArtifact(exe);
 }
 

@@ -195,7 +195,7 @@ pub fn textureMemoryDescription(
 pub fn formatTextureMemory(
     memory: []TextureByte,
     description: TextureDescription,
-) void {
+) [*]TextureByte {
     return backendCall(@src(), .{
         memory,
         description,
@@ -213,8 +213,8 @@ pub fn formatAccelerationStructureMemory(
 }
 
 pub fn unformatMemory(
-    memory: []AccelerationStructureByte,
-) void {
+    memory: [*]u8,
+) [*]u8 {
     return backendCall(@src(), .{
         memory,
     });
@@ -466,13 +466,8 @@ pub fn queueSubmit(
     });
 }
 
-///Waits for the device to idle
-pub fn waitIdle() void {
-    return backendCall(@src(), .{});
-}
-
 ///Waits for the specified queue to idle
-pub fn queueWaitIdle(queue: Queue) void {
+pub fn queueDrain(queue: Queue) void {
     return backendCall(@src(), .{
         queue,
     });
@@ -887,18 +882,6 @@ pub const ViewportTransform = extern struct {
     depth_max: f32,
 };
 
-pub const RasterizerState = extern struct {
-    blend: []BlendState = &.{},
-    rasterization: []RasterizationState = &.{},
-    depth_stencil: []DepthStencilState = &.{},
-    primitive_fill: []PolygonMode = &.{},
-    primitive_cull: []RasterPipelineDescription.Cull = &.{},
-    viewport_transform: []ViewportTransform = &.{},
-    scissor_region: [][4]i32 = &.{},
-
-    state_indices: []u16 = &.{},
-};
-
 pub const CompareOp = enum(u4) {
     never,
     less,
@@ -984,6 +967,8 @@ pub const ColorTarget = struct {
     format: ImageFormat = .none,
     write_mask: u32 = 0,
 };
+
+pub const RasterPass = RasterPassDescription;
 
 pub const RasterPassDescription = struct {
     color_attachments: []const ColorAttachment,
@@ -1337,12 +1322,10 @@ pub const mem = struct {
                 texture_mem_description.memory_type,
             );
 
-            gpu.formatTextureMemory(
+            return gpu.formatTextureMemory(
                 memory,
                 texture_description,
-            );
-
-            return memory;
+            )[0..memory.len];
         }
 
         pub fn allocTextureDescriptor(
