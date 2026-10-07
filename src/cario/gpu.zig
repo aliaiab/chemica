@@ -1152,6 +1152,15 @@ pub const mem = struct {
         allocation_handle: u10,
     };
 
+    pub const GpuPointerTag = packed struct(u16) {
+        ///The memory type of the allocation
+        memory_type: Allocator.MemoryType,
+        ///The memory format
+        format: MemoryFormat = .unformatted,
+        ///Implementation specific allocation index
+        allocation_handle: u10,
+    };
+
     pub const AccessDomain = enum(u1) {
         gpu,
         cpu,
