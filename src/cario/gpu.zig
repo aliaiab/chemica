@@ -396,8 +396,8 @@ pub const RasterizerWork = struct {
     raster_pass: RasterPassDescription,
     raster_pass_load: bool = false,
     state: RasterizerState = .default,
-    kernel_arguments: []const u64,
-    command_arguments: []const RasterDrawIndexedCommand,
+    kernel_arguments: []const u64 = &.{},
+    command_arguments: []const RasterDrawIndexedCommand = &.{},
     //A command stride of zero means that the stride is inferred
     command_stride: u64 = 0,
     vertex_indices: []const u8 = &.{},

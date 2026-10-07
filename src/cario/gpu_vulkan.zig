@@ -1645,6 +1645,10 @@ pub fn launchRasterize(
         rasterPassBegin(command_buffer, work.raster_pass);
     }
 
+    if (work.command_arguments.len == 0) {
+        return;
+    }
+
     const vk_command_buffer: vk.CommandBuffer = command_buffer_data.handle;
     const commands = work.command_arguments;
 

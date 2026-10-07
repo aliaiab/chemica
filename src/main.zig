@@ -154,6 +154,15 @@ pub fn main(init: std.process.Init) !void {
                     .vertex_index_type = .u16,
                 },
             );
+        } else {
+            commands.launchRasterize(
+                undefined,
+                .{
+                    .raster_pass = raster_pass,
+                    //Ensure the raster pass is loaded and cleared
+                    .raster_pass_load = true,
+                },
+            );
         }
 
         gpu.queueSubmit(
