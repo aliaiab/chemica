@@ -15,7 +15,7 @@ pub fn main(init: std.process.Init) !void {
 
     const gpu_gpa: gpu.mem.Allocator = gpu.heap.page_allocator;
 
-    const gpu_staging_buffer = try gpu_gpa.alloc(u8, 32 * 1024 * 1024, .gpu_cpu_writable);
+    const gpu_staging_buffer = try gpu_gpa.alloc(u8, 32 * 1024 * 1024, .device_cpu_writable);
     var gpu_staging_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
     gpu_staging_fbas[0] = .init(gpu_staging_buffer[0 .. gpu_staging_buffer.len / 2]);
     gpu_staging_fbas[1] = .init(gpu_staging_buffer[gpu_staging_buffer.len / 2 ..]);
@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) !void {
     var gpu_transient_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
 
     for (&gpu_transient_fbas) |*fba| {
-        fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 128 * 1024, .gpu_cpu_writable));
+        fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 128 * 1024, .device_cpu_writable));
     }
 
     var gpu_transient_arenas: [2]gpu.heap.ArenaAllocator = undefined;
@@ -100,15 +100,15 @@ pub fn main(init: std.process.Init) !void {
             top[1] = bottom[1] + 1;
         }
 
-        const vertices = try gpu_transient_arena.alloc([3]f32, 8, .gpu_cpu_writable);
-        const vertex_colors = try gpu_transient_arena.alloc([4]f32, 8, .gpu_cpu_writable);
-        const view_projection = try gpu_transient_arena.create(math.Matrix(f32, 4, 4), .gpu_cpu_writable);
+        const vertices = try gpu_transient_arena.alloc([3]f32, 8, .device_cpu_writable);
+        const vertex_colors = try gpu_transient_arena.alloc([4]f32, 8, .device_cpu_writable);
+        const view_projection = try gpu_transient_arena.create(math.Matrix(f32, 4, 4), .device_cpu_writable);
         const view_projection_cpu = gpu.mem.toAccessiblePointer(view_projection, .cpu);
-        const view_projection_gpu = gpu.mem.toAccessiblePointer(view_projection, .gpu);
+        const view_projection_gpu = gpu.mem.toAccessiblePointer(view_projection, .device);
         const vertex_colors_cpu = gpu.mem.toAccessibleSlice(vertex_colors, .cpu);
-        const vertex_colors_gpu = gpu.mem.toAccessiblePointer(vertex_colors.ptr, .gpu);
+        const vertex_colors_gpu = gpu.mem.toAccessiblePointer(vertex_colors.ptr, .device);
         const vertices_cpu = gpu.mem.toAccessibleSlice(vertices, .cpu);
-        const vertices_gpu = gpu.mem.toAccessiblePointer(vertices.ptr, .gpu);
+        const vertices_gpu = gpu.mem.toAccessiblePointer(vertices.ptr, .device);
 
         //view_projection_cpu.* = @bitCast([4][4]f32{});
         view_projection_cpu.* = undefined;
@@ -117,7 +117,7 @@ pub fn main(init: std.process.Init) !void {
         @memcpy(vertices_cpu[0..4], &cube_vertices_bottom);
         @memcpy(vertices_cpu[4..8], &cube_vertices_top);
 
-        const indices = try gpu_transient_arena.alloc(u16, 36, .gpu_cpu_writable);
+        const indices = try gpu_transient_arena.alloc(u16, 36, .device_cpu_writable);
         const indices_cpu = gpu.mem.toAccessibleSlice(indices, .cpu);
         const face0: @Vector(6, u16) = .{ 0, 1, 2, 0, 2, 3 };
         const face1: @Vector(6, u16) = .{ 0, 1, 5, 0, 5, 4 };
@@ -133,37 +133,26 @@ pub fn main(init: std.process.Init) !void {
         @memcpy(indices_cpu[24..30], &@as([6]u16, face4));
         @memcpy(indices_cpu[30..36], &@as([6]u16, face5));
 
-        if (pipeline_compiler.getPipeline(pipeline_index)) |pipeline| {
-            commands.launchRasterize(
-                pipeline,
-                .{
-                    .raster_pass = raster_pass,
-                    //Ensure the raster pass is loaded and cleared
-                    .raster_pass_load = true,
-                    .kernel_arguments = &.{
-                        @intFromPtr(vertices_gpu),
-                        @intFromPtr(vertex_colors_gpu),
-                        @intFromPtr(view_projection_gpu),
-                    },
-                    .command_arguments = &.{
-                        .{
-                            .index_count = 36,
-                        },
-                    },
-                    .vertex_indices = @ptrCast(indices),
-                    .vertex_index_type = .u16,
+        commands.launchRasterize(
+            pipeline_compiler.getPipeline(pipeline_index),
+            .{
+                .raster_pass = raster_pass,
+                //Ensure the raster pass is loaded and cleared
+                .raster_pass_load = true,
+                .kernel_arguments = &.{
+                    @intFromPtr(vertices_gpu),
+                    @intFromPtr(vertex_colors_gpu),
+                    @intFromPtr(view_projection_gpu),
                 },
-            );
-        } else {
-            commands.launchRasterize(
-                undefined,
-                .{
-                    .raster_pass = raster_pass,
-                    //Ensure the raster pass is loaded and cleared
-                    .raster_pass_load = true,
+                .command_arguments = &.{
+                    .{
+                        .index_count = 36,
+                    },
                 },
-            );
-        }
+                .vertex_indices = @ptrCast(indices),
+                .vertex_index_type = .u16,
+            },
+        );
 
         gpu.queueSubmit(
             .{},
@@ -206,7 +195,6 @@ pub fn cubeVertexKernel(
         .z = input_vertex[2],
         .w = 1,
     };
-    out_vertex = .scale(out_vertex, 10);
     _ = view_projection;
 
     //out_vertex = view_projection.mulVec(out_vertex);
@@ -276,7 +264,7 @@ pub fn main2(init: std.process.Init) !void {
 
     const gpu_gpa: gpu.mem.Allocator = gpu.heap.page_allocator;
 
-    const gpu_staging_buffer = try gpu_gpa.alloc(u8, 32 * 1024 * 1024, .gpu_cpu_writable);
+    const gpu_staging_buffer = try gpu_gpa.alloc(u8, 32 * 1024 * 1024, .device_cpu_writable);
     var gpu_staging_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
     gpu_staging_fbas[0] = .init(gpu_staging_buffer[0 .. gpu_staging_buffer.len / 2]);
     gpu_staging_fbas[1] = .init(gpu_staging_buffer[gpu_staging_buffer.len / 2 ..]);
@@ -511,7 +499,7 @@ pub fn main2(init: std.process.Init) !void {
     var gpu_transient_fbas: [2]gpu.heap.FixedBufferAllocator = undefined;
 
     for (&gpu_transient_fbas) |*fba| {
-        fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 128 * 1024, .gpu_cpu_writable));
+        fba.* = .init(try gpu.heap.page_allocator.alloc(u8, 128 * 1024, .device_cpu_writable));
     }
 
     var gpu_transient_arenas: [2]gpu.heap.ArenaAllocator = undefined;

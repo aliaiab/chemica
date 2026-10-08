@@ -407,7 +407,7 @@ pub const RasterizerWork = struct {
 
 pub fn launchRasterize(
     command_buffer: *CommandBuffer,
-    pipeline: *Pipeline,
+    pipeline: ?*Pipeline,
     work: RasterizerWork,
 ) void {
     return backendCall(@src(), .{
@@ -652,7 +652,7 @@ pub const CommandBuffer = opaque {
 
     pub fn launchRasterize(
         command_buffer: *CommandBuffer,
-        pipeline: *Pipeline,
+        pipeline: ?*Pipeline,
         work: RasterizerWork,
     ) void {
         gpu.launchRasterize(
@@ -1162,7 +1162,7 @@ pub const mem = struct {
     };
 
     pub const AccessDomain = enum(u1) {
-        gpu,
+        device,
         cpu,
     };
 
@@ -1297,7 +1297,7 @@ pub const mem = struct {
         pub fn allocDupe(allocator: Allocator, comptime T: type, input: []const T) ![]T {
             std.debug.assert(input.len != 0);
 
-            const duped = try allocator.alloc(T, input.len, .gpu_cpu_writable);
+            const duped = try allocator.alloc(T, input.len, .device_cpu_writable);
 
             @memcpy(gpu.mem.toAccessibleSlice(duped, .cpu), input);
 
@@ -1422,9 +1422,9 @@ pub const mem = struct {
 
         pub const MemoryType = enum(u4) {
             cpu = 0,
-            gpu,
-            gpu_cpu_writable,
-            readback,
+            device,
+            device_cpu_writable,
+            device_readback,
         };
 
         pub const VTable = struct {

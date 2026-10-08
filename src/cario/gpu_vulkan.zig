@@ -83,9 +83,74 @@ pub const DescriptorHeapPointer = packed struct(u64) {
     tag: gpu.mem.GpuPointerTag,
 };
 
+const PageAllocator = struct {
+    block_size: usize,
+    //Indexed by MemoryType
+    blocks: [4]std.MultiArrayList(MemoryPageBlock),
+    blocks_free: std.DynamicBitSetUnmanaged,
+    allocations: std.MultiArrayList(MemoryPageAllocation),
+    images: []std.ArrayList(vk.Image),
+    textures: std.MultiArrayList(TextureData),
+    descriptor_sets: std.MultiArrayList(DescriptorHeapData),
+    textures_allocated: std.DynamicBitSetUnmanaged,
+    descriptor_sets_allocated: std.DynamicBitSetUnmanaged,
+};
+
+//A page is 64kb
+//Each page has a bit in the bit buffer
+const MemoryPageBlock = struct {
+    //A 256mb memory allocation
+    memory: vk.DeviceMemory,
+    //Each buffer is of maxBufferSize or less
+    buffer: vk.Buffer,
+    //The base address of the page block
+    base_address: u64,
+    //The base mapped address
+    base_mapped_address: u64,
+    //The page allocated bits
+    page_bits: std.bit_set.DynamicBitSetUnmanaged,
+    //Range min of free pages
+    free_range_min: u32,
+    //Range max of the free pages
+    free_range_max: u32,
+
+    pub const page_size = 64 * 1024;
+
+    pub fn allocatePages(self: *@This(), size: usize) [*]u8 {
+        const page_count = @divCeil(size, page_size);
+
+        //TODO: make this a simd loop
+        for (self.page_bits.masks[0 .. self.page_bits.bit_length / @bitSizeOf(usize)]) |mask| {
+            if (@popCount(mask) == 0) continue;
+        }
+
+        const page_start = self.page_bits.findFirstSet() orelse 0;
+        const page_end = page_start + page_count;
+
+        const pointer = self.base_address + page_start * page_size;
+
+        self.page_bits.setRangeValue(.{ .start = page_start, .end = page_end }, false);
+
+        const gpu_pointer: gpu.mem.GpuPointerData = .{
+            //handle os pointer tag
+            .address = @truncate(pointer),
+            .allocation_handle = undefined,
+            .format = .unformatted,
+        };
+
+        return @ptrFromInt(@backingInt(gpu_pointer));
+    }
+};
+
+const MemoryPageAllocation = struct {
+    page_block: u32,
+    size: u64,
+};
+
 const MemoryAllocationMinimal = struct {
     vma_alloc: vma.VmaAllocation,
     vma_alloc_info: vma.VmaAllocationInfo,
+    memory_page_block: u32,
     mapped_address: u64,
     textures: std.MultiArrayList(TextureData),
 };
@@ -456,11 +521,11 @@ pub fn memAlloc(
     var properties: vk.MemoryPropertyFlags = .{};
 
     switch (memory_type) {
-        .gpu => {
+        .device => {
             vma_usage = vma.VMA_MEMORY_USAGE_GPU_ONLY;
             properties = .{ .device_local = true };
         },
-        .gpu_cpu_writable => {
+        .device_cpu_writable => {
             vma_usage = vma.VMA_MEMORY_USAGE_AUTO;
             properties = .{
                 .device_local = true,
@@ -468,7 +533,7 @@ pub fn memAlloc(
             };
         },
         .cpu => return std.heap.page_allocator.rawAlloc(size, alignment, @returnAddress()).?,
-        .readback => {
+        .device_readback => {
             vma_usage = vma.VMA_MEMORY_USAGE_GPU_TO_CPU;
             properties = .{
                 .host_visible = true,
@@ -496,7 +561,7 @@ pub fn memAlloc(
     var buffer: vk.Buffer = undefined;
 
     var allocation_create_info: vma.VmaAllocationCreateInfo = .{
-        .flags = if (memory_type != .gpu)
+        .flags = if (memory_type != .device)
             vma.VMA_ALLOCATION_CREATE_MAPPED_BIT | vma.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
         else
             0,
@@ -525,7 +590,7 @@ pub fn memAlloc(
     const allocation_index: u16 = @intCast(try context.allocations_minimal.addOne(context.arena));
     _ = try context.allocations_buffer_data.addOne(context.arena);
 
-    context.allocations_minimal.items(.mapped_address)[allocation_index] = if (memory_type != .gpu) @intFromPtr(vma_alloc_info.pMappedData) else 0;
+    context.allocations_minimal.items(.mapped_address)[allocation_index] = if (memory_type != .device) @intFromPtr(vma_alloc_info.pMappedData) else 0;
     context.allocations_minimal.items(.vma_alloc)[allocation_index] = vma_alloc;
     context.allocations_minimal.items(.textures)[allocation_index] = .empty;
     context.allocations_buffer_data.items(.base_device_address)[allocation_index] = address;
@@ -566,7 +631,7 @@ pub fn memToAccessiblePointer(pointer: *anyopaque, access: mem.AccessDomain) *an
 
             gpu_ptr.address = @intCast(context.allocations_minimal.items(.mapped_address)[gpu_ptr_data.allocation_handle] + getMemoryAllocationOffset(pointer));
         },
-        .gpu => {
+        .device => {
             std.debug.assert(gpu.mem.getMemoryType(pointer) != .cpu);
         },
     }
@@ -587,8 +652,8 @@ pub fn memCopy(
     std.debug.assert(dest.len == src.len);
 
     if (context.optional_extensions.device_address_commands) {
-        const dest_gpu = gpu.mem.toAccessibleSlice(dest, .gpu);
-        const src_gpu = gpu.mem.toAccessibleSlice(src, .gpu);
+        const dest_gpu = gpu.mem.toAccessibleSlice(dest, .device);
+        const src_gpu = gpu.mem.toAccessibleSlice(src, .device);
 
         //TODO: batch contigious calls to memCopy into a single driver call
         const regions: [1]vk.DeviceMemoryCopyKHR = .{
@@ -1524,7 +1589,7 @@ pub fn launchCompute(
 
     for (root_data, 0..) |root_ptr, i| {
         if (gpu.mem.getMemoryType(root_ptr) != .cpu) {
-            push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .gpu);
+            push_constants.data[i] = gpu.mem.toAccessiblePointer(root_ptr, .device);
         }
     }
 
@@ -1640,7 +1705,7 @@ pub const CommandBufferData = struct {
 
 pub fn launchRasterize(
     command_buffer: *CommandBuffer,
-    pipeline: *Pipeline,
+    pipeline: ?*Pipeline,
     work: gpu.RasterizerWork,
 ) void {
     const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
@@ -1654,10 +1719,14 @@ pub fn launchRasterize(
         return;
     }
 
+    if (pipeline == null) {
+        return;
+    }
+
     const vk_command_buffer: vk.CommandBuffer = command_buffer_data.handle;
     const commands = work.command_arguments;
 
-    command_buffer_data.setPipeline(pipeline);
+    command_buffer_data.setPipeline(pipeline.?);
     command_buffer_data.setKernelArguments(work.kernel_arguments);
 
     if (work.vertex_indices.len != 0) blk: {
@@ -1688,15 +1757,16 @@ pub fn launchRasterize(
 
         if (work.vertex_indices.len == 0) {
             if (context.optional_extensions.device_address_commands) {
-                const commands_gpu = gpu.mem.toAccessiblePointer(commands.ptr, .gpu);
+                const commands_gpu = gpu.mem.toAccessiblePointer(commands.ptr, .device);
+                const command_size = if (work.command_stride != 0) work.command_stride else @sizeOf(gpu.RasterDrawCommand);
 
                 context.device.cmdDrawIndirect2KHR(
                     vk_command_buffer,
                     &.{
                         .address_range = .{
                             .address = @intFromPtr(commands_gpu),
-                            .size = commands.len * @sizeOf(gpu.RasterDrawCommand),
-                            .stride = if (work.command_stride != 0) work.command_stride else @sizeOf(gpu.RasterDrawCommand),
+                            .size = commands.len * command_size,
+                            .stride = command_size,
                         },
                         .draw_count = @intCast(commands.len),
                     },
