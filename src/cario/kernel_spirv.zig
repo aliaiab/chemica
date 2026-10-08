@@ -36,15 +36,16 @@ pub fn exportRasterVertexPipeline(
             var args_tuple: std.meta.ArgsTuple(@TypeOf(vertex_fn)) = undefined;
 
             comptime var root_index: u32 = 0;
+            const data_pointers = push_data.data_pointers;
 
             inline for (&args_tuple) |*arg| {
                 switch (@typeInfo(@TypeOf(arg.*))) {
                     .pointer => {
-                        arg.* = @ptrFromInt(push_data.data_pointers[root_index]);
+                        arg.* = @ptrFromInt(data_pointers[root_index]);
                         root_index += 1;
                     },
                     .@"enum" => {
-                        arg.* = @fromBackingInt(@truncate(push_data.data_pointers[root_index]));
+                        arg.* = @fromBackingInt(@truncate(data_pointers[root_index]));
                         root_index += 1;
                     },
                     .@"struct" => {

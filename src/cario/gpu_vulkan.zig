@@ -529,6 +529,7 @@ pub fn memAlloc(
     context.allocations_minimal.items(.vma_alloc)[allocation_index] = vma_alloc;
     context.allocations_minimal.items(.textures)[allocation_index] = .empty;
     context.allocations_buffer_data.items(.base_device_address)[allocation_index] = address;
+    context.allocations_buffer_data.items(.buffer)[allocation_index] = buffer;
 
     const gpu_ptr: gpu.mem.GpuPointerData = .{
         .address = @intCast(address),
@@ -1146,7 +1147,8 @@ fn setStatePipeline(
     command_buffer: *CommandBuffer,
     pipeline: *Pipeline,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    const vk_command_buffer = command_buffer_data.handle;
     const pipeline_data: *PipelineData = @ptrCast(@alignCast(pipeline));
 
     context.device.cmdBindPipeline(
@@ -1160,7 +1162,8 @@ pub fn setStateDepthStencil(
     command_buffer: *CommandBuffer,
     state: DepthStencilState,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    const vk_command_buffer = command_buffer_data.handle;
 
     context.device.cmdSetDepthCompareOp(vk_command_buffer, .less);
     context.device.cmdSetDepthTestEnable(vk_command_buffer, .false);
@@ -1184,16 +1187,16 @@ pub fn setStateBlend(
     command_buffer: *CommandBuffer,
     state: BlendState,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
 
     context.device.cmdSetColorBlendEnableEXT(
-        vk_command_buffer,
+        command_buffer_data.handle,
         0,
         &.{
             if (state == BlendState.unblended_state) .false else .true,
         },
     );
-    context.device.cmdSetColorBlendEquationEXT(vk_command_buffer, 0, &.{
+    context.device.cmdSetColorBlendEquationEXT(command_buffer_data.handle, 0, &.{
         .{
             .src_color_blend_factor = .src_alpha,
             .dst_color_blend_factor = .one_minus_src_alpha,
@@ -1203,10 +1206,10 @@ pub fn setStateBlend(
             .alpha_blend_op = .add,
         },
     });
-    context.device.cmdSetBlendConstants(vk_command_buffer, &.{ 1, 1, 1, 1 });
+    context.device.cmdSetBlendConstants(command_buffer_data.handle, &.{ 1, 1, 1, 1 });
     context.device.cmdSetColorWriteMaskEXT(
-        vk_command_buffer,
-        1,
+        command_buffer_data.handle,
+        0,
         &.{
             .{ .r = true, .g = true, .b = true, .a = true },
         },
@@ -1217,8 +1220,8 @@ pub fn setStateCull(
     command_buffer: *CommandBuffer,
     cull: gpu.RasterPipelineDescription.Cull,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
-    context.device.cmdSetCullMode(vk_command_buffer, .{
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
+    context.device.cmdSetCullMode(command_buffer_data.handle, .{
         .front = cull.front,
         .back = cull.back,
     });
@@ -1228,9 +1231,9 @@ pub fn setStatePolygonMode(
     command_buffer: *CommandBuffer,
     mode: gpu.PolygonMode,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intCast(@intFromPtr(command_buffer)));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
     context.device.cmdSetPolygonModeEXT(
-        vk_command_buffer,
+        command_buffer_data.handle,
         switch (mode) {
             .fill => .fill,
             .line => .line,
@@ -1243,10 +1246,10 @@ pub fn setStateViewport(
     command_buffer: *CommandBuffer,
     viewport: [4]f32,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(command_buffer));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
 
     context.device.cmdSetViewport(
-        vk_command_buffer,
+        command_buffer_data.handle,
         0,
         &.{
             .{
@@ -1265,10 +1268,10 @@ pub fn setStateScissor(
     command_buffer: *CommandBuffer,
     scissor: [4]u32,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(command_buffer));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
 
     context.device.cmdSetScissor(
-        vk_command_buffer,
+        command_buffer_data.handle,
         0,
         &.{
             .{
@@ -1285,7 +1288,7 @@ pub fn barrier(
     after: ExecutionStage,
     hazards: HazardFlags,
 ) void {
-    const vk_command_buffer: vk.CommandBuffer = @fromBackingInt(@intFromPtr(command_buffer));
+    const command_buffer_data: *CommandBufferData = @ptrCast(@alignCast(command_buffer));
 
     const vk_before: vk.PipelineStageFlags = toVkStage(before);
     var vk_after: vk.PipelineStageFlags = toVkStage(after);
@@ -1329,7 +1332,7 @@ pub fn barrier(
     }
 
     context.device.cmdPipelineBarrier(
-        vk_command_buffer,
+        command_buffer_data.handle,
         vk_before,
         vk_after,
         .{},
@@ -1497,6 +1500,8 @@ pub fn rasterPassBegin(
             .color_attachment_count = @intCast(color_attachments.len),
         },
     );
+
+    command_buffer_data.raster_pass_began = true;
 }
 
 pub fn rasterPassEnd(
